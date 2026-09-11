@@ -1,0 +1,135 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+*.pyo
+
+# ── 虚拟环境 ──
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ── 敏感信息（API Key 等）──
+.env
+.env.local
+.env.*.local
+.env.production
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+.secrets/
+
+# ── 向量库 & 模型权重（可重新生成/下载，占空间大）──
+vectorstore/
+vectorstore_rebuilt/
+models/
+*.sqlite3
+*.db
+*.faiss
+*.index
+
+# ── 日志 ──
+logs/
+*.log
+*.log.*
+logs/*.log
+
+# ── IDE / 编辑器 ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+*.sublime-project
+*.sublime-workspace
+
+# ── 临时文件 / 缓存 ──
+*.tmp
+*.bak
+*.swp
+*.orig
+*.rej
+.cache/
+.tmp/
+tmp/
+
+# ── 大型二进制资产（首次接待视频/产品手册）──
+data/first_contact/*.mp4
+data/first_contact/*.pdf
+data/first_contact/*.avi
+data/first_contact/*.mov
+data/first_contact/*.mkv
+
+# ── 名片（个人隐私信息）──
+data/buisness_card/*.png
+data/buisness_card/*.jpg
+data/buisness_card/*.jpeg
+data/business_card/*.png
+data/business_card/*.jpg
+data/business_card/*.jpeg
+
+# ── 评测结果（运行评测时自动生成）──
+eval/report.json
+eval/report_*.json
+eval/*.json.bak
+
+# ── 构建产物 ──
+build/
+dist/
+*.whl
+*.tar.gz
+*.zip
+node_modules/
+
+# ── 测试覆盖率 ──
+.coverage
+coverage.xml
+.coverage.*
+
+# ── Jupyter ──
+.ipynb_checkpoints/
+*.ipynb
+
+# ── 操作系统 ──
+ehthumbs.db
+ehthumbs_vista.db
+.Trashes
+.Spotlight-V100
+.fseventsd
+
+# ── Cursor / IDE 项目元数据 ──
+.cursor/
+.cursorignore
+.cursor/worktrees/
+.cursor-tmp/
+
+# ── Agent / AI 生成文件 ──
+.cursor-agents/
+.cursor-hooks/
+
+# ── 允许提交的文件（用 ! 反向规则）──
+# 保留 .env.example 作为模板
+!.env.example
+# 保留 first_contact 目录下的 README
+!data/first_contact/README.md
+# 保留 buisness_card 目录结构（不含图片）
+!data/buisness_card/.gitkeep

@@ -1,0 +1,733 @@
+"""
+FastAPI application for LED RAG System.
+Provides REST API endpoints for product selection using LangGraph Agent.
+
+安全加固（Phase 4）：
+  - 全局 API Key 鉴权
+  - SSE 流式输出
+  - LLM 降级机制
+"""
+from fastapi import FastAPI, HTTPException, Header, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from typing import Optional, List
+import uvicorn
+import logging
+import os
+import asyncio
+import time
+from pathlib import Path
+
+from src.config import config
+from src.rag.loader import load_all_product_files, ENVIRONMENT_METADATA_VERSION
+from src.core.embeddings import load_vectorstore, recreate_vectorstore
+from src.memory.store import memory
+from src.orchestrator import DualAgentOrchestrator
+from src.rag.rerank import sanitize_customer_response
+from src.tasks import task_manager, TaskStatus
+from src.core.fallback import fallback_manager, LLMFallbackManager, CircuitBreaker, CircuitBreakerConfig
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create FastAPI app
+app = FastAPI(
+    title="LED Product RAG API",
+    description="LED Product Selection Assistant with LangGraph Agent",
+    version="2.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Static files
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+static_dir = os.path.join(project_root, "static")
+data_dir = os.path.join(project_root, "data")
+logger.info(f"Static directory: {static_dir}")
+logger.info(f"Data directory: {data_dir}")
+
+# Mount first_contact assets (videos, PDFs) from data directory FIRST (more specific path)
+first_contact_dir = os.path.join(data_dir, "first_contact")
+if os.path.exists(first_contact_dir):
+    app.mount("/static/first_contact", StaticFiles(directory=first_contact_dir, html=False), name="first_contact")
+else:
+    logger.warning(f"First contact directory not found: {first_contact_dir}")
+
+# Mount business_card assets (images) from data directory
+buisness_card_dir = os.path.join(data_dir, "buisness_card")
+if os.path.exists(buisness_card_dir):
+    app.mount("/static/buisness_card", StaticFiles(directory=buisness_card_dir, html=False), name="buisness_card")
+else:
+    logger.warning(f"Business card directory not found: {buisness_card_dir}")
+
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir, html=True), name="static")
+else:
+    logger.warning(f"Static directory not found: {static_dir}")
+
+# Pydantic models
+class ChatRequest(BaseModel):
+    session_id: str
+    question: str
+
+class ChatResponse(BaseModel):
+    session_id: str
+    answer: str
+    requirement: Optional[dict] = None
+    reflection_score: Optional[float] = None
+    products: Optional[List[dict]] = None
+    route: Optional[str] = None  # "fast" | "agent"
+    complexity: Optional[str] = None
+    first_contact_intro: Optional[str] = None  # First contact self-introduction
+    first_contact_messages: Optional[List[dict]] = None  # First contact generated messages (intro + assets)
+
+class ClearMemoryRequest(BaseModel):
+    session_id: str
+
+class RebuildResponse(BaseModel):
+    """POST /rebuild 的响应"""
+    task_id: str
+    message: str
+    status: str
+
+class TaskStatusResponse(BaseModel):
+    """GET /rebuild/{task_id} 的响应"""
+    task_id: str
+    name: str
+    status: str
+    progress: int
+    message: str
+    created_at: float
+    started_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    result: Optional[dict] = None
+    error: Optional[str] = None
+
+
+# ── API 鉴权 ────────────────────────────────────────────────────────────────
+def _get_api_key() -> str:
+    """获取配置的 API Key（支持 .env 中的 LED_API_KEY）。"""
+    return os.environ.get("LED_API_KEY", "")
+
+
+def _verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> str:
+    """验证 API Key，失败返回 401。"""
+    configured_key = _get_api_key()
+    # 如果未配置 API Key，跳过验证（开发模式）
+    if not configured_key:
+        return ""
+    if not x_api_key or x_api_key != configured_key:
+        raise HTTPException(status_code=401, detail="未授权：请提供有效的 API Key")
+    return x_api_key
+
+# Global variables
+orchestrator: DualAgentOrchestrator = None
+vectorstore = None
+
+
+def get_documents_for_retrieval():
+    """Load all product documents for sparse/bm25 indexing."""
+    try:
+        documents = load_all_product_files(config.DATA_DIR)
+        docs = []
+        for i, doc in enumerate(documents):
+            docs.append({
+                "id": str(i),
+                "text": doc.page_content,
+                "metadata": doc.metadata
+            })
+        return docs
+    except FileNotFoundError as e:
+        logger.warning(f"Data directory not found, keyword retrieval will use limited data: {e}")
+        return []
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize system on startup."""
+    global orchestrator, vectorstore
+    
+    logger.info("=" * 50)
+    logger.info("Initializing LED RAG System v2.0 (Sales + Solution Agents)...")
+    logger.info("=" * 50)
+    
+    try:
+        # Load source documents
+        documents = get_documents_for_retrieval()
+        if not documents:
+            raise RuntimeError("No product documents found; cannot initialize retrieval")
+
+        # Check if vector store needs rebuild
+        store_path = Path(config.VECTORSTORE_DIR)
+        sqlite_path = store_path / "chroma.sqlite3"
+        must_rebuild = (
+            not store_path.exists()
+            or not sqlite_path.exists()
+            or os.path.getsize(sqlite_path) == 0
+        )
+        collection_count = 0
+
+        if not must_rebuild:
+            vectorstore = load_vectorstore()
+            collection = vectorstore._collection
+            collection_count = collection.count()
+            stored_metadatas = collection.get(include=["metadatas"]).get("metadatas", [])
+            required_metadata = {
+                "indoor", "outdoor", "display_type",
+                "environment_metadata_version", "product_category",
+            }
+            invalid_metadata = [
+                metadata for metadata in stored_metadatas
+                if not metadata or not required_metadata.issubset(metadata)
+                or not isinstance(metadata.get("indoor"), bool)
+                or not isinstance(metadata.get("outdoor"), bool)
+                or metadata.get("display_type") not in {"LED", "LCD", "IFP"}
+                or metadata.get("environment_metadata_version") != ENVIRONMENT_METADATA_VERSION
+            ]
+
+            fresh_documents = load_all_product_files(config.DATA_DIR)
+            expected_count = len(fresh_documents)
+
+            must_rebuild = (
+                collection_count == 0
+                or len(stored_metadatas) != collection_count
+                or bool(invalid_metadata)
+                or collection_count != expected_count
+            )
+            if not must_rebuild:
+                logger.info(
+                    "Existing vector store has valid v%s metadata: %d records",
+                    ENVIRONMENT_METADATA_VERSION,
+                    collection_count,
+                )
+
+            if hasattr(vectorstore, "_client"):
+                try:
+                    vectorstore._client.reset()
+                except Exception:
+                    pass
+
+        if must_rebuild:
+            logger.warning(
+                "Vector store needs rebuild: existing=%d chunks, expected=%d chunks",
+                collection_count,
+                len(fresh_documents),
+            )
+            vectorstore = recreate_vectorstore(fresh_documents)
+            active_dir = getattr(vectorstore, "_active_persist_dir", config.VECTORSTORE_DIR)
+            logger.info("Vector store rebuilt and persisted at %s", active_dir)
+            config.VECTORSTORE_DIR = active_dir
+            try:
+                vectorstore = load_vectorstore(persist_dir=active_dir)
+            except Exception as error:
+                logger.warning("Could not reload vectorstore after rebuild: %s", error)
+            collection = vectorstore._collection
+
+        logger.info(
+            "Vector store ready: path=%s collection=%s records=%s",
+            config.VECTORSTORE_DIR,
+            collection.name,
+            collection.count(),
+        )
+        
+        # Initialize agents
+        from src.agents.sales.runner import SalesAgentRunner
+        from src.agents.solution.runner import SolutionAgentRunner
+        from src.rag.sparse import get_sparse_search
+        from src.rag.bm25 import BM25Search
+        from src.rag.fusion import HybridSearch
+
+        sparse = get_sparse_search(documents, config.VECTORSTORE_DIR) if documents else None
+        bm25 = BM25Search(documents) if documents else None
+
+        # Initialize Sales Agent
+        sales_agent = SalesAgentRunner(sales_search=vectorstore)
+        sales_agent.setup()
+        logger.info("Sales Agent initialized")
+
+        # Initialize Solution Agent
+        solution_agent = SolutionAgentRunner(vectorstore, documents)
+        logger.info("Solution Agent initialized")
+        
+        # Initialize orchestrator
+        orchestrator = DualAgentOrchestrator(sales_agent, solution_agent)
+        logger.info("Orchestrator initialized with Sales Agent + Solution Agent")
+
+        # Smoke test
+        display_types_present = set(
+            doc.get("metadata", {}).get("display_type")
+            for doc in documents
+            if doc.get("metadata", {}).get("display_type")
+        )
+        smoke_queries = {
+            "unfiltered": ("display", None),
+            "indoor": ("indoor display", {"indoor": True}),
+            "outdoor": ("outdoor display", {"outdoor": True}),
+        }
+        for dt in display_types_present:
+            smoke_queries[dt] = (f"{dt} display", {"display_type": dt})
+        smoke_results = {
+            name: len(
+                sales_agent.sales_search.similarity_search(
+                    query, k=1, filter=filters
+                )
+            )
+            for name, (query, filters) in smoke_queries.items()
+        }
+        logger.info("Retrieval smoke test: %s", smoke_results)
+        failed_smoke_tests = [name for name, count in smoke_results.items() if count == 0]
+        if failed_smoke_tests:
+            raise RuntimeError(
+                f"Vector retrieval smoke test failed for {failed_smoke_tests}; "
+                f"path={config.VECTORSTORE_DIR}, records={collection.count()}"
+            )
+        
+        logger.info("=" * 50)
+        logger.info("System ready!")
+        logger.info("=" * 50)
+        
+    except Exception as e:
+        logger.error(f"Initialization error: {e}")
+        raise
+
+
+@app.get("/")
+async def root():
+    """Root endpoint."""
+    return {
+        "message": "LED Product RAG API v2.0",
+        "status": "running",
+        "version": "2.0.0",
+        "features": ["LangGraph Agent", "Hybrid Search (Vector + BM25)", "Reflection"]
+    }
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    collection = vectorstore._collection if vectorstore else None
+    return {
+        "status": "healthy",
+        "orchestrator_ready": orchestrator is not None,
+        "vectorstore_ready": vectorstore is not None,
+        "vectorstore_path": config.VECTORSTORE_DIR,
+        "collection": collection.name if collection else None,
+        "record_count": collection.count() if collection else 0,
+    }
+
+
+@app.get("/diagnostics/retrieval")
+async def retrieval_diagnostics():
+    """Report vector-store metadata coverage."""
+    if not vectorstore:
+        raise HTTPException(status_code=503, detail="Vector store is not initialized")
+
+    collection = vectorstore._collection
+    metadatas = collection.get(include=["metadatas"]).get("metadatas", [])
+    return {
+        "path": config.VECTORSTORE_DIR,
+        "collection": collection.name,
+        "record_count": collection.count(),
+        "metadata_count": len(metadatas),
+        "indoor_records": sum(metadata.get("indoor") is True for metadata in metadatas if metadata),
+        "outdoor_records": sum(metadata.get("outdoor") is True for metadata in metadatas if metadata),
+        "led_records": sum(metadata.get("display_type") == "LED" for metadata in metadatas if metadata),
+        "lcd_records": sum(metadata.get("display_type") == "LCD" for metadata in metadatas if metadata),
+        "ifp_records": sum(metadata.get("display_type") == "IFP" for metadata in metadatas if metadata),
+    }
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest, http_request: Request, api_key: str = Depends(_verify_api_key)):
+    """聊天接口，支持常规和 SSE 流式两种模式。
+    
+    请求头：
+      X-API-Key: API 密钥（必填，除非 .env 中未配置 LED_API_KEY）
+      Accept: text/event-stream → 启用 SSE 流式输出
+      
+    请求体：
+      session_id: 会话 ID
+      question: 用户问题
+    """
+    if not orchestrator:
+        raise HTTPException(status_code=500, detail="System not initialized")
+
+    # ── SSE 流式检测 ─────────────────────────────────────────────────
+    accept_header = http_request.headers.get("Accept", "")
+    use_stream = "text/event-stream" in accept_header
+
+    if use_stream:
+        return StreamingResponse(
+            _stream_chat(request),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    # ── 普通模式 ────────────────────────────────────────────────────
+    return await _chat_sync(request)
+
+
+@app.post("/memory/clear")
+async def clear_memory(request: ClearMemoryRequest, api_key: str = Depends(_verify_api_key)):
+    """清除指定会话的内存。"""
+    memory.clear(request.session_id)
+    return {
+        "message": "Memory cleared",
+        "session_id": request.session_id
+    }
+
+
+@app.get("/memory/{session_id}")
+async def get_memory(session_id: str, api_key: str = Depends(_verify_api_key)):
+    """获取指定会话的聊天历史。"""
+    messages = memory.get_history(session_id)
+    return {
+        "session_id": session_id,
+        "count": len(messages),
+        "messages": messages
+    }
+
+
+# ── LLM Fallback ──────────────────────────────────────────────────────────
+_LLM_FALLBACK_RESPONSES = {
+    "greeting": "Hello! I'm your LED display advisor. How can I help you today?",
+    "warranty": "Our products come with 1-2 years of warranty (varies by series). What scenario are you looking to use it for?",
+    "product_question": "Thanks for your question! We carry the full range: LED, LCD, and IFP displays. Is there anything specific you'd like to know more about?",
+    "default": "Sorry, the system is busy right now. Please try again shortly, or reach out to our support team.",
+}
+
+
+def _get_fallback_response(question: str) -> str:
+    """Return fallback response based on question type."""
+    q_lower = question.lower()
+    if any(kw in q_lower for kw in ("hello", "hi", "你好", "您好")):
+        return _LLM_FALLBACK_RESPONSES["greeting"]
+    if any(kw in q_lower for kw in ("warranty", "guarantee", "质保", "保修")):
+        return _LLM_FALLBACK_RESPONSES["warranty"]
+    if any(kw in q_lower for kw in ("brightness", "pixel pitch", "resolution", "size", "spec", "亮度", "点间距", "分辨率", "尺寸")):
+        return _LLM_FALLBACK_RESPONSES["product_question"]
+    return _LLM_FALLBACK_RESPONSES["default"]
+
+
+async def _chat_sync(request: ChatRequest) -> ChatResponse:
+    """同步聊天处理，包含 LLM 降级逻辑。"""
+    logger.info("Chat sync from session: %s", request.session_id)
+    
+    # 检查 Circuit Breaker
+    cb = fallback_manager.get_circuit_breaker("chat")
+    if not cb.is_available():
+        logger.warning("CircuitBreaker OPEN, returning fallback response")
+        fallback_answer = fallback_manager.get_fallback(
+            fallback_manager.classify_for_fallback(request.question)
+        )
+        return ChatResponse(
+            session_id=request.session_id,
+            answer=fallback_answer,
+            requirement={},
+            reflection_score=0,
+            products=[],
+            route="circuit_breaker",
+            complexity="fallback",
+        )
+    
+    try:
+        result = orchestrator.process_message(
+            message=request.question,
+            session_id=request.session_id
+        )
+        # 记录成功
+        fallback_manager.record_success("chat")
+        
+    except Exception as llm_error:
+        # 记录失败
+        fallback_manager.record_failure("chat")
+        logger.warning("LLM error in orchestrator, using fallback: %s", llm_error)
+        
+        # 检查是否应该人工接管
+        if fallback_manager.should_handover():
+            handover_message = (
+                "抱歉，系统目前遇到一些问题，已通知人工客服跟进。"
+                "您也可以直接拨打客服热线：400-xxx-xxxx"
+            )
+            fallback_manager.reset_handover()
+            return ChatResponse(
+                session_id=request.session_id,
+                answer=handover_message,
+                requirement={},
+                reflection_score=0,
+                products=[],
+                route="human_handover",
+                complexity="handover",
+            )
+        
+        # 使用降级响应
+        fallback_answer = fallback_manager.get_fallback(
+            fallback_manager.classify_for_fallback(request.question)
+        )
+        return ChatResponse(
+            session_id=request.session_id,
+            answer=fallback_answer,
+            requirement={},
+            reflection_score=0,
+            products=[],
+            route="fallback",
+            complexity="fallback",
+        )
+
+    requirements = result.get("requirements") or {}
+    location_type = str(requirements.get("location_type", ""))
+    is_outdoor = bool(requirements.get("outdoor")) or location_type in (
+        "户外", "室外", "外面", "露天", "全户外", "半户外", "户外使用", "室外使用",
+    )
+    response_text = sanitize_customer_response(result.get("response", ""), outdoor=is_outdoor)
+
+    if not response_text:
+        response_text = (
+            "No suitable outdoor model found. Try adding screen size details to continue."
+            if is_outdoor
+            else "No suitable model found. Try adding more details like screen size to continue."
+        )
+
+    logger.info("Response: %s...", response_text[:100])
+    return ChatResponse(
+        session_id=request.session_id,
+        answer=response_text,
+        requirement=requirements,
+        reflection_score=None,
+        products=result.get("products", []),
+        route=result.get("route"),
+        complexity=result.get("complexity"),
+        first_contact_intro=result.get("_perf", {}).get("first_contact_intro"),
+        first_contact_messages=result.get("_perf", {}).get("first_contact_messages"),
+    )
+
+
+async def _stream_chat(request: ChatRequest):
+    """SSE 流式聊天处理。逐 token yield，不等待完整响应。"""
+    import json as _json
+
+    session_id = request.session_id
+    question = request.question
+
+    # 首先发送 metadata
+    yield f"data: {_json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
+
+    try:
+        start_time = time.time()
+        first_token_sent = False
+
+        # 检查 Solution Agent 是否支持流式
+        if orchestrator and orchestrator.solution_agent:
+            try:
+                for chunk in orchestrator.solution_agent.run_stream(
+                    message=question,
+                    history=[],
+                ):
+                    if chunk:
+                        if not first_token_sent:
+                            ttft = (time.time() - start_time) * 1000
+                            yield f"data: {_json.dumps({'type': 'ttft', 'ms': round(ttft, 1)})}\n\n"
+                            first_token_sent = True
+                        yield f"data: {_json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
+            except Exception:
+                pass  # 流式失败时回退到同步
+
+        # 如果流式未输出任何内容，使用同步降级
+        if not first_token_sent:
+            fallback = _get_fallback_response(question)
+            yield f"data: {_json.dumps({'type': 'chunk', 'content': fallback})}\n\n"
+
+    except Exception as exc:
+        logger.error("Stream error: %s", exc)
+        yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    # 结束信号
+    total_time = (time.time() - start_time) * 1000
+    yield f"data: {_json.dumps({'type': 'done', 'total_ms': round(total_time, 1)})}\n\n"
+
+
+# ── rebuild ────────────────────────────────────────────────────────────────────────
+# Phase 4: 异步 rebuild 后台任务
+
+async def _create_rebuild_coro(task_id_ref: list) -> dict:
+    """后台重建协程（接收 task_id 引用）"""
+    from src.core.embeddings import create_vectorstore
+    from src.agents.sales.runner import SalesAgentRunner
+    from src.agents.solution.runner import SolutionAgentRunner
+
+    task_id = task_id_ref[0]
+    
+    task_manager.update_progress(task_id, 10, "加载产品数据...")
+    documents = load_all_product_files(config.DATA_DIR)
+    
+    task_manager.update_progress(task_id, 30, "创建向量库...")
+    new_vectorstore = create_vectorstore(documents)
+    
+    task_manager.update_progress(task_id, 50, "初始化 Sales Agent...")
+    new_sales_agent = SalesAgentRunner(sales_search=new_vectorstore)
+    
+    task_manager.update_progress(task_id, 70, "初始化 Solution Agent...")
+    new_solution_agent = SolutionAgentRunner(new_vectorstore, documents)
+    
+    task_manager.update_progress(task_id, 85, "初始化编排器...")
+    new_orchestrator = DualAgentOrchestrator(new_sales_agent, new_solution_agent)
+    
+    # 原子更新全局变量
+    task_manager.update_progress(task_id, 95, "更新全局状态...")
+    global vectorstore, orchestrator
+    vectorstore = new_vectorstore
+    orchestrator = new_orchestrator
+    
+    task_manager.update_progress(task_id, 100, "完成")
+    
+    return {
+        "message": f"向量库重建成功，文档数: {len(documents)}",
+        "document_count": len(documents),
+    }
+
+
+@app.post("/rebuild", response_model=RebuildResponse)
+async def rebuild_vectorstore(api_key: str = Depends(_verify_api_key)):
+    """
+    异步重建向量库（管理员接口）
+    
+    POST /rebuild
+        - 立即返回 task_id
+        - 后台异步执行 rebuild
+        - 可通过 GET /rebuild/{task_id} 查询进度
+        
+    返回：
+        {
+            "task_id": "abc123",
+            "message": "重建任务已提交",
+            "status": "pending"
+        }
+    """
+    # 先创建占位 task_id
+    import uuid
+    task_id = str(uuid.uuid4())[:8]
+    task_id_holder = [task_id]
+    
+    # 创建后台任务
+    await task_manager.create_task(
+        name="rebuild_vectorstore",
+        coro=_create_rebuild_coro(task_id_holder),
+    )
+    
+    logger.info(f"Rebuild task submitted: {task_id}")
+    
+    return RebuildResponse(
+        task_id=task_id,
+        message="重建任务已提交，请通过 GET /rebuild/{task_id} 查询进度",
+        status="pending"
+    )
+
+
+@app.get("/rebuild/{task_id}", response_model=TaskStatusResponse)
+async def get_rebuild_status(task_id: str, api_key: str = Depends(_verify_api_key)):
+    """
+    查询 rebuild 任务状态
+    
+    GET /rebuild/{task_id}
+    
+    返回：
+        {
+            "task_id": "abc123",
+            "name": "rebuild_vectorstore",
+            "status": "running",
+            "progress": 50,
+            "message": "正在创建向量库...",
+            "created_at": 1699999999.0,
+            "started_at": 1699999999.1,
+            "completed_at": null,
+            "result": null,
+            "error": null
+        }
+    """
+    task_info = task_manager.get_task(task_id)
+    
+    if not task_info:
+        raise HTTPException(
+            status_code=404,
+            detail=f"任务 {task_id} 不存在或已过期"
+        )
+    
+    return TaskStatusResponse(
+        task_id=task_info.task_id,
+        name=task_info.name,
+        status=task_info.status.value,
+        progress=task_info.progress,
+        message=task_info.message,
+        created_at=task_info.created_at,
+        started_at=task_info.started_at,
+        completed_at=task_info.completed_at,
+        result=task_info.result,
+        error=task_info.error,
+    )
+
+
+@app.get("/rebuild", response_model=list[dict])
+async def list_rebuild_tasks(api_key: str = Depends(_verify_api_key)):
+    """列出所有 rebuild 任务"""
+    return task_manager.list_tasks()
+
+
+@app.post("/rebuild/{task_id}/cancel")
+async def cancel_rebuild(task_id: str, api_key: str = Depends(_verify_api_key)):
+    """取消正在执行的 rebuild 任务"""
+    success = await task_manager.cancel_task(task_id)
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail=f"任务 {task_id} 无法取消（可能已完成或不存在）"
+        )
+    return {"message": f"任务 {task_id} 已请求取消", "task_id": task_id}
+
+
+def run_server():
+    """Run the FastAPI server."""
+    uvicorn.run(
+        app,
+        host=config.HOST,
+        port=config.PORT,
+        log_level="info"
+    )
+
+
+# ── Circuit Breaker 状态 ─────────────────────────────────────────────────────
+
+@app.get("/circuit-breaker/status")
+async def get_circuit_breaker_status():
+    """查询熔断器状态"""
+    return {
+        "state": fallback_manager.get_circuit_breaker("chat").state.value,
+        "consecutive_failures": fallback_manager._consecutive_failures,
+        "should_handover": fallback_manager.should_handover(),
+    }
+
+@app.post("/circuit-breaker/reset")
+async def reset_circuit_breaker(api_key: str = Depends(_verify_api_key)):
+    """重置熔断器（管理员接口）"""
+    fallback_manager.get_circuit_breaker("chat").reset()
+    fallback_manager.reset_handover()
+    return {"message": "Circuit breaker reset successfully"}
+
+
+if __name__ == "__main__":
+    run_server()

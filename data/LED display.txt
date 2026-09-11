@@ -1,0 +1,79 @@
+Product Name:TW11‑3216 series:splicable,low‑price indoor LED, module=320mm*160mm, cabinet=640mm*480mm, brightness=500nit, refresh=3840Hz,low price
+Model TW11‑3216‑P1.2, pixel pitch 1.25mm, resolution 640000 pixels/m2, module resolution 256*128, cabinet resolution 512*384.
+Model TW11‑3216‑P1.5, pixel pitch 1.53mm, resolution 422500 pixels/m2, module resolution 208*104, cabinet resolution 416*312.
+Model TW11‑3216‑P1.6, pixel pitch 1.667mm, resolution 360000 pixels/m2, module resolution 192*96, cabinet resolution 384*288.
+Product Name:TW11‑3216 series:splicable,low‑price indoor LED, module=320mm*160mm, cabinet=640mm*480mm, brightness=500nit, refresh=3840Hz,low price
+Model TW11‑3216‑P1.8, pixel pitch 1.86mm, resolution 288444 pixels/m2, module resolution 172*86, cabinet resolution 344*258.
+Model TW11‑3216‑P2.0, pixel pitch 2.0mm, resolution 250000 pixels/m2, module resolution 160*80, cabinet resolution 320*240.
+Model TW11‑3216‑P2.5, pixel pitch 2.5mm, resolution 160000 pixels/m2, module resolution 128*64, cabinet resolution 256*192.
+Product Name:TW11‑3216 series:splicable,low‑price indoor LED, module=320mm*160mm, cabinet=640mm*480mm, brightness=500nit, refresh=3840Hz,low price
+Model TW11‑3216‑P3.0, pixel pitch 3.076mm, resolution 105688 pixels/m2, module resolution 104*52, cabinet resolution 208*156.
+Model TW11‑3216‑P4.0, pixel pitch 4.0mm, resolution 62500 pixels/m2, module resolution 80*40, cabinet resolution 160*120.
+
+Product Name:TW21‑3216 series:splicable,mid-price indoor LED, Kinglight lamp, 2 years warranty, module=320mm*160mm, cabinet=640mm*480mm, brightness=600nit, refresh=3840Hz
+Model TW21‑3216‑P1.2, pixel pitch 1.25mm, resolution 640000 pixels/m2, module resolution 256*128, cabinet resolution 512*384.
+Model TW21‑3216‑P1.5, pixel pitch 1.53mm, resolution 422500 pixels/m2, module resolution 208*104, cabinet resolution 416*312.
+Model TW21‑3216‑P1.6, pixel pitch 1.667mm, resolution 360000 pixels/m2, module resolution 192*96, cabinet resolution 384*288.
+Product Name:TW21‑3216 series:splicable,mid-price indoor LED, Kinglight lamp, 2 years warranty, module=320mm*160mm, cabinet=640mm*480mm, brightness=600nit, refresh=3840Hz
+Model TW21‑3216‑P1.8, pixel pitch 1.86mm, resolution 288444 pixels/m2, module resolution 172*86, cabinet resolution 344*258.
+Model TW21‑3216‑P2.0, pixel pitch 2.0mm, resolution 250000 pixels/m2, module resolution 160*80, cabinet resolution 320*240.
+Model TW21‑3216‑P2.5, pixel pitch 2.5mm, resolution 160000 pixels/m2, module resolution 128*64, cabinet resolution 256*192.
+Product Name:TW21‑3216 series:splicable,mid-price indoor LED, Kinglight lamp, 2 years warranty, module=320mm*160mm, cabinet=640mm*480mm, brightness=600nit, refresh=3840Hz
+Model TW21‑3216‑P3.0, pixel pitch 3.076mm, resolution 105688 pixels/m2, module resolution 104*52, cabinet resolution 208*156.
+Model TW21‑3216‑P4.0, pixel pitch 4.0mm, resolution 62500 pixels/m2, module resolution 80*40, cabinet resolution N/A.
+
+Product Name:TW31‑COB series:waterproof,splicable,high‑price premium indoor COB HDR LED, 2 years warranty, module=150mm*168.75mm, cabinet=600mm*337.5mm, brightness=800nit, refresh=3840Hz, HDR=support
+Model TW31‑COB‑P0.7H, pixel pitch 0.78mm, resolution 1638400 pixels/m2, module resolution 160*180, cabinet resolution 768*432.
+Model TW31‑COB‑P0.9H, pixel pitch 0.9375mm, resolution 1137777 pixels/m2, module resolution 160*180, cabinet resolution 640*360.
+Product Name:TW31‑COB series:waterproof,splicable,high‑price premium indoor COB HDR LED, 2 years warranty, module=150mm*168.75mm, cabinet=600mm*337.5mm, brightness=800nit, refresh=3840Hz, HDR=support
+Model TW31‑COB‑P1.2H, pixel pitch 1.25mm, resolution 640000 pixels/m2, module resolution 120*135, cabinet resolution 480*270.
+Model TW31‑COB‑P1.5H, pixel pitch 1.5625mm, resolution 429975 pixels/m2, module resolution 96*108, cabinet resolution 384*216.
+
+Product Name:TW11‑IR series:splicable,low-price indoor rental LED, standard lamp, 1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, brightness=600nit, refresh=3840Hz
+Model TW11‑IR‑P1.95(GOB), pixel pitch 1.95mm, resolution 262144 pixels/m2, module resolution 128*128, cabinet resolution 256*256.
+Model TW11‑IR‑P2.6, pixel pitch 2.6mm, resolution 147456 pixels/m2, module resolution 96*96, cabinet resolution 192*192.
+Product Name:TW11‑IR series:splicable,low-price indoor rental LED, standard lamp, 1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, brightness=600nit, refresh=3840Hz
+Model TW11‑IR‑P2.9, pixel pitch 2.976mm, resolution 112896 pixels/m2, module resolution 84*84, cabinet resolution 168*168.
+Model TW11‑IR‑P3.9, pixel pitch 3.91mm, resolution 65536 pixels/m2, module resolution 64*64, cabinet resolution 128*128.
+Product Name:TW11‑IR series:splicable,lowe-price indoor rental LED, standard lamp, 1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, brightness=600nit, refresh=3840Hz
+Model TW11‑IR‑P4.8, pixel pitch 4.81mm, resolution 43264 pixels/m2, module resolution 52*52, cabinet resolution 104*104.
+
+Product Name:TW21‑IRHD series:splicable,mid-price indoor regular rental LED, Kinglight/standard lamp, 2 years/1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, refresh=3840Hz, brightness=600‑800nit
+Model TW21‑IRHD‑P2.6H, pixel pitch 2.6mm, resolution 147456 pixels/m2, module resolution 96*96, cabinet resolution 192*192, scanning=32s.
+Model TW21‑IRHD‑P2.9H, pixel pitch 2.976mm, resolution 112896 pixels/m2, module resolution 84*84, cabinet resolution 168*168, scanning=28s.
+Product Name:TW21‑IRHD series: mid-price indoor regular rental LED, Kinglight/standard lamp, 2 years/1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, refresh=3840Hz, brightness=600‑800nit
+Model TW21‑IRHD‑P3.9H, pixel pitch 3.91mm, resolution 65536 pixels/m2, module resolution 64*64, cabinet resolution 128*128, scanning=13s.
+
+Product Name:TW31‑IRHD series:splicable,high‑price flexible indoor rental LED, Kinglight/standard lamp, 2 years/1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, refresh=3840Hz, brightness=600‑800nit
+Model TW31‑IRHD‑P2.6, pixel pitch 2.6mm, resolution 147456 pixels/m2, module resolution 96*96, cabinet resolution 192*192, scanning=32s.
+Model TW31‑IRHD‑P2.9, pixel pitch 2.976mm, resolution 112896 pixels/m2, module resolution 84*84, cabinet resolution 168*168, scanning=28s.
+TW31‑IRHD series:splicable high‑price flexible indoor rental LED, Kinglight/standard lamp, 2 years/1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, refresh=3840Hz, brightness=600‑800nit
+Model TW31‑IRHD‑P3.9, pixel pitch 3.91mm, resolution 43264 pixels/m2, module resolution 52*52, cabinet resolution 104*104, scanning=13s.
+
+Product Name:TW11‑OD series:waterproof,splicable,low-price outdoor fixed LED, standard lamp, 1 year warranty, refresh=3840Hz
+Model TW11‑OD‑P2.5, pixel pitch 2.5mm, brightness 4500cd, resolution 160000 pixels/m2, module size=320*160mm, cabinet resolution 384*384, cabinet size=960*960mm.
+Model TW11‑OD‑P3, pixel pitch 3.076mm, brightness 4500cd, resolution 105625 pixels/m2, module size=320*160mm, cabinet resolution 312*312, cabinet size=960*960mm.
+Model TW11‑OD‑P4, pixel pitch 4mm, brightness 4500cd, resolution 62500 pixels/m2, module size=320*160mm, cabinet resolution 240*240, cabinet size=960*960mm.
+Product Name:TW11‑OD series:waterproof,splicable low-price outdoor fixed LED, standard lamp, 1 year warranty, refresh=3840Hz
+Model TW11‑OD‑P5, pixel pitch 5mm, brightness 4500cd, resolution 40000 pixels/m2, module size=320*160mm, cabinet resolution 192*192, cabinet size=960*960mm.
+Model TW11‑OD‑P6, pixel pitch 6.67mm, brightness 4500cd, resolution 22464 pixels/m2, module size=320*160mm, cabinet resolution 144*144, cabinet size=960*960mm.
+Model TW11‑OD‑P8, pixel pitch 8mm, brightness 4500cd, resolution 15625 pixels/m2, module size=320*160mm, cabinet resolution 120*120, cabinet size=960*960mm.
+Model TW11‑OD‑P10, pixel pitch 10mm, brightness 5500cd, resolution 10000 pixels/m2, module size=320*160mm, cabinet resolution 96*96, cabinet size=960*960mm.
+
+Product Name:TW21‑OD series:waterproof,splicable,mid-price outdoor fixed LED, Kinglight lamp, 1 year warranty, refresh=3840Hz
+Model TW21‑OD‑P2.5, pixel pitch 2.5mm, brightness 5000cd, resolution 160000 pixels/m2, module size=320*160mm, cabinet resolution 384*384, cabinet size=960*960mm.
+Model TW21‑OD‑P3, pixel pitch 3.076mm, brightness 5000cd, resolution 105625 pixels/m2, module size=320*160mm, cabinet resolution 312*312, cabinet size=960*960mm.
+Model TW21‑OD‑P4, pixel pitch 4mm, brightness 5000cd, resolution 62500 pixels/m2, module size=320*160mm, cabinet resolution 240*240, cabinet size=960*960mm.
+Product Name:TW21‑OD series:waterproof,splicable,mid-price outdoor fixed LED, Kinglight lamp, 1 year warranty, refresh=3840Hz
+Model TW21‑OD‑P5, pixel pitch 5mm, brightness 5000cd, resolution 40000 pixels/m2, module size=320*160mm, cabinet resolution 192*192, cabinet size=960*960mm.
+Model TW21‑OD‑P6, pixel pitch 6.67mm, brightness 5000cd, resolution 22464 pixels/m2, module size=320*160mm, cabinet resolution 144*144, cabinet size=960*960mm.
+Model TW21‑OD‑P8, pixel pitch 8mm, brightness 5000cd, resolution 15625 pixels/m2, module size=320*160mm, cabinet resolution 120*120, cabinet size=960*960mm.
+Model TW21‑OD‑P10, pixel pitch 10mm, brightness 6500cd, resolution 10000 pixels/m2, module size=320*160mm, cabinet resolution 96*96, cabinet size=960*960mm.
+
+Product Name:TW31‑HOD series:waterproof,splicable,high‑price high‑brightness outdoor fixed LED, 2 years warranty, refresh=3840Hz
+Model TW31‑HOD‑P5.7E, pixel pitch 5.7mm, brightness 7500cd, resolution 40000 pixels/m2, module size=480*320mm, cabinet resolution 168*168, cabinet size=960*960mm, average power consumption 352W/sqm, max power consumption 800W/sqm.
+Model TW31‑HOD‑P6.67E, pixel pitch 6.67mm, brightness 9000cd, resolution 22500 pixels/m2, module size=480*320mm, cabinet resolution 144*144, cabinet size=960*960mm, average power consumption 352W/sqm, max power consumption 800W/sqm.
+Product Name:TW31‑HOD series:waterproof,splicable high‑price high‑brightness outdoor fixed LED, 2 years warranty, refresh=3840Hz
+Model TW31‑HOD‑P8E, pixel pitch 8mm, brightness 10000cd, resolution 15625 pixels/m2, module size=480*320mm, cabinet resolution 120*120, cabinet size=960*960mm, average power consumption 352W/sqm, max power consumption 800W/sqm.
+Model TW31‑HOD‑P10E, pixel pitch 10mm, brightness 10000cd, resolution 10000 pixels/m2, module size=480*320mm, cabinet resolution 96*96, cabinet size=960*960mm, average power consumption 352W/sqm, max power consumption 800W/sqm.
+

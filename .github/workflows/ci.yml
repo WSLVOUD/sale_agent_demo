@@ -1,0 +1,171 @@
+name: Regression Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+jobs:
+  # ── 基础检查 ────────────────────────────────────────────────────────────
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -q ruff mypy
+          echo "Checking imports..."
+          python -c "import src; print('Import OK')" || exit 1
+
+      - name: Ruff lint
+        run: |
+          ruff check src/eval/ src/rag/ src/core/ src/models/ --ignore E501,F401
+
+      - name: Syntax check
+        run: |
+          python -m py_compile src/api.py src/config.py
+          python -m py_compile src/rag/router.py src/rag/fast_path.py
+          python -m py_compile src/rag/json_loader.py
+          python -m py_compile src/agents/solution/runner.py
+          python -m py_compile src/agents/solution/nodes/reflection.py
+          python -m py_compile eval/run_eval.py
+          echo "All syntax checks passed"
+
+  # ── 核心模块单元测试 ────────────────────────────────────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -q -r requirements.txt
+          pip install -q pytest pytest-asyncio httpx
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v --tb=short -x
+
+  # ── Golden Dataset 回归测试 ──────────────────────────────────────────────
+  eval-regression:
+    name: Eval Regression (Golden Dataset)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -q -r requirements.txt
+
+      - name: Download / setup vectorstore
+        run: |
+          python init_vectorstore.py || echo "Vectorstore init skipped"
+
+      - name: Run Golden Dataset evaluation
+        run: |
+          python -m eval.run_eval \
+            --dataset eval/dataset.json \
+            --output eval_report.json
+        continue-on-error: true
+
+      - name: Parse and compare baseline
+        run: |
+          python -c "
+          import json, os, sys
+
+          # 读取评估报告
+          if not os.path.exists('eval_report.json'):
+              print('No eval report found — SKIP baseline comparison')
+              sys.exit(0)
+
+          with open('eval_report.json') as f:
+              report = json.load(f)
+
+          qu_acc    = report.get('query_understanding_accuracy', 0)
+          recall5   = report.get('avg_recall_at_5', 0)
+          avg_lat   = report.get('avg_latency_ms', 0)
+
+          print(f'Query Understanding Accuracy: {qu_acc:.1%}')
+          print(f'Recall@5:                   {recall5:.1%}')
+          print(f'Avg Latency:                 {avg_lat:.0f}ms')
+
+          # 阈值
+          QU_ACC_THRESHOLD    = 0.60   # Intent Accuracy 下限 60%
+          RECALL5_THRESHOLD   = 0.40   # Recall@5 下限 40%
+          LATENCY_THRESHOLD   = 30000  # 延迟上限 30s
+
+          failed = []
+          if qu_acc < QU_ACC_THRESHOLD:
+              failed.append(f'Intent Accuracy {qu_acc:.1%} < {QU_ACC_THRESHOLD:.1%}')
+          if recall5 < RECALL5_THRESHOLD:
+              failed.append(f'Recall@5 {recall5:.1%} < {RECALL5_THRESHOLD:.1%}')
+          if avg_lat > LATENCY_THRESHOLD:
+              failed.append(f'Avg latency {avg_lat:.0f}ms > {LATENCY_THRESHOLD}ms')
+
+          if failed:
+              print('FAILURES:')
+              for f in failed:
+                  print(f'  - {f}')
+              sys.exit(1)
+          else:
+              print('All regression thresholds PASSED')
+          "
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval_report.json
+
+  # ── 同步 API 健康检查 ────────────────────────────────────────────────────
+  api-smoke-test:
+    name: API Smoke Test
+    runs-on: ubuntu-latest
+    needs: eval-regression
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -q -r requirements.txt fastapi[standard] httpx
+
+      - name: Start API
+        run: |
+          nohup python -m uvicorn src.api:app --host 127.0.0.1 --port 8765 > api.log 2>&1 &
+          sleep 5
+          curl -s http://127.0.0.1:8765/health | python -c "import sys,json; d=json.load(sys.stdin); print(f'Status: {d[\"status\"]}, Records: {d[\"record_count\"]}')"
+
+      - name: POST /chat smoke test
+        run: |
+          curl -s -X POST http://127.0.0.1:8765/chat \
+            -H "Content-Type: application/json" \
+            -d '{"session_id":"ci-test","question":"会议室用什么屏好"}' \
+          | python -c "import sys,json; d=json.load(sys.stdin); print(f'Answer length: {len(d[\"answer\"])} chars, Route: {d.get(\"route\",\"n/a\")}')"

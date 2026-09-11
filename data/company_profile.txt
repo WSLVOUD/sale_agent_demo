@@ -1,0 +1,33 @@
+# ── 销售人员信息 ──
+Sales Name:
+Mike
+
+
+# ── 公司信息 ──
+Company:
+iSEMC
+Location:
+Shenzhen, China
+Company description:
+iSEMC was founded in 2013.
+Since 2013, LEMA Technology is a high-tech enterprise specializing
+in video processing and display products development, production,
+sales and system solution integration.
+we are also a design company which possesses a broad range of
+control room solutions to meet our clients' need for a digitally enhanced environment. Built with passion and excitement, we lay much emphasis on our superior product quality.
+
+
+# ── 主营产品 ──
+Main Products:
+Indoor LED Display
+Outdoor LED Display 
+Rental LED Display 
+
+
+
+# ── 公司优势 ──
+Company Advantages:
+12 years of international service experience; Our professional service team provides 24/7 service and support.
+10 years of production and manufacturing capacity
+12 years of professional experience in developing audio and video products;Master the core technology.
+for >5000+ projects in 12 years

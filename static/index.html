@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LED产品助手</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="chat-container">
+        <!-- 顶部导航栏 -->
+        <header class="chat-header">
+            <div class="header-left">
+                <span class="status-indicator" id="status-indicator"></span>
+            </div>
+            <h1 class="header-title">LED产品助手</h1>
+            <div class="header-right">
+                <button class="new-chat-btn" id="new-chat-btn" title="新对话">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- 消息区域 -->
+        <main class="messages-area" id="messages-area">
+            <!-- 欢迎界面 -->
+            <div class="welcome-screen" id="welcome-screen">
+                <div class="welcome-icon">💡</div>
+                <h2 class="welcome-title">LED产品选型助手</h2>
+                <p class="welcome-subtitle">请用英文描述您的需求</p>
+                <div class="quick-questions">
+                    <button class="quick-question-btn" data-question="Indoor display for conference room, 4 meters viewing distance">
+                        <span class="quick-icon">🏢</span>
+                        <span class="quick-text">会议室显示屏</span>
+                    </button>
+                    <button class="quick-question-btn" data-question="Virtual production LED screen, need HDR support">
+                        <span class="quick-icon">🎬</span>
+                        <span class="quick-text">虚拟制作屏幕</span>
+                    </button>
+                    <button class="quick-question-btn" data-question="Outdoor rental screen, 5m viewing distance, IP65">
+                        <span class="quick-icon">🌤️</span>
+                        <span class="quick-text">户外租赁屏</span>
+                    </button>
+                </div>
+            </div>
+        </main>
+
+        <!-- 底部输入区 -->
+        <footer class="input-area">
+            <div class="input-wrapper">
+                <textarea 
+                    class="message-input" 
+                    id="message-input" 
+                    placeholder="请输入您的问题..."
+                    rows="1"
+                ></textarea>
+                <button class="send-btn" id="send-btn">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
+                    </svg>
+                </button>
+            </div>
+        </footer>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

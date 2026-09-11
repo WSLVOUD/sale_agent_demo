@@ -1,0 +1,279 @@
+{
+  "version": "1.0",
+  "created": "2026-09-09",
+  "description": "Golden Dataset for LED RAG System evaluation. 覆盖明确需求、模糊需求、参数追问、异议处理、多语言、租赁场景、室内/外冲突等典型场景。",
+  "categories": [
+    "product_recommendation",
+    "parameter_query",
+    "objection_handling",
+    "small_talk",
+    "no_match"
+  ],
+  "queries": [
+    {
+      "id": "q001",
+      "query": "会议室大概15人，要能手写，有什么推荐？",
+      "intent": "recommendation",
+      "constraints": {
+        "display_type": "IFP",
+        "indoor": true,
+        "purpose": "会议室",
+        "interaction": "手写",
+        "capacity": 15
+      },
+      "expected_products": ["OmniPAD-G4", "OmniPAD-N4"],
+      "expected_points": ["IFP", "交互平板", "手写", "白板"],
+      "scenario": "product_recommendation",
+      "notes": "应推荐IFP交互平板，无需询问太多参数"
+    },
+    {
+      "id": "q002",
+      "query": "户外演唱会租赁用的LED屏，P3左右的点间距，亮度要高",
+      "intent": "recommendation",
+      "constraints": {
+        "pixel_pitch_min": 2.5,
+        "pixel_pitch_max": 3.5,
+        "environment": "outdoor",
+        "is_rental": true,
+        "brightness_min": 4000
+      },
+      "expected_products": [],
+      "expected_points": ["户外", "租赁", "P3", "高亮"],
+      "scenario": "product_recommendation",
+      "notes": "应推荐户外租赁系列TW11-IR/TW21-IRHD（注：数据库暂无户外租赁产品，返回空为当前正确行为）"
+    },
+    {
+      "id": "q003",
+      "query": "室内固定安装的LED显示屏，4米视距，推荐一下",
+      "intent": "recommendation",
+      "constraints": {
+        "environment": "indoor",
+        "is_rental": false,
+        "pixel_pitch_max": 4.0,
+        "brightness_min": 400,
+        "brightness_max": 800
+      },
+      "expected_products": ["TW11-3216", "TW21-3216"],
+      "expected_points": ["室内固定", "P2~P4", "3216系列"],
+      "scenario": "product_recommendation",
+      "notes": "视距4m对应P2~P4，推荐TW11-3216/TW21-3216系列"
+    },
+    {
+      "id": "q004",
+      "query": "帮我推荐一个商场用的广告屏",
+      "intent": "recommendation",
+      "constraints": {
+        "purpose": "商场广告",
+        "indoor": true
+      },
+      "expected_products": ["TW11-3216", "TW21-3216"],
+      "expected_points": ["室内", "广告屏", "亮度适中"],
+      "scenario": "product_recommendation",
+      "notes": "室内固定场景，亮度500nit左右即可"
+    },
+    {
+      "id": "q005",
+      "query": "我需要一个户外的大屏，固定安装，20米远能看清楚，P5够用吗？",
+      "intent": "product_question",
+      "constraints": {
+        "environment": "outdoor",
+        "is_rental": false,
+        "distance": "20米"
+      },
+      "expected_products": ["TW11-OD", "TW21-OD"],
+      "expected_points": ["户外固定", "TW11-OD", "TW21-OD", "P5"],
+      "scenario": "parameter_query",
+      "notes": "问具体型号P5是否满足，P5户外最大可视距离约20m，需要确认"
+    },
+    {
+      "id": "q006",
+      "query": "TW21-3216-P2.0的亮度是多少？",
+      "intent": "product_question",
+      "constraints": {
+        "model": "TW21-3216-P2.0"
+      },
+      "expected_products": ["TW21-3216"],
+      "expected_points": ["TW21-3216", "亮度600nit"],
+      "scenario": "parameter_query",
+      "notes": "直接查产品参数，TW21-3216亮度600nit"
+    },
+    {
+      "id": "q007",
+      "query": "你们的价格比别家贵吗？",
+      "intent": "objection_handling",
+      "constraints": {},
+      "expected_products": [],
+      "expected_points": ["质量", "质保", "Kinglight灯珠"],
+      "scenario": "objection_handling",
+      "notes": "异议处理，强调质量、灯珠品牌、质保年限"
+    },
+    {
+      "id": "q008",
+      "query": "你们质保几年？",
+      "intent": "conversation",
+      "constraints": {},
+      "expected_products": [],
+      "expected_points": ["1年", "2年"],
+      "scenario": "small_talk",
+      "notes": "不同系列1-2年质保"
+    },
+    {
+      "id": "q009",
+      "query": "Hello, I need an indoor LED display for a retail store, around P2.5",
+      "intent": "recommendation",
+      "constraints": {
+        "environment": "indoor",
+        "pixel_pitch_min": 2.0,
+        "pixel_pitch_max": 3.0,
+        "purpose": "retail store"
+      },
+      "expected_products": ["TW11-3216", "TW21-3216"],
+      "expected_points": ["室内", "P2.5", "3216系列"],
+      "scenario": "product_recommendation",
+      "notes": "英文Query，室内P2.5推荐"
+    },
+    {
+      "id": "q010",
+      "query": "展厅用，需要大尺寸，亮度高一些",
+      "intent": "recommendation",
+      "constraints": {
+        "indoor": true,
+        "purpose": "展厅"
+      },
+      "expected_products": ["TW21-3216"],
+      "expected_points": ["室内", "展厅", "亮度高"],
+      "scenario": "product_recommendation",
+      "notes": "展厅场景，亮度要高"
+    },
+    {
+      "id": "q011",
+      "query": "教室培训用的，60人左右，有手写功能",
+      "intent": "recommendation",
+      "constraints": {
+        "display_type": "IFP",
+        "purpose": "教室培训",
+        "capacity": 60,
+        "interaction": "手写"
+      },
+      "expected_products": ["OmniPAD-N4A", "OmniPAD-N4B"],
+      "expected_points": ["IFP", "交互平板", "60人", "大尺寸"],
+      "scenario": "product_recommendation",
+      "notes": "60人教室推荐86寸或98寸IFP。仅N4A/N4B有手写白板+AI摄像头，OmniPAD-G4/N4无手写"
+    },
+    {
+      "id": "q012",
+      "query": "指挥中心用什么屏好？要能7x24小时运行",
+      "intent": "recommendation",
+      "constraints": {
+        "purpose": "指挥中心监控",
+        "indoor": true,
+        "operation_hours": "7x24"
+      },
+      "expected_products": ["DLP-60", "RGB-70"],
+      "expected_points": ["室内", "7x24h", "LCD拼接", "LED拼接"],
+      "scenario": "product_recommendation",
+      "notes": "指挥中心需要7x24h运行能力。仅DLP-60(100000h)/RGB-70(100000h)满足，普通LCD拼接(50000h)不满足"
+    },
+    {
+      "id": "q013",
+      "query": "室内租赁用的，临时活动用完就拆",
+      "intent": "recommendation",
+      "constraints": {
+        "indoor": true,
+        "is_rental": true,
+        "purpose": "临时活动"
+      },
+      "expected_products": ["TW11-IR", "TW21-IRHD"],
+      "expected_points": ["室内租赁", "IR系列", "快装"],
+      "scenario": "product_recommendation",
+      "notes": "临时活动推荐室内租赁系列TW11-IR/TW21-IRHD"
+    },
+    {
+      "id": "q014",
+      "query": "你们的屏幕跟别人家有什么区别？",
+      "intent": "objection_handling",
+      "constraints": {},
+      "expected_products": [],
+      "expected_points": ["Kinglight灯珠", "HDR", "COB", "防水", "质保"],
+      "scenario": "objection_handling",
+      "notes": "差异化竞争点：Kinglight灯珠、COB技术、HDR等"
+    },
+    {
+      "id": "q015",
+      "query": "半户外遮阳棚下面用，能推荐吗？",
+      "intent": "recommendation",
+      "constraints": {
+        "environment": "semi_outdoor",
+        "purpose": "遮阳棚"
+      },
+      "expected_products": ["TW31-COB"],
+      "expected_points": ["半户外", "COB系列", "TW31-COB", "亮度800nit"],
+      "scenario": "product_recommendation",
+      "notes": "半户外遮阳推荐TW31-COB系列"
+    },
+    {
+      "id": "q016",
+      "query": "有没有防水的产品？",
+      "intent": "product_question",
+      "constraints": {
+        "waterproof": true
+      },
+      "expected_products": ["TW11-OD", "TW21-OD"],
+      "expected_points": ["OD系列", "防水", "IP等级"],
+      "scenario": "parameter_query",
+      "notes": "防水产品推荐OD户外系列"
+    },
+    {
+      "id": "q017",
+      "query": "安装要多长时间？",
+      "intent": "conversation",
+      "constraints": {},
+      "expected_products": [],
+      "expected_points": ["标准安装"],
+      "scenario": "small_talk",
+      "notes": "常规安装咨询，告知标准流程"
+    },
+    {
+      "id": "q018",
+      "query": "我要采购一块20平米的户外LED屏，P6，预算多少？",
+      "intent": "product_question",
+      "constraints": {
+        "environment": "outdoor",
+        "is_rental": false,
+        "area": 20,
+        "pixel_pitch_max": 6.0
+      },
+      "expected_products": ["TW11-OD", "TW21-OD"],
+      "expected_points": ["户外固定", "TW11-OD-P6", "TW21-OD-P6"],
+      "scenario": "parameter_query",
+      "notes": "问预算问题，引导客户提供更多参数"
+    },
+    {
+      "id": "q019",
+      "query": "会议室用，但不需要手写功能，普通显示屏就行",
+      "intent": "recommendation",
+      "constraints": {
+        "purpose": "会议室",
+        "indoor": true,
+        "interaction": null
+      },
+      "expected_products": ["TW21-3216", "DLP-60"],
+      "expected_points": ["室内", "LED拼接", "LCD拼接"],
+      "scenario": "product_recommendation",
+      "notes": "明确拒绝IFP，应推荐LED或LCD拼接屏"
+    },
+    {
+      "id": "q020",
+      "query": "P1.2的小间距屏有吗？适合什么场景？",
+      "intent": "product_question",
+      "constraints": {
+        "pixel_pitch_min": 1.0,
+        "pixel_pitch_max": 1.5
+      },
+      "expected_products": ["TW31-COB"],
+      "expected_points": ["P1.2", "小间距", "TW31-COB", "高端室内"],
+      "scenario": "parameter_query",
+      "notes": "P1.2属于小间距，推荐COB系列"
+    }
+  ]
+}
