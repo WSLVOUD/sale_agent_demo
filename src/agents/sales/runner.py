@@ -5,6 +5,8 @@ from typing import Dict, Any, Optional
 
 from .state import SalesState
 from .graph import build_sales_graph
+from ...rag.reply_composer import reply_language
+from ...rag.session_switch import detect_requirement_reset, reset_acknowledgement
 
 logger = logging.getLogger(__name__)
 
@@ -114,18 +116,41 @@ class SalesAgentRunner:
 
             history = [_to_dict(m) for m in history]
 
-        # Detect display type change
-        requirements_cleared = False
+        # ── 会话内需求重置：换产品 / 换项目 / 改需求 ─────────────────────────
+        # 客户在拿到推荐之后要换产品时，前面采集的需求必须清空，
+        # 否则 Gate 会拿旧需求再次推荐（既没有重新采集，也推荐得不对）。
+        # 纯规则检测，不调用 LLM，避免"AI 自己推测客户想换什么"。
+        display_type_change = None
         current_display_type = _extract_display_type_from_message(message)
         if current_display_type and self.memory_store and hasattr(self.memory_store, "get_previous_display_type"):
             previous_display_type = self.memory_store.get_previous_display_type(session_id)
             if previous_display_type and previous_display_type != current_display_type:
-                logger.info(
-                    "[%s] Display type changed: %s → %s, clearing accumulated requirements",
-                    session_id, previous_display_type, current_display_type,
-                )
-                accumulated_requirements = {}
-                requirements_cleared = True
+                display_type_change = (previous_display_type, current_display_type)
+
+        existing_profile = None
+        recommended_before = False
+        if self.memory_store:
+            if hasattr(self.memory_store, "get_requirement_profile"):
+                existing_profile = self.memory_store.get_requirement_profile(session_id)
+            if hasattr(self.memory_store, "has_recommendation"):
+                recommended_before = self.memory_store.has_recommendation(session_id)
+
+        reset = detect_requirement_reset(
+            message,
+            requirements=accumulated_requirements,
+            profile=existing_profile,
+            recommended=recommended_before,
+            display_type_change=display_type_change,
+        )
+        if reset.should_reset:
+            logger.info(
+                "[%s] Requirement reset (%s, evidence=%r): %s",
+                session_id, reset.reason, reset.evidence, reset.detail,
+            )
+            accumulated_requirements = {}
+            existing_profile = None
+            if self.memory_store and hasattr(self.memory_store, "reset_requirement_state"):
+                self.memory_store.reset_requirement_state(session_id)
 
         # Build initial state
         # 检查是否需要抑制销售问候语（首次接待刚完成后）
@@ -138,6 +163,7 @@ class SalesAgentRunner:
         state: SalesState = {
             "messages": history + [{"role": "user", "content": message}],
             "current_message": message,
+            "session_id": session_id,
             "intent": "",
             "requirements": accumulated_requirements.copy(),
             "additional_requirements": [],
@@ -151,11 +177,26 @@ class SalesAgentRunner:
             "sales_search": self.sales_search,
             "turn_count": 0,
             "suppress_greeting": suppress_greeting,  # 首次接待刚完成后抑制问候语
+            "requirement_profile": existing_profile,
+            "pending_question": "",
+            "pending_slot": "",
+            "requirements_reset": bool(reset.should_reset),
+            "reset_reason": reset.reason,
         }
         
         # Invoke the graph
         logger.info(f"[{session_id}] Processing: {message[:50]}...")
         result = self.graph.invoke(state)
+
+        # 需求重置：给客户一句口语确认，再问重新采集的第一个问题
+        # （先拼接再持久化，保证 memory 里的历史与客户实际看到的一致）
+        if reset.should_reset:
+            ack = reset_acknowledgement(
+                language=reply_language(message),
+                seed=len(history) + (sum(ord(ch) for ch in str(session_id)) % 5),
+            )
+            base_response = result.get("response", "")
+            result["response"] = f"{ack} {base_response}".strip() if base_response else ack
 
         # Persist updated conversation AND requirements
         if self.memory_store:
@@ -185,6 +226,11 @@ class SalesAgentRunner:
                 self.memory_store.clear(session_id)
                 self.memory_store.extend(session_id, final_messages)
                 self.memory_store.set_requirements(session_id, result.get("requirements", {}))
+                # Phase 6：结构化需求档案随会话持久化（供下一轮 / 方案 Agent 复用）
+                if hasattr(self.memory_store, "set_requirement_profile"):
+                    self.memory_store.set_requirement_profile(
+                        session_id, result.get("requirement_profile")
+                    )
 
                 # 恢复关键状态字段
                 if preserved_first_contact_sent:
@@ -197,19 +243,21 @@ class SalesAgentRunner:
 
                 if current_display_type and hasattr(self.memory_store, "set_previous_display_type"):
                     self.memory_store.set_previous_display_type(session_id, current_display_type)
+
+                # 记录"本轮已经给过推荐"：下一轮客户说"想换个产品"时，
+                # 系统据此判断需要在同一会话里清空旧需求、重新采集。
+                products = result.get("solutions") or []
+                if (products or result.get("next_action") == "trigger_solution") and hasattr(
+                    self.memory_store, "mark_recommendation_done"
+                ):
+                    self.memory_store.mark_recommendation_done(session_id, products)
             else:
                 self.memory_store[session_id] = {
                     "messages": final_messages,
                     "requirements": result.get("requirements", {}),
                 }
 
-        # Build notification if requirements were cleared
         response_text = result.get("response", "")
-        if requirements_cleared:
-            type_change_notice = (
-                f"\n\n※ 您已切换到{current_display_type}屏幕，之前收集的需求已清除，请重新告诉我您的 {current_display_type} 场景需求（如室内/室外、尺寸、用途等）。"
-            )
-            response_text = response_text + type_change_notice if response_text else type_change_notice
 
         # 消费抑制标记（如果已使用）
         if suppress_greeting and self.memory_store and hasattr(self.memory_store, "consume_suppress_sales_greeting"):
@@ -222,4 +270,9 @@ class SalesAgentRunner:
             "additional_requirements": result.get("additional_requirements", []),
             "intent": result.get("intent", ""),
             "next_action": result.get("next_action", "ask"),
+            # 需求采集追问：orchestrator 会把它接在"回答客户问题"的后面
+            "pending_question": result.get("pending_question", ""),
+            "pending_slot": result.get("pending_slot", ""),
+            "requirements_reset": bool(reset.should_reset),
+            "acknowledgement": result.get("acknowledgement", ""),
         }

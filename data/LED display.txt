@@ -1,16 +1,16 @@
-Product Name:TW11‑3216 series:splicable,low‑price indoor LED, module=320mm*160mm, cabinet=640mm*480mm, brightness=500nit, refresh=3840Hz,low price
+Product Name:TW11‑3216 series:splicable,low‑price indoor LED,standard lamp,module=320mm*160mm, cabinet=640mm*480mm, brightness=500nit, refresh=3840Hz,low price
 Model TW11‑3216‑P1.2, pixel pitch 1.25mm, resolution 640000 pixels/m2, module resolution 256*128, cabinet resolution 512*384.
 Model TW11‑3216‑P1.5, pixel pitch 1.53mm, resolution 422500 pixels/m2, module resolution 208*104, cabinet resolution 416*312.
 Model TW11‑3216‑P1.6, pixel pitch 1.667mm, resolution 360000 pixels/m2, module resolution 192*96, cabinet resolution 384*288.
-Product Name:TW11‑3216 series:splicable,low‑price indoor LED, module=320mm*160mm, cabinet=640mm*480mm, brightness=500nit, refresh=3840Hz,low price
+Product Name:TW11‑3216 series:splicable,low‑price indoor LED,standard lamp,module=320mm*160mm, cabinet=640mm*480mm, brightness=500nit, refresh=3840Hz,low price
 Model TW11‑3216‑P1.8, pixel pitch 1.86mm, resolution 288444 pixels/m2, module resolution 172*86, cabinet resolution 344*258.
 Model TW11‑3216‑P2.0, pixel pitch 2.0mm, resolution 250000 pixels/m2, module resolution 160*80, cabinet resolution 320*240.
 Model TW11‑3216‑P2.5, pixel pitch 2.5mm, resolution 160000 pixels/m2, module resolution 128*64, cabinet resolution 256*192.
-Product Name:TW11‑3216 series:splicable,low‑price indoor LED, module=320mm*160mm, cabinet=640mm*480mm, brightness=500nit, refresh=3840Hz,low price
+Product Name:TW11‑3216 series:splicable,low‑price indoor LED,standard lamp,module=320mm*160mm, cabinet=640mm*480mm, brightness=500nit, refresh=3840Hz,low price
 Model TW11‑3216‑P3.0, pixel pitch 3.076mm, resolution 105688 pixels/m2, module resolution 104*52, cabinet resolution 208*156.
 Model TW11‑3216‑P4.0, pixel pitch 4.0mm, resolution 62500 pixels/m2, module resolution 80*40, cabinet resolution 160*120.
 
-Product Name:TW21‑3216 series:splicable,mid-price indoor LED, Kinglight lamp, 2 years warranty, module=320mm*160mm, cabinet=640mm*480mm, brightness=600nit, refresh=3840Hz
+Product Name:TW21‑3216 series:splicable,mid-price indoor LED, Kinglight lamp，Custom LED beads, 2 years warranty, module=320mm*160mm, cabinet=640mm*480mm, brightness=600nit, refresh=3840Hz
 Model TW21‑3216‑P1.2, pixel pitch 1.25mm, resolution 640000 pixels/m2, module resolution 256*128, cabinet resolution 512*384.
 Model TW21‑3216‑P1.5, pixel pitch 1.53mm, resolution 422500 pixels/m2, module resolution 208*104, cabinet resolution 416*312.
 Model TW21‑3216‑P1.6, pixel pitch 1.667mm, resolution 360000 pixels/m2, module resolution 192*96, cabinet resolution 384*288.
@@ -22,10 +22,10 @@ Product Name:TW21‑3216 series:splicable,mid-price indoor LED, Kinglight lamp, 
 Model TW21‑3216‑P3.0, pixel pitch 3.076mm, resolution 105688 pixels/m2, module resolution 104*52, cabinet resolution 208*156.
 Model TW21‑3216‑P4.0, pixel pitch 4.0mm, resolution 62500 pixels/m2, module resolution 80*40, cabinet resolution N/A.
 
-Product Name:TW31‑COB series:waterproof,splicable,high‑price premium indoor COB HDR LED, 2 years warranty, module=150mm*168.75mm, cabinet=600mm*337.5mm, brightness=800nit, refresh=3840Hz, HDR=support
+Product Name:TW31‑COB series:waterproof,splicable,Kinglight lamp,high‑price premium indoor COB HDR LED, 2 years warranty, module=150mm*168.75mm, cabinet=600mm*337.5mm, brightness=800nit, refresh=3840Hz, HDR=support
 Model TW31‑COB‑P0.7H, pixel pitch 0.78mm, resolution 1638400 pixels/m2, module resolution 160*180, cabinet resolution 768*432.
 Model TW31‑COB‑P0.9H, pixel pitch 0.9375mm, resolution 1137777 pixels/m2, module resolution 160*180, cabinet resolution 640*360.
-Product Name:TW31‑COB series:waterproof,splicable,high‑price premium indoor COB HDR LED, 2 years warranty, module=150mm*168.75mm, cabinet=600mm*337.5mm, brightness=800nit, refresh=3840Hz, HDR=support
+Product Name:TW31‑COB series:waterproof,splicable,Kinglight lamp,high‑price premium indoor COB HDR LED, 2 years warranty, module=150mm*168.75mm, cabinet=600mm*337.5mm, brightness=800nit, refresh=3840Hz, HDR=support
 Model TW31‑COB‑P1.2H, pixel pitch 1.25mm, resolution 640000 pixels/m2, module resolution 120*135, cabinet resolution 480*270.
 Model TW31‑COB‑P1.5H, pixel pitch 1.5625mm, resolution 429975 pixels/m2, module resolution 96*108, cabinet resolution 384*216.
 

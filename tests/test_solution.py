@@ -101,7 +101,7 @@ class TestInferParametersNode:
         assert result.get("inferred_brightness_max_nit") == 800
 
     def test_infer_distance_pitch(self):
-        """视距 4 米 → pixel_pitch_max=4.0"""
+        """视距 4 米 → 统一规则表给出 P1.5~P3.0（Phase 5 统一后口径）"""
         state: SolutionState = {
             "requirement": {
                 "indoor": True,
@@ -109,7 +109,23 @@ class TestInferParametersNode:
             }
         }
         result = infer_parameters_node(state)
-        assert result.get("inferred_pixel_pitch_max_mm") == 4.0
+        assert result.get("inferred_pixel_pitch_min_mm") == 1.5
+        assert result.get("inferred_pixel_pitch_max_mm") == 3.0
+
+    def test_explicit_pitch_wins_over_inference(self):
+        """客户指定 P2.5 时，推断值不得覆盖客户明确值"""
+        state: SolutionState = {
+            "requirement": {
+                "indoor": True,
+                "distance": "10米",
+                "pixel_pitch": 2.5,
+                "pixel_pitch_tolerance": 0.5,
+            }
+        }
+        result = infer_parameters_node(state)
+        assert result.get("inferred_pixel_pitch_min_mm") == 2.0
+        assert result.get("inferred_pixel_pitch_max_mm") == 3.0
+        assert result.get("technical_parameters", {}).get("source", {}).get("pixel_pitch") == "explicit"
 
     def test_infer_rental_from_purpose(self):
         """演唱会 → is_rental=True"""
@@ -159,7 +175,8 @@ class TestParameterInference:
     def test_waterproof_extraction(self, pi):
         result = pi.extract_constraints("防水 LED 屏 IP65")
         assert result.get("waterproof") is True
-        assert "pixel_pitch" in result
+        # Phase 5 修复：IP65 不再被误当作 P65 点间距
+        assert "pixel_pitch" not in result
 
     def test_display_type_ifp(self, pi):
         result = pi.extract_constraints("会议一体机 IFP")

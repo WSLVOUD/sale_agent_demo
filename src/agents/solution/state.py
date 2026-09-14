@@ -87,3 +87,35 @@ class SolutionState(TypedDict):
     inferred_pixel_pitch_max_mm: Optional[float]     # e.g. 10.0 for ≥30m viewing
     inferred_screen_size: Optional[str]              # e.g. "65-75英寸" for 3m viewing
     inferred_is_rental: Optional[bool]             # True/False/None(don't care)
+
+    # ── Phase 3：硬约束过滤（Hard Metadata Filter）──────────────────────────
+    # 明确硬条件在检索前过滤；推断出来的点间距/亮度作为软条件参与排序与校验
+    hard_constraints: Optional[Dict[str, Any]]
+    hard_filter_dropped: int
+
+    # ── Phase 8：软条件（用于推荐打分的期望区间）────────────────────────────
+    soft_pitch_min_mm: Optional[float]
+    soft_pitch_max_mm: Optional[float]
+    soft_brightness_min_nit: Optional[int]
+
+    # ── Phase 4：Query Understanding（结构化槽位 + 标准化检索式）──────────────
+    understood_slots: Optional[Dict[str, Any]]
+    understood_language: Optional[str]
+    retrieval_query: Optional[str]
+
+    # ── Phase 5：统一工程推断结果（Python 规则产出，LLM 不得修改）────────────
+    technical_parameters: Optional[Dict[str, Any]]
+
+    # ── Phase 6：结构化需求档案（RequirementProfile）─────────────────────────
+    requirement_profile: Optional[Any]
+
+    # ── Phase 8/9/10：确定性选型结果 + 工程计算结果 ─────────────────────────
+    recommendation_result: Optional[Dict[str, Any]]
+    screen_calculation: Optional[Dict[str, Any]]
+
+    # ── Phase 11：确定性校验报告 ────────────────────────────────────────────
+    validation_report: Optional[Dict[str, Any]]
+
+    # ── v2.0 Phase 4/9：两个 Gate 的判定结果 ────────────────────────────────
+    recommendation_gate: Optional[Dict[str, Any]]
+    calculation_gate: Optional[Dict[str, Any]]

@@ -16,6 +16,15 @@ ENVIRONMENT_METADATA_VERSION = 4
 
 KNOWLEDGE_SOURCES_FILENAME_RE = re.compile(r"\.txt$|\.md$|\.yaml$|\.yml$", re.IGNORECASE)
 
+# 与产品无关的文本文件（公司介绍、销售信息、说明文档等）不得进入产品语料
+NON_PRODUCT_FILENAMES = frozenset({
+    "company_profile.txt",
+    "readme.txt",
+})
+
+# 真正的产品数据文件必须能匹配到产品标记，避免"顺手把任何 .txt 都当产品"的问题
+_PRODUCT_MARKER_RE = re.compile(r"(?mi)^(?:Product\s*Name|Model)\s*[:：、\s]")
+
 # ── Product category classification ──────────────────────────────────────────
 _DISPLAY_PATTERNS = (
     re.compile(r"display|screen|panel|wall|拼接|屏|电视|signage", re.IGNORECASE),
@@ -246,7 +255,13 @@ def _infer_display_type_from_filename(filename: str) -> str:
 
 
 def load_all_product_files(data_dir: str) -> List[Document]:
-    """Automatically scan ``data_dir`` for all ``.txt`` product files."""
+    """Automatically scan ``data_dir`` for all ``.txt`` product files.
+
+    Phase 2 起产品语料以 ``data/led_products.json``（Model 级）为准，本函数只用于
+    兼容旧的纯文本产品文件与测试。为安全起见：
+      - 跳过 ``NON_PRODUCT_FILENAMES``（如 ``company_profile.txt``）
+      - 跳过内容里没有 ``Product Name:`` / ``Model`` 标记的文件（例如公司介绍）
+    """
     root = Path(data_dir)
     if not root.exists():
         logger.warning("Product data directory does not exist: %s", root)
@@ -258,6 +273,9 @@ def load_all_product_files(data_dir: str) -> List[Document]:
     for path in sorted(root.iterdir()):
         if not path.is_file() or not path.suffix.lower() == ".txt":
             continue
+        if path.name.lower() in NON_PRODUCT_FILENAMES:
+            logger.info("Skipping non-product file: %s", path.name)
+            continue
         if path.name in seen:
             continue
         seen.add(path.name)
@@ -266,6 +284,13 @@ def load_all_product_files(data_dir: str) -> List[Document]:
         logger.info("Loading product file: %s (display_type=%s)", path.name, display_type)
 
         try:
+            raw_text = path.read_text(encoding="utf-8", errors="replace")
+            if not _PRODUCT_MARKER_RE.search(raw_text):
+                logger.warning(
+                    "Skipping %s: 未检测到 Product Name / Model 产品标记，判定为非产品文件",
+                    path.name,
+                )
+                continue
             docs = load_products(str(path))
             for doc in docs:
                 doc.metadata["display_type"] = display_type

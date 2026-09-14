@@ -1,508 +1,518 @@
 """
-产品参数推理模块
-将客户需求翻译为具体技术参数
+Phase 5：统一的 Parameter Inference。
+
+改造前的问题（计划文档「九、Phase 5」）：
+    同一件事存在多套实现 —— ``_rule_infer_pitch`` / ``_rule_infer_brightness`` /
+    ``_rule_infer_rental`` / ``ParameterInference`` / ``infer_parameters_node`` 里
+    各自写了一份规则，结果互相覆盖、彼此冲突（例如 4m 视距在一处推出 P≤3.0，
+    在另一处推出 P≤4.0）。
+
+改造后的单一链路：
+
+    客户语言
+        ↓  extract_slots（规则事实提取，Phase 4；可选 LLM 补充事实）
+    Requirement Profile（结构化事实）
+        ↓  infer_technical_parameters（纯 Python 工程规则）
+    技术参数（点间距区间 / 亮度区间 / 固装租赁 / 屏幕尺寸建议）
+
+两条硬性约束：
+  1. LLM 只负责"提取事实"，绝不参与工程参数计算；
+  2. 客户显式给出的参数优先，推断值不得覆盖客户明确值。
 """
 from __future__ import annotations
+
 import json
 import logging
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
+from src.rag.query_understanding import (
+    _DISPLAY_TYPE_KEYWORDS,
+    _FIXED_KEYWORDS,
+    _INDOOR_KEYWORDS,
+    _OUTDOOR_KEYWORDS,
+    _RENTAL_KEYWORDS,
+    _SEMI_OUTDOOR_KEYWORDS,
+    extract_slots,
+)
 from src.core.llm import get_llm
 
 logger = logging.getLogger(__name__)
 
-_RENTAL_KEYWORDS = (
-    "租赁", "短租", "活动", "演唱会", "舞台", "演出", "展览", "车展", "快闪",
-    "比赛", "体育", "赛事", "巡演", "临时",
-    "rental", "event", "concert", "stage", "tour", "show", "exhibition",
+DEFAULT_PITCH_TOLERANCE = 0.5
+
+
+# ── 唯一权威规则表 ──────────────────────────────────────────────────────────
+# 观看距离 → 推荐点间距区间（计划文档示例：5m → 2.5~3.0mm）
+VIEWING_DISTANCE_PITCH_TABLE: Tuple[Tuple[float, float, float], ...] = (
+    (2.0, 0.6, 1.5),      # < 2m
+    (4.0, 0.9, 2.0),      # 2–4m
+    (8.0, 1.5, 3.0),      # 4–8m
+    (15.0, 2.5, 5.0),     # 8–15m
+    (30.0, 4.0, 8.0),     # 15–30m
+    (float("inf"), 6.0, 10.0),  # ≥30m
 )
 
-_FIXED_KEYWORDS = (
-    "会议室", "教室", "展厅", "商场", "店铺", "广告", "标牌", "橱窗",
-    "指挥中心", "监控", "控制室", "广播", "电视台", "固定安装", "挂墙",
-    "conference room", "meeting room", "classroom", "office", "retail",
-    "store", "shop", "window", "fixed install", "billboard", "signage",
+# 使用环境 → 亮度区间（最低亮度取自目录中该类产品的最低规格）
+BRIGHTNESS_BY_ENVIRONMENT: Dict[str, Tuple[Optional[int], Optional[int]]] = {
+    "outdoor": (4500, None),
+    "semi_outdoor": (800, None),
+    "indoor": (400, 800),
+}
+
+# 观看距离 → 建议屏幕尺寸（对 LCD/IFP 场景仍有用，LED 场景仅作参考）
+SCREEN_SIZE_BY_DISTANCE: Tuple[Tuple[float, str], ...] = (
+    (3.0, "65-75英寸"),
+    (4.0, "75-86英寸"),
+    (6.0, "86-98英寸"),
+    (float("inf"), "98英寸以上"),
 )
 
-INFERENCE_PROMPT = """你是一名 LED 显示产品工程师，正在为客户的需求预生成一套技术参数。
 
-客户原始需求：
-{requirement}
-
-对话历史：
-{history}
-
-请输出 JSON（仅 JSON，不要 markdown，不要解释）：
-{{
-  "brightness_min_nit": int 或 null,
-  "brightness_max_nit": int 或 null,
-  "pixel_pitch_min_mm": float 或 null,
-  "pixel_pitch_max_mm": float 或 null,
-  "is_rental": true / false / null,
-  "rationale": "一句话解释"
-}}
-
-参数推断规则：
-1. brightness_min_nit：全户外→4000以上，半户外→800，室内一般→500左右
-2. pixel_pitch_min_mm/max_mm：距离≤2m→0.6~1.5，2-4m→0.9~2.0，4-8m→1.5~3.0，8-15m→2.5~5.0，15-30m→4.0~8.0，≥30m→6.0~10.0
-3. is_rental：演唱会/舞台/演出→null，会议室/教室/固定安装→false
-4. 不确定时返回 null
-
-只输出 JSON。
-"""
+# ── 纯函数：工程推断 ────────────────────────────────────────────────────────
+def pitch_range_for_distance(distance_m: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
+    """观看距离（米）→ 推荐点间距区间（mm）。"""
+    if distance_m is None:
+        return None, None
+    try:
+        value = float(distance_m)
+    except (TypeError, ValueError):
+        return None, None
+    if value <= 0:
+        return None, None
+    for index, (limit, pitch_min, pitch_max) in enumerate(VIEWING_DISTANCE_PITCH_TABLE):
+        # 第一档（近距离）取闭区间：客户常说"2 米以内"，2.0m 应归入最细点间距档；
+        # 其余档位保持左闭右开（4m 属于 4~8m 档），与 v1.0 的工程规则一致。
+        if (value <= limit) if index == 0 else (value < limit):
+            return pitch_min, pitch_max
+    return 6.0, 10.0
 
 
-def _rule_infer_rental(requirement: Dict[str, Any], message: str) -> Optional[bool]:
-    """Heuristic rental detection."""
-    text = (message or "").lower()
-    purpose = str(requirement.get("purpose", "")).lower()
-    haystack = f"{text} {purpose}"
-    
-    if any(kw.lower() in haystack for kw in _RENTAL_KEYWORDS):
+def brightness_range_for_environment(
+    environment: Optional[str],
+) -> Tuple[Optional[int], Optional[int]]:
+    """使用环境 → 亮度区间（nit）。"""
+    if not environment:
+        return None, None
+    return BRIGHTNESS_BY_ENVIRONMENT.get(str(environment), (None, None))
+
+
+def screen_size_for_distance(distance_m: Optional[float]) -> Optional[str]:
+    """观看距离 → 建议屏幕尺寸（参考值）。"""
+    if distance_m is None:
+        return None
+    try:
+        value = float(distance_m)
+    except (TypeError, ValueError):
+        return None
+    for limit, size in SCREEN_SIZE_BY_DISTANCE:
+        if value <= limit:
+            return size
+    return None
+
+
+def parse_distance(text: Any) -> Optional[float]:
+    """从 "4米" / "4m" / "4000mm" 这类文本解析观看距离（米）。"""
+    if text is None or text == "":
+        return None
+    if isinstance(text, (int, float)):
+        return float(text) if text else None
+    match = re.search(r"(\d+(?:\.\d+)?)", str(text))
+    if not match:
+        return None
+    value = float(match.group(1))
+    lowered = str(text).lower()
+    if "mm" in lowered or "毫米" in lowered or value > 100:
+        value = value / 1000
+    return value or None
+
+
+def environment_from_facts(facts: Dict[str, Any]) -> Optional[str]:
+    """从事实字典推导使用环境（兼容 indoor/outdoor 布尔与 environment 字符串两套写法）。"""
+    environment = facts.get("environment")
+    if environment in ("indoor", "outdoor", "semi_outdoor"):
+        return environment
+    if _truthy(facts.get("semi_outdoor")):
+        return "semi_outdoor"
+    if _truthy(facts.get("outdoor")):
+        return "outdoor"
+    if _truthy(facts.get("indoor")):
+        return "indoor"
+    return None
+
+
+def _truthy(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "1", "yes", "是")
+
+
+def infer_rental_from_text(text: str, purpose: str = "") -> Optional[bool]:
+    """租赁 / 固装的统一判定（关键词表只有一份，来自 Phase 4）。"""
+    haystack = f"{text} {purpose}".lower()
+    if any(keyword.lower() in haystack for keyword in _RENTAL_KEYWORDS):
         return True
-    if any(kw.lower() in haystack for kw in _FIXED_KEYWORDS):
+    if any(keyword.lower() in haystack for keyword in _FIXED_KEYWORDS):
         return False
     return None
 
 
-def _rule_infer_pitch(distance: str) -> tuple:
-    """Translate viewing distance into pitch range."""
-    if not distance:
-        return None, None
-    match = re.search(r"(\d+(?:\.\d+)?)", str(distance))
-    if not match:
-        return None, None
-    d = float(match.group(1))
-    
-    if d < 2: return 0.6, 1.5
-    if d < 4: return 0.9, 2.0
-    if d < 8: return 1.5, 3.0
-    if d < 15: return 2.5, 5.0
-    if d < 30: return 4.0, 8.0
-    return 6.0, 10.0
+def infer_technical_parameters(facts: Dict[str, Any]) -> Dict[str, Any]:
+    """Requirement Profile（事实）→ 技术参数（工程推断）。
 
+    客户显式指定的点间距 / 亮度优先，且不会被推断值覆盖。
+    """
+    facts = dict(facts or {})
+    environment = environment_from_facts(facts)
+    distance_m = facts.get("viewing_distance_m")
+    if distance_m is None:
+        distance_m = parse_distance(facts.get("distance"))
 
-def _rule_infer_brightness(requirement: Dict[str, Any], message: str) -> tuple:
-    """Default brightness ranges from environment."""
-    text = (message or "").lower()
-    purpose = str(requirement.get("purpose", "")).lower()
-    is_outdoor = requirement.get("outdoor") or any(kw in text for kw in ("户外", "室外", "outdoor"))
-    is_semi_outdoor = any(kw in text for kw in ("半户外", "遮阳", "半室外"))
-    
-    if is_outdoor and not is_semi_outdoor:
-        return 4000, None
-    if is_semi_outdoor:
-        return 800, None
-    return 400, 1500
+    pitch_min, pitch_max = pitch_range_for_distance(distance_m)
+    brightness_min, brightness_max = brightness_range_for_environment(environment)
+    source: Dict[str, str] = {}
 
+    # 客户显式指定点间距 → 覆盖推断区间
+    explicit_pitch = facts.get("pixel_pitch_mm")
+    if explicit_pitch is None:
+        explicit_pitch = facts.get("pixel_pitch")
+    if explicit_pitch is not None:
+        tolerance = float(facts.get("pixel_pitch_tolerance") or DEFAULT_PITCH_TOLERANCE)
+        pitch_min = float(explicit_pitch) - tolerance
+        pitch_max = float(explicit_pitch) + tolerance
+        source["pixel_pitch"] = "explicit"
+    elif pitch_min is not None:
+        source["pixel_pitch"] = "inferred_from_distance"
 
-def _format_history(messages) -> str:
-    """Build conversation history block."""
-    if not messages:
-        return "（无）"
-    lines = []
-    for msg in messages[-6:]:
-        if isinstance(msg, dict):
-            role = msg.get("role", "?")
-            content = msg.get("content", "")
-        else:
-            role = getattr(msg, "type", "?")
-            content = getattr(msg, "content", "")
-        if content:
-            lines.append(f"{role}: {content}")
-    return "\n".join(lines) or "（无）"
+    # 客户显式指定亮度下限 → 覆盖推断值
+    explicit_brightness = facts.get("brightness_min")
+    if explicit_brightness is None:
+        explicit_brightness = facts.get("brightness_min_nit")
+    if explicit_brightness is not None:
+        brightness_min = int(explicit_brightness)
+        source["brightness"] = "explicit"
+    elif brightness_min is not None:
+        source["brightness"] = "inferred_from_environment"
 
-
-def parameter_inference_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Translate requirement → brightness / pitch / rental constraints."""
-    requirement = state.get("requirement", {}) or {}
-    messages = state.get("messages", []) or []
-    
-    # Skip for IFP
-    display_type = state.get("display_type", "BOTH")
-    if display_type == "IFP":
-        return {
-            **state,
-            "inferred_brightness_min_nit": None,
-            "inferred_brightness_max_nit": None,
-            "inferred_pixel_pitch_min_mm": None,
-            "inferred_pixel_pitch_max_mm": None,
-            "inferred_is_rental": None,
-            "next_action": "retrieve",
-        }
-    
-    last_user = ""
-    for msg in reversed(messages):
-        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "type", "")
-        if role in ("user", "human"):
-            last_user = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")
-            break
-    
-    # Rule-based fallback
-    bmin, bmax = _rule_infer_brightness(requirement, last_user)
-    pmin, pmax = _rule_infer_pitch(requirement.get("distance", ""))
-    rental = _rule_infer_rental(requirement, last_user)
-    
-    # LLM refine
-    try:
-        req_text = ", ".join(f"{k}: {v}" for k, v in requirement.items() if v) or "未明确"
-        prompt = INFERENCE_PROMPT.format(
-            requirement=req_text,
-            history=_format_history(messages),
+    installation = facts.get("installation")
+    if installation in ("fixed", "rental"):
+        is_rental: Optional[bool] = installation == "rental"
+        source["installation"] = "explicit"
+    else:
+        is_rental = infer_rental_from_text(
+            str(facts.get("_raw_message", "")), str(facts.get("purpose", ""))
         )
-        response = get_llm(temperature=0.0).invoke(prompt)
+        if is_rental is not None:
+            source["installation"] = "inferred_from_keywords"
+        elif environment in ("indoor", "outdoor"):
+            # 已确定环境且无租赁信号 → 固装（租赁必须显式说明）
+            is_rental = False
+            source["installation"] = "default_fixed"
+
+    return {
+        "environment": environment,
+        "viewing_distance_m": distance_m,
+        "pixel_pitch_min_mm": pitch_min,
+        "pixel_pitch_max_mm": pitch_max,
+        "brightness_min_nit": brightness_min,
+        "brightness_max_nit": brightness_max,
+        "is_rental": is_rental,
+        "screen_size": screen_size_for_distance(distance_m),
+        "source": source,
+    }
+
+
+# ── 事实提取（可选 LLM 补充）────────────────────────────────────────────────
+FACT_EXTRACTION_PROMPT = """你是一名需求事实提取器。请从客户消息中提取**事实**，不要做任何工程推断或推荐。
+
+客户消息：
+{message}
+
+已有事实（不要覆盖非空值）：
+{existing}
+
+请输出 JSON（仅 JSON，不要解释）：
+{{
+  "environment": "indoor" / "outdoor" / "semi_outdoor" / null,
+  "installation": "fixed" / "rental" / null,
+  "purpose": "客户描述的使用场景原文" / null,
+  "viewing_distance_m": 数字（米）/ null,
+  "target_width_mm": 数字（毫米）/ null,
+  "target_height_mm": 数字（毫米）/ null,
+  "budget_level": "low" / "mid" / "high" / null,
+  "special_requirements": ["客户明确提出的特殊要求"]
+}}
+
+规则：
+1. 只提取客户明确说出的信息，不确定就返回 null，禁止猜测。
+2. 不要输出点间距、亮度等技术参数 —— 这些由 Python 规则计算。
+3. 只输出 JSON。"""
+
+
+def extract_requirements(message: str, existing: Dict = None) -> Dict[str, Any]:
+    """LLM 事实提取（只提取事实，不做工程推断）。
+
+    返回 ``{"requirement": {...}}``，键与 Requirement Profile 对齐。
+    失败时返回空字典，调用方应回退到规则提取（``extract_slots``）。
+    """
+    existing = existing or {}
+    try:
+        prompt = FACT_EXTRACTION_PROMPT.format(
+            message=message,
+            existing=json.dumps(existing, ensure_ascii=False) if existing else "无",
+        )
+        response = get_llm(temperature=0).invoke(prompt)
         content = response.content if hasattr(response, "content") else str(response)
-        
         if "```json" in content:
             content = content.split("```json", 1)[1].split("```", 1)[0]
         elif "```" in content:
             content = content.split("```", 1)[1].split("```", 1)[0]
-        
         parsed = json.loads(content.strip())
-        
-        if parsed.get("brightness_min_nit") is not None:
-            bmin = int(parsed["brightness_min_nit"])
-        if parsed.get("brightness_max_nit") is not None:
-            bmax = int(parsed["brightness_max_nit"])
-        if parsed.get("pixel_pitch_min_mm") is not None:
-            pmin = float(parsed["pixel_pitch_min_mm"])
-        if parsed.get("pixel_pitch_max_mm") is not None:
-            pmax = float(parsed["pixel_pitch_max_mm"])
-        if parsed.get("is_rental") is not None:
-            rental = parsed["is_rental"]
-        
-        logger.info(f"ParameterInference: bmin={bmin} bmax={bmax} pmin={pmin} pmax={pmax} rental={rental}")
-        
+        facts = {k: v for k, v in parsed.items() if v not in (None, "", [], {})}
+        return {"requirement": facts}
     except Exception as exc:
-        logger.warning(f"ParameterInference LLM failed: {exc}")
-    
-    return {
-        **state,
-        "inferred_brightness_min_nit": bmin,
-        "inferred_brightness_max_nit": bmax,
-        "inferred_pixel_pitch_min_mm": pmin,
-        "inferred_pixel_pitch_max_mm": pmax,
-        "inferred_is_rental": rental,
-        "next_action": "check_info",
-    }
-
-
-def detect_intent(message: str) -> str:
-    """Detect if the message is about product recommendations/needs.
-    
-    Returns "recommendation" if the message appears to be describing needs
-    or asking for product recommendations based on requirements.
-    """
-    import logging as _di_log
-    _di_log.getLogger(__name__).warning("detect_intent CALLED with: %r", message)
-    
-    recommendation_patterns = [
-        r"需要.*屏",
-        r"需要.*屏幕",
-        r"要.*屏",
-        r"要.*屏幕",
-        r"想买",
-        r"采购",
-        r"推荐",
-        r"选.*屏",
-        r"选.*屏幕",
-        r"帮我选",
-        r"用.*场景",
-        r"用.*地方",
-        r"安装.*地方",
-        r"适合.*用",
-        r"会议室",
-        r"教室",
-        r"培训",
-        r"舞台",
-        r"广告",
-        r"租赁",
-        r"演唱会",
-        r"体育",
-        r"户外",
-        r"室内",
-        r"屏幕",
-        r"手写",
-        r"触控",
-        r"交互",
-        r"白板",
-    ]
-    
-    message_lower = message.lower()
-    _di_log.getLogger(__name__).warning("detect_intent message_lower: %r", message_lower)
-    for pattern in recommendation_patterns:
-        if re.search(pattern, message_lower):
-            return "recommendation"
-    
-    return ""
-
-
-def extract_requirements(message: str, existing: Dict = None) -> Dict[str, Any]:
-    """Extract requirements from a message using the LLM.
-    
-    Args:
-        message: The user's message
-        existing: Existing requirements to merge with
-        
-    Returns:
-        Dict with 'requirement' key containing the extracted requirements
-    """
-    from src.core.llm import get_llm
-    
-    existing = existing or {}
-    
-    req_parts = [f"{k}: {v}" for k, v in existing.items() if v]
-    existing_text = "\n".join(req_parts) if req_parts else "无"
-    
-    prompt = f"""从用户消息中提取 LED/LCD 显示产品需求：
-
-已有需求：
-{existing_text}
-
-用户消息：{message}
-
-请以 JSON 格式返回：
-{{
-    "requirement": {{
-        "indoor": true/false/null,
-        "outdoor": true/false/null,
-        "distance": "可视距离描述",
-        "purpose": "使用场景",
-        "size": "尺寸要求",
-        "brightness": "亮度要求",
-        "display_type": "LED/LCD/BOTH/null"
-    }}
-}}
-
-只返回 JSON，不要其他内容。"""
-    
-    try:
-        llm = get_llm(temperature=0)
-        response = llm.invoke(prompt)
-        content = response.content if hasattr(response, "content") else str(response)
-        
-        # Parse JSON
-        import json
-        import re
-        # Extract JSON from response
-        match = re.search(r'\{[^{}]*\}', content, re.DOTALL)
-        if match:
-            parsed = json.loads(match.group())
-            return {"requirement": parsed.get("requirement", {})}
-        else:
-            return {"requirement": {}}
-    except Exception as e:
-        logger.warning(f"extract_requirements error: {e}")
+        logger.warning("extract_requirements LLM failed, fallback to rules: %s", exc)
         return {"requirement": {}}
 
 
+# ── 兼容层：旧 API（保持既有调用方与测试可用）──────────────────────────────
 class ParameterInference:
-    """参数推断器（Phase 4 / Phase 11：独立类，便于复用 & 测试）。
+    """参数推断器（兼容旧 API）。
 
-    关键职责（Phase 8 规则工程化 + Phase 11 性能）：
-        - 室内 / 室外 / 半户外 → outdoor / indoor 布尔
-        - 屏幕类型 → display_type (LED / LCD / IFP)
-        - 点间距 P 数字 → pixel_pitch
-        - 租赁 / 固定 → is_rental
-        - 防水 / COB / HDR / 拼接 → 各 flag
-        - 业务上的 capability 表达式（如 "800nit"）→ brightness_min
-
-    该类是 **Pure Rule** —— 不调用 LLM（性能 + 可测试）。
-    所有规则从现有 router / requirement 中提取并集中。
+    ``extract_constraints`` 现在是 Phase 4 ``extract_slots`` 的适配器，
+    不再维护第二套关键词表；工程推断统一走 ``infer_technical_parameters``。
     """
 
-    # 室内场景关键词
-    _INDOOR_PURPOSE = (
-        "会议室", "会议", "教室", "培训", "教学", "学校", "课堂",
-        "商场", "商店", "零售", "店铺", "超市",
-        "展厅", "展馆", "展览", "博物馆",
-        "医院", "诊所",
-        "指挥中心", "监控中心", "中控室", "控制室",
-        "机场", "车站", "码头", "地铁", "酒店", "大堂", "银行",
-        "餐厅", "酒吧", "咖啡厅",
-        "室内", "户内",
-    )
-    _OUTDOOR_PURPOSE = (
-        "户外", "室外", "露天",
-        "建筑外墙", "幕墙", "楼体",
-        "体育场", "操场", "广场",
-        "演唱会", "音乐会", "舞台", "演出", "表演", "剧场",
-        "广告", "传媒",
-    )
-    _SEMI_OUTDOOR_PURPOSE = (
-        "半户外", "半室外", "遮阳",
-    )
-
-    _DISPLAY_LED_KEYWORDS = ("led", "LED", "显示屏", "屏幕")
-    _DISPLAY_LCD_KEYWORDS = ("lcd", "LCD", "拼接屏", "拼接")
-    _DISPLAY_IFP_KEYWORDS = (
-        "ifp", "会议一体机", "触摸一体机", "交互平板", "交互式平板",
-        "电子白板", "interactive flat panel",
-    )
-
-    _DISPLAY_EXCLUDE_IFP = (
-        "不需要手写", "不需要IFP", "不要IFP", "普通显示屏", "普通屏",
-    )
-
-    _RENTAL_KEYWORDS = (
-        "租赁", "租用", "短租", "活动", "演唱会", "舞台", "演出",
-        "展览", "车展", "快闪", "比赛", "体育", "赛事", "巡演", "临时",
-        "rental", "event", "concert", "stage", "tour", "show", "exhibition",
-    )
-    _FIXED_KEYWORDS = (
-        "会议室", "教室", "展厅", "商场", "店铺", "广告", "标牌",
-        "橱窗", "指挥中心", "监控中心", "控制室", "固定安装", "挂墙",
-        "固装", "永久", "fixed",
-        "conference room", "meeting room", "classroom", "office",
-        "retail", "store", "fixed install", "billboard",
-    )
-
-    def __init__(self):
-        # 状态无关：纯函数式，所以不需要任何实例字段
-        # 保留 __init__ 是为了让测试桩能 mock
-        pass
-
-    # ── 公开 API ────────────────────────────────────────────────
     def extract_constraints(self, message: str) -> Dict[str, Any]:
-        """从单条用户消息中提取结构化约束。
-
-        返回字典，可直接传给 ``ProductFilter.apply(**result)``。
-        """
+        """从单条用户消息提取结构化约束（纯规则，不调用 LLM）。"""
         if not message:
             return {}
-        text = str(message).strip()
-        lower = text.lower()
+        text = str(message)
+        slots = extract_slots(text)
         constraints: Dict[str, Any] = {}
 
-        # 1) 室内 / 室外 / 半户外（按优先级）
-        is_semi = any(kw in text for kw in self._SEMI_OUTDOOR_PURPOSE)
-        # 注意：把"室内" / "户外" 这种强信号挑出来，演唱会虽然一般是户外活动，
-        # 但用户原文里说"室内 + 演唱会"更可能是用错表达，应该信 indoor 关键词
-        has_indoor_kw = "室内" in text or "户内" in text or "indoor" in lower
-        has_outdoor_kw = (
-            "户外" in text or "室外" in text or "outdoor" in lower
-        )
-        other_outdoor_scene = any(
-            kw for kw in self._OUTDOOR_PURPOSE
-            if kw in text and kw not in ("户外", "室外")
-        ) or has_outdoor_kw
-
-        if is_semi:
-            constraints["semi_outdoor"] = True
-            constraints["purpose"] = "半户外"
-            constraints.setdefault("outdoor", True)
-            constraints.setdefault("indoor", False)
-        elif has_indoor_kw:
-            # 室内显式表达优先（即使有演唱会等户外活动关键词）
+        # 环境
+        environment = slots.get("environment")
+        if environment == "indoor":
             constraints["indoor"] = True
             constraints["outdoor"] = False
-        elif other_outdoor_scene:
+        elif environment == "outdoor":
             constraints["outdoor"] = True
             constraints["indoor"] = False
-        elif any(kw in text for kw in self._INDOOR_PURPOSE):
-            constraints["indoor"] = True
-            constraints["outdoor"] = False
+        elif environment == "semi_outdoor":
+            constraints["semi_outdoor"] = True
+            constraints["outdoor"] = True
+            constraints["indoor"] = False
 
-        # 2) display_type
-        if any(kw in text for kw in self._DISPLAY_LCD_KEYWORDS):
-            constraints["display_type"] = "LCD"
-        elif any(kw in text for kw in self._DISPLAY_IFP_KEYWORDS):
-            constraints["display_type"] = "IFP"
-        elif any(kw in text for kw in self._DISPLAY_LED_KEYWORDS):
-            constraints["display_type"] = "LED"
-
-        # 显式排除 IFP（"普通显示屏就行" 等表达）
-        if any(neg in text for neg in self._DISPLAY_EXCLUDE_IFP):
+        # 产品类型
+        if slots.get("display_type"):
+            constraints["display_type"] = slots["display_type"]
+        lowered = text.lower()
+        if any(kw in text for kw in ("不需要手写", "不需要IFP", "不要IFP", "普通显示屏", "普通屏")):
             constraints["exclude_ifp"] = True
-
-        # 3) pixel_pitch（"P2.5"、"点间距3mm"）
-        pitch = re.search(r"[Pp](\d+(?:\.\d+)?)", text)
-        if pitch:
-            constraints["pixel_pitch"] = float(pitch.group(1))
-            constraints["pixel_pitch_tolerance"] = 0.5
-        else:
-            mm_match = re.search(r"点间距\s*(\d+(?:\.\d+)?)\s*mm", text)
-            if mm_match:
-                constraints["pixel_pitch"] = float(mm_match.group(1))
-
-        # 4) 亮度（"5000nit"、"亮度5000"）
-        brightness = re.search(r"(\d{3,5})\s*nit", lower)
-        if brightness:
-            constraints["brightness_min"] = int(brightness.group(1))
-        else:
-            br = re.search(r"亮度\s*(\d{3,5})", text)
-            if br:
-                constraints["brightness_min"] = int(br.group(1))
-
-        # 5) 尺寸（"65英寸"、"55寸"）
-        size = re.search(r"(\d+)\s*(?:寸|英寸|inch)", lower)
-        if size:
-            constraints["size_inch"] = int(size.group(1))
-
-        # 6) 租赁 / 固定安装
-        if any(kw in lower for kw in self._RENTAL_KEYWORDS):
-            constraints["is_rental"] = True
-        elif any(kw in lower for kw in self._FIXED_KEYWORDS):
-            constraints["is_rental"] = False
-
-        # 7) 防水
-        if "防水" in text or "waterproof" in lower or re.search(r"ip65", lower):
-            constraints["waterproof"] = True
-
-        # 8) HDR
-        if "hdr" in lower:
-            constraints["hdr"] = True
-
-        # 9) COB
-        if "cob" in lower:
-            constraints["cob"] = True
-
-        # 10) 拼接（指挥中心 / 监控中心 偏好）
-        if any(kw in text for kw in ("拼接", "拼接屏", "拼接墙")) or \
-           any(kw in text for kw in ("指挥中心", "监控中心", "控制室", "中控室")):
+        if "拼接" in text or "拼接屏" in text or "拼接墙" in text:
             constraints["is_splicing"] = True
-            if "display_type" not in constraints:
-                constraints["display_type"] = "LCD"
+            constraints.setdefault("display_type", "LCD")
 
-        # 11) purpose（按优先级：户外 > 室内 > 半户外）
-        for kw in self._OUTDOOR_PURPOSE:
-            if kw in text:
-                constraints.setdefault("purpose", kw)
-                break
-        if "purpose" not in constraints:
-            for kw in self._INDOOR_PURPOSE:
-                if kw in text:
-                    constraints.setdefault("purpose", kw)
-                    break
+        # 点间距
+        if slots.get("pixel_pitch_mm") is not None:
+            constraints["pixel_pitch"] = float(slots["pixel_pitch_mm"])
+            constraints["pixel_pitch_tolerance"] = DEFAULT_PITCH_TOLERANCE
+
+        # 亮度
+        if slots.get("brightness_min") is not None:
+            constraints["brightness_min"] = int(slots["brightness_min"])
+
+        # 尺寸
+        if slots.get("size_inch") is not None:
+            constraints["size_inch"] = slots["size_inch"]
+
+        # 固装 / 租赁
+        if slots.get("installation"):
+            constraints["is_rental"] = slots["installation"] == "rental"
+        else:
+            rental = infer_rental_from_text(text, str(slots.get("purpose", "")))
+            if rental is not None:
+                constraints["is_rental"] = rental
+
+        # 特殊功能
+        for slot_key, constraint_key in (
+            ("waterproof", "waterproof"),
+            ("cob", "cob"),
+            ("hdr", "hdr"),
+            ("gob", "gob"),
+        ):
+            if slots.get(slot_key):
+                constraints[constraint_key] = True
+
+        # 场景 / 视距（保留旧键名，供 rerank / 话术使用）
+        if slots.get("purpose"):
+            constraints["purpose"] = slots["purpose"]
+        if slots.get("viewing_distance_m") is not None:
+            constraints["distance"] = f"{slots['viewing_distance_m']:g}米"
+        if slots.get("model"):
+            constraints["model"] = slots["model"]
+        elif slots.get("series_id"):
+            constraints["series_id"] = slots["series_id"]
+        if slots.get("budget_level"):
+            constraints["budget_level"] = slots["budget_level"]
 
         return constraints
 
-    # ── 兼容旧调用方式 ──────────────────────────────────────────
+    # ── 旧方法：统一委托到权威规则表 ────────────────────────────────────
     def infer_brightness(
         self,
         constraint: Dict[str, Any],
         message: str = "",
-    ) -> tuple:
-        """对外暴露 _rule_infer_brightness，避免重复实现。"""
-        return _rule_infer_brightness(constraint, message)
+    ) -> Tuple[Optional[int], Optional[int]]:
+        """环境 → 亮度区间（唯一规则表）。"""
+        environment = environment_from_facts(constraint or {})
+        if environment is None:
+            environment = environment_from_facts(extract_slots(message or ""))
+        return brightness_range_for_environment(environment)
 
-    def infer_pitch(self, distance: str) -> tuple:
-        """对外暴露 _rule_infer_pitch。"""
-        return _rule_infer_pitch(distance)
+    def infer_pitch(self, distance: str) -> Tuple[Optional[float], Optional[float]]:
+        """观看距离 → 点间距区间（唯一规则表）。"""
+        return pitch_range_for_distance(parse_distance(distance))
 
     def infer_rental(
         self,
         constraint: Dict[str, Any],
         message: str = "",
     ) -> Optional[bool]:
-        """对外暴露 _rule_infer_rental。"""
-        return _rule_infer_rental(constraint, message)
+        """租赁判定（唯一关键词表）。"""
+        return infer_rental_from_text(
+            message or str((constraint or {}).get("_raw_message", "")),
+            str((constraint or {}).get("purpose", "")),
+        )
+
+    def infer_technical_parameters(self, facts: Dict[str, Any]) -> Dict[str, Any]:
+        """对外暴露统一工程推断。"""
+        return infer_technical_parameters(facts)
+
+
+# ── Intent 检测（统一入口：规则优先，可选 LLM 兜底）─────────────────────────
+_RECOMMENDATION_PATTERNS = (
+    r"需要.*屏", r"需要.*屏幕", r"要.*屏", r"要.*屏幕", r"想买", r"采购", r"推荐",
+    r"选.*屏", r"选.*屏幕", r"帮我选", r"用.*场景", r"用.*地方", r"安装.*地方",
+    r"适合.*用", r"租赁", r"报价", r"方案",
+)
+
+_VALID_INTENTS = ("recommendation", "product_question", "conversation", "others")
+
+
+def detect_intent(message: str, use_llm: bool = False) -> str:
+    """统一的意图检测。
+
+    - ``use_llm=False``（默认，销售 Agent 使用）：纯规则，命中返回
+      ``"recommendation"``，否则返回空字符串。
+    - ``use_llm=True``（方案 Agent 使用）：规则判定为推荐时直接返回；
+      否则用 LLM 区分 product_question / conversation / others。
+    """
+    text = str(message or "").strip()
+    if not text:
+        return "" if not use_llm else "others"
+    lowered = text.lower()
+
+    slots = extract_slots(text)
+    has_signal = bool(slots) or any(
+        re.search(pattern, lowered) for pattern in _RECOMMENDATION_PATTERNS
+    )
+    if has_signal:
+        return "recommendation"
+    if not use_llm:
+        return ""
+
+    prompt = (
+        "Classify the user message into exactly one intent:\n"
+        "- recommendation: describing needs or asking for a product recommendation\n"
+        "- product_question: asking about specs/features/capabilities/model differences\n"
+        "- conversation: greetings and casual chat\n"
+        "- others: company info, warranty, business process, anything else\n\n"
+        f"User message: {text}\n\nReturn the intent type only."
+    )
+    try:
+        response = get_llm(temperature=0).invoke(prompt)
+        intent = str(getattr(response, "content", response)).strip().lower()
+        return intent if intent in _VALID_INTENTS else "others"
+    except Exception as exc:
+        logger.warning("detect_intent LLM fallback failed: %s", exc)
+        return "others"
+
+
+# ── LangGraph 节点 ──────────────────────────────────────────────────────────
+def parameter_inference_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """事实 → 技术参数（纯 Python，不调用 LLM）。"""
+    requirement = dict(state.get("requirement", {}) or {})
+    messages = state.get("messages", []) or []
+
+    last_user = ""
+    for msg in reversed(messages):
+        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "type", "")
+        if role in ("user", "human"):
+            last_user = (
+                msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")
+            )
+            break
+    if not last_user:
+        # 与 retrieval 节点保持一致：messages 里没有用户消息时回退到 current_message
+        last_user = str(state.get("current_message") or "")
+
+    facts = dict(extract_slots(last_user))
+    facts.update({k: v for k, v in requirement.items() if v not in (None, "", [], {})})
+    facts["_raw_message"] = last_user
+
+    display_type = state.get("display_type", "BOTH")
+    if display_type == "IFP":
+        technical: Dict[str, Any] = {
+            "environment": environment_from_facts(facts),
+            "viewing_distance_m": facts.get("viewing_distance_m"),
+            "pixel_pitch_min_mm": None,
+            "pixel_pitch_max_mm": None,
+            "brightness_min_nit": None,
+            "brightness_max_nit": None,
+            "is_rental": None,
+            "screen_size": screen_size_for_distance(facts.get("viewing_distance_m")),
+            "source": {"display_type": "ifp_skip_engineering_inference"},
+        }
+    else:
+        technical = infer_technical_parameters(facts)
+
+    logger.info(
+        "ParameterInference: pitch=%s~%s brightness=%s~%s rental=%s source=%s",
+        technical["pixel_pitch_min_mm"], technical["pixel_pitch_max_mm"],
+        technical["brightness_min_nit"], technical["brightness_max_nit"],
+        technical["is_rental"], technical["source"],
+    )
+
+    return {
+        **state,
+        "inferred_brightness_min_nit": technical["brightness_min_nit"],
+        "inferred_brightness_max_nit": technical["brightness_max_nit"],
+        "inferred_pixel_pitch_min_mm": technical["pixel_pitch_min_mm"],
+        "inferred_pixel_pitch_max_mm": technical["pixel_pitch_max_mm"],
+        "inferred_is_rental": technical["is_rental"],
+        "inferred_screen_size": technical["screen_size"],
+        "technical_parameters": technical,
+        "next_action": "retrieve" if display_type == "IFP" else "check_info",
+    }
 
 
 __all__ = [
     "ParameterInference",
-    "extract_requirements",
-    "parameter_inference_node",
+    "BRIGHTNESS_BY_ENVIRONMENT",
+    "VIEWING_DISTANCE_PITCH_TABLE",
+    "brightness_range_for_environment",
     "detect_intent",
+    "environment_from_facts",
+    "extract_requirements",
+    "extract_slots",
+    "infer_rental_from_text",
+    "infer_technical_parameters",
+    "parameter_inference_node",
+    "parse_distance",
+    "pitch_range_for_distance",
+    "screen_size_for_distance",
 ]

@@ -87,6 +87,10 @@ def create_vectorstore(documents: List[Document], persist_dir: str = None, colle
     """
     Create a new vector store from documents.
 
+    ⚠️ 追加语义：若 ``persist_dir`` 下已存在同名 collection，文档会被**追加**而不是替换
+    （49 条语料重复执行会变成 98 条）。需要"重建"语义时请使用
+    :func:`recreate_vectorstore`。
+
     Args:
         documents: List of documents to embed
         persist_dir: Directory to persist the vector store

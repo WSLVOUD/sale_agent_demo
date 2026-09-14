@@ -355,54 +355,6 @@ html, body {
     }
 }
 
-/* ===== 产品卡片 ===== */
-.products-container {
-    margin-top: 16px;
-}
-
-.product-card {
-    background: var(--bg-message-ai);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 12px;
-    box-shadow: var(--shadow-sm);
-}
-
-.product-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 10px;
-}
-
-.product-name {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-primary);
-}
-
-.product-score {
-    font-size: 12px;
-    font-weight: 600;
-    color: #10b981;
-    background: #d1fae5;
-    padding: 4px 8px;
-    border-radius: 6px;
-}
-
-.product-specs {
-    font-size: 13px;
-    color: var(--text-secondary);
-    margin-bottom: 8px;
-}
-
-.product-desc {
-    font-size: 14px;
-    color: var(--text-primary);
-    line-height: 1.5;
-}
-
 /* ===== 底部输入区 ===== */
 .input-area {
     background: var(--bg-input);

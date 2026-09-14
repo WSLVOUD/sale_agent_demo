@@ -95,6 +95,7 @@ class AsyncTaskManager:
         name: str,
         coro: Coroutine,
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        task_id: Optional[str] = None,
     ) -> str:
         """
         创建并启动异步任务
@@ -103,11 +104,13 @@ class AsyncTaskManager:
             name: 任务名称
             coro: 异步协程
             progress_callback: 进度回调 (progress: int, message: str) -> None
+            task_id: 可选，调用方指定的任务 ID（用于把 task_id 提前告知客户端；
+                     不传则内部生成）
             
         Returns:
             task_id: 任务 ID
         """
-        task_id = str(uuid.uuid4())[:8]
+        task_id = task_id or str(uuid.uuid4())[:8]
         
         async with self._lock:
             self._tasks[task_id] = TaskInfo(

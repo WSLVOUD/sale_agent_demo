@@ -3,6 +3,9 @@ Fast Path 处理器。
 
 处理简单 Query，直接走结构化过滤 + 模板回复，不经过完整 Agent 流程。
 适用于：参数查询、简单推荐、固定销售异议等。
+
+注意（v2.0 修订）：Fast Path 的输出必须是 **Model 级**（如 `TW21-3216-P2.5`）。
+Series（`TW21-3216 series`）只是产品族，不能当作推荐结果返回给客户。
 """
 from __future__ import annotations
 
@@ -28,7 +31,7 @@ def _get_products(data_dir: str) -> list[Product]:
 def _find_products(
     constraints: dict,
     data_dir: str,
-    top_k: int = 5,
+    top_k: int = 1,
 ) -> list[Product]:
     """根据约束条件查找匹配产品。"""
     from src.config import config as global_config
@@ -79,13 +82,80 @@ def _find_products(
     return filter_engine.apply(**kwargs, top_k=top_k)
 
 
-def _build_product_summary(products: list[Product]) -> str:
-    """Format product list into natural conversational list."""
+# ── v2.0：Model 级过滤（Fast Path 实际返回给客户的单位）─────────────────────
+def _find_models(constraints: dict, data_dir: str, top_k: int = 3) -> list[dict]:
+    """按约束过滤 Model 级产品，返回真实型号（含点间距/亮度/箱体）。"""
+    from src.config import config as global_config
+    from src.rag.json_loader import load_canonical_models
+
+    models = load_canonical_models(data_dir or global_config.DATA_DIR)
+    pitch = constraints.get("pixel_pitch")
+    tolerance = float(constraints.get("pixel_pitch_tolerance") or 0.5)
+    brightness_min = constraints.get("brightness_min")
+
+    matched = []
+    for model in models:
+        if constraints.get("display_type") and model.display_type != constraints["display_type"]:
+            continue
+        if constraints.get("outdoor") is True and not model.outdoor:
+            continue
+        if constraints.get("indoor") is True and not model.indoor:
+            continue
+        if constraints.get("is_rental") is not None and (
+            model.installation == "rental"
+        ) != bool(constraints["is_rental"]):
+            continue
+        if constraints.get("waterproof") and not model.waterproof:
+            continue
+        if constraints.get("cob") and not model.cob:
+            continue
+        if constraints.get("hdr") and not model.hdr:
+            continue
+        if constraints.get("gob") and not model.gob:
+            continue
+        if constraints.get("flexible") and not model.flexible:
+            continue
+        if brightness_min is not None and model.brightness_nit < int(brightness_min):
+            continue
+        if pitch is not None and abs(model.pixel_pitch_mm - float(pitch)) > tolerance:
+            continue
+        matched.append(model)
+
+    # 先按"每个系列只保留最细点间距的一款"做去重，再按点间距排序：
+    # 这样"有没有防水的产品"会给出跨系列的可选项，而不是同系列的 3 个相邻型号。
+    best_per_series: dict[str, Any] = {}
+    for model in matched:
+        current = best_per_series.get(model.series_id)
+        if current is None or model.pixel_pitch_mm < current.pixel_pitch_mm:
+            best_per_series[model.series_id] = model
+    matched = sorted(best_per_series.values(), key=lambda m: (m.pixel_pitch_mm, m.model))
+    return [
+        {
+            "model": m.model,
+            "series": m.series,
+            "series_id": m.series_id,
+            "display_type": m.display_type,
+            "pixel_pitch_mm": m.pixel_pitch_mm,
+            "brightness_nit": m.brightness_nit,
+            "cabinet_size_mm": m.cabinet_size_text,
+            "modules_per_cabinet": m.modules_per_cabinet,
+            "installation": m.installation,
+        }
+        for m in matched[:top_k]
+    ]
+
+
+def _build_product_summary(products: list[dict]) -> str:
+    """把匹配到的 **Model** 列表格式化成话术（含点间距/亮度/箱体）。"""
     if not products:
         return "No matching products found."
 
-    names = [f"{p.series}" for p in products]
-    return "Here are my recommendations: " + ", ".join(names)
+    parts = [
+        f"{item['model']} ({item['pixel_pitch_mm']}mm, {item['brightness_nit']}nit, "
+        f"cabinet {item['cabinet_size_mm']})"
+        for item in products
+    ]
+    return "Matching models: " + "; ".join(parts)
 
 
 # ── 销售模板 ────────────────────────────────────────────────────────────────
@@ -137,7 +207,7 @@ def fast_path_handle(
           - template_used: 是否使用了模板
     """
     answer_parts = []
-    products: list[Product] = []
+    products: list[dict] = []
     template_used = False
 
     # 1. 销售模板优先
@@ -163,12 +233,11 @@ def fast_path_handle(
         constraints.get("hdr"),
     ]):
         try:
-            matched = _find_products(constraints, data_dir)
+            matched = _find_models(constraints, data_dir, top_k=3)
             if matched:
                 products = matched
                 if not template_used:
-                    answer_parts.append(f"Found {len(matched)} matching products:\n")
-                    answer_parts.append(_build_product_summary(matched[:3]))
+                    answer_parts.append(_build_product_summary(matched))
         except Exception as exc:
             logger.warning("Fast path product search failed: %s", exc)
 
@@ -180,11 +249,15 @@ def fast_path_handle(
         "answer": "\n".join(answer_parts).strip(),
         "products": [
             {
-                "product_id": p.product_id,
-                "series": p.series,
-                "display_type": p.display_type,
-                "brightness_nit": p.brightness_nit,
-                "features": p.features,
+                "product_id": p["model"],
+                "model": p["model"],
+                "series": p["series"],
+                "series_id": p["series_id"],
+                "display_type": p["display_type"],
+                "brightness_nit": p["brightness_nit"],
+                "pixel_pitch_mm": p["pixel_pitch_mm"],
+                "cabinet_size_mm": p["cabinet_size_mm"],
+                "installation": p["installation"],
             }
             for p in products[:3]
         ],

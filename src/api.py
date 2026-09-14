@@ -21,7 +21,8 @@ import time
 from pathlib import Path
 
 from src.config import config
-from src.rag.loader import load_all_product_files, ENVIRONMENT_METADATA_VERSION
+from src.rag.corpus import build_retrieval_corpus, corpus_as_dicts, corpus_summary
+from src.rag.loader import ENVIRONMENT_METADATA_VERSION
 from src.core.embeddings import load_vectorstore, recreate_vectorstore
 from src.memory.store import memory
 from src.orchestrator import DualAgentOrchestrator
@@ -138,20 +139,17 @@ vectorstore = None
 
 
 def get_documents_for_retrieval():
-    """Load all product documents for sparse/bm25 indexing."""
+    """构建 Model 级检索语料（Phase 2 起为唯一产品语料来源）。
+
+    返回 ``[{"id", "text", "metadata"}]``，供 Vector / Sparse / BM25 三路共用。
+    """
     try:
-        documents = load_all_product_files(config.DATA_DIR)
-        docs = []
-        for i, doc in enumerate(documents):
-            docs.append({
-                "id": str(i),
-                "text": doc.page_content,
-                "metadata": doc.metadata
-            })
-        return docs
-    except FileNotFoundError as e:
-        logger.warning(f"Data directory not found, keyword retrieval will use limited data: {e}")
-        return []
+        documents = build_retrieval_corpus(config.DATA_DIR)
+        logger.info("Retrieval corpus: %s", corpus_summary(documents))
+        return corpus_as_dicts(documents)
+    except Exception as e:
+        logger.error("Failed to build retrieval corpus: %s", e)
+        raise
 
 
 @app.on_event("startup")
@@ -164,10 +162,12 @@ async def startup_event():
     logger.info("=" * 50)
     
     try:
-        # Load source documents
-        documents = get_documents_for_retrieval()
+        # Load source documents（Phase 2：Model 级语料，一个实际销售型号一个 Document）
+        corpus_documents = build_retrieval_corpus(config.DATA_DIR)
+        documents = corpus_as_dicts(corpus_documents)
         if not documents:
             raise RuntimeError("No product documents found; cannot initialize retrieval")
+        logger.info("Retrieval corpus: %s", corpus_summary(corpus_documents))
 
         # Check if vector store needs rebuild
         store_path = Path(config.VECTORSTORE_DIR)
@@ -178,6 +178,8 @@ async def startup_event():
             or os.path.getsize(sqlite_path) == 0
         )
         collection_count = 0
+        fresh_documents = corpus_documents
+        expected_count = len(fresh_documents)
 
         if not must_rebuild:
             vectorstore = load_vectorstore()
@@ -187,6 +189,8 @@ async def startup_event():
             required_metadata = {
                 "indoor", "outdoor", "display_type",
                 "environment_metadata_version", "product_category",
+                # Phase 1/v2.0 新增的功能性字段：缺失说明语料 schema 变过，需要重建
+                "gob", "flexible", "modules_per_cabinet",
             }
             invalid_metadata = [
                 metadata for metadata in stored_metadatas
@@ -195,10 +199,8 @@ async def startup_event():
                 or not isinstance(metadata.get("outdoor"), bool)
                 or metadata.get("display_type") not in {"LED", "LCD", "IFP"}
                 or metadata.get("environment_metadata_version") != ENVIRONMENT_METADATA_VERSION
+                or metadata.get("level") != "model"
             ]
-
-            fresh_documents = load_all_product_files(config.DATA_DIR)
-            expected_count = len(fresh_documents)
 
             must_rebuild = (
                 collection_count == 0
@@ -519,45 +521,45 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
 
 
 async def _stream_chat(request: ChatRequest):
-    """SSE 流式聊天处理。逐 token yield，不等待完整响应。"""
+    """SSE 流式聊天处理。
+
+    与普通 ``/chat`` 走**同一条完整管线**（首轮接待 → Sales Agent 需求采集 →
+    Recommendation Ready Gate → 选型/计算/表达），只是把最终文本拆块输出。
+
+    旧实现直接调 ``solution_agent.run_stream()``，会绕过 Sales Agent 与需求采集，
+    导致"只知道室内外 + 场景"就推荐。这里修正为统一入口。
+    """
     import json as _json
 
     session_id = request.session_id
     question = request.question
 
-    # 首先发送 metadata
     yield f"data: {_json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
 
+    start_time = time.time()
     try:
-        start_time = time.time()
-        first_token_sent = False
+        result = orchestrator.process_message(
+            message=question,
+            session_id=session_id,
+        )
+        answer = str(result.get("response") or "")
+        if not answer:
+            answer = _get_fallback_response(question)
 
-        # 检查 Solution Agent 是否支持流式
-        if orchestrator and orchestrator.solution_agent:
-            try:
-                for chunk in orchestrator.solution_agent.run_stream(
-                    message=question,
-                    history=[],
-                ):
-                    if chunk:
-                        if not first_token_sent:
-                            ttft = (time.time() - start_time) * 1000
-                            yield f"data: {_json.dumps({'type': 'ttft', 'ms': round(ttft, 1)})}\n\n"
-                            first_token_sent = True
-                        yield f"data: {_json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
-            except Exception:
-                pass  # 流式失败时回退到同步
+        ttft = (time.time() - start_time) * 1000
+        yield f"data: {_json.dumps({'type': 'ttft', 'ms': round(ttft, 1)})}\n\n"
 
-        # 如果流式未输出任何内容，使用同步降级
-        if not first_token_sent:
-            fallback = _get_fallback_response(question)
-            yield f"data: {_json.dumps({'type': 'chunk', 'content': fallback})}\n\n"
+        # 按句/词组切块，保持 SSE 语义但不依赖真实 token 流
+        import re as _re
 
+        chunks = _re.findall(r"\S+\s*", answer)
+        for chunk in chunks:
+            yield f"data: {_json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
     except Exception as exc:
         logger.error("Stream error: %s", exc)
         yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+        yield f"data: {_json.dumps({'type': 'chunk', 'content': _get_fallback_response(question)})}\n\n"
 
-    # 结束信号
     total_time = (time.time() - start_time) * 1000
     yield f"data: {_json.dumps({'type': 'done', 'total_ms': round(total_time, 1)})}\n\n"
 
@@ -567,17 +569,23 @@ async def _stream_chat(request: ChatRequest):
 
 async def _create_rebuild_coro(task_id_ref: list) -> dict:
     """后台重建协程（接收 task_id 引用）"""
-    from src.core.embeddings import create_vectorstore
+    # 注意：必须用 recreate_vectorstore（会先清空旧 collection）。
+    # create_vectorstore 是"追加"语义，直接用它会把语料重复写入（49 → 98）。
+    from src.core.embeddings import recreate_vectorstore
     from src.agents.sales.runner import SalesAgentRunner
     from src.agents.solution.runner import SolutionAgentRunner
 
     task_id = task_id_ref[0]
     
-    task_manager.update_progress(task_id, 10, "加载产品数据...")
-    documents = load_all_product_files(config.DATA_DIR)
+    task_manager.update_progress(task_id, 10, "加载 Model 级产品数据...")
+    corpus_documents = build_retrieval_corpus(config.DATA_DIR)
+    documents = corpus_as_dicts(corpus_documents)
     
     task_manager.update_progress(task_id, 30, "创建向量库...")
-    new_vectorstore = create_vectorstore(documents)
+    new_vectorstore = recreate_vectorstore(corpus_documents)
+    active_dir = getattr(new_vectorstore, "_active_persist_dir", config.VECTORSTORE_DIR)
+    config.VECTORSTORE_DIR = active_dir
+    task_manager.update_progress(task_id, 40, f"向量库已重建: {active_dir}")
     
     task_manager.update_progress(task_id, 50, "初始化 Sales Agent...")
     new_sales_agent = SalesAgentRunner(sales_search=new_vectorstore)
@@ -624,10 +632,12 @@ async def rebuild_vectorstore(api_key: str = Depends(_verify_api_key)):
     task_id = str(uuid.uuid4())[:8]
     task_id_holder = [task_id]
     
-    # 创建后台任务
+    # 创建后台任务（把 task_id 显式传给任务管理器，
+    # 否则任务管理器会另生成一个 id，导致 GET /rebuild/{task_id} 永远 404）
     await task_manager.create_task(
         name="rebuild_vectorstore",
         coro=_create_rebuild_coro(task_id_holder),
+        task_id=task_id,
     )
     
     logger.info(f"Rebuild task submitted: {task_id}")

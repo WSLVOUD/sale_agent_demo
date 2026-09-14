@@ -188,125 +188,300 @@ def _generate_follow_up(llm, recommendations_text: str, requirement_text: str) -
         return ""
 
 
-def recommend_node(state: SolutionState) -> SolutionState:
-    """Generate a recommendation with full model name, specs and usage scenario."""
-    requirement = state.get("requirement", {})
-    raw_products = state.get("products", [])
-    customer_text = user_messages_text(state.get("messages", []))
-    if not customer_text:
-        customer_text = str(state.get("current_message", ""))
-    
-    ifp_allowed = has_ifp_intent(requirement, user_text=customer_text if customer_text else None)
-    logger.info(f"Recommend received {len(raw_products)} products from state")
+_SERVICE = None
 
-    # Defensive filter: only keep display-category products
-    display_products = [p for p in raw_products if is_display_candidate(p)]
-    logger.info("Recommend: dropped %d non-display products", len(raw_products) - len(display_products))
+def _get_service():
+    """进程内复用 RecommendationService（统一入口，强制先过 Gate）。"""
+    global _SERVICE
+    if _SERVICE is None:
+        from ....rag.recommendation_service import RecommendationService
 
-    # Hard environment filter
-    if requirement.get("outdoor"):
-        display_products = [p for p in display_products if not has_environment_conflict(p, requirement)]
-    elif requirement.get("indoor"):
-        display_products = [p for p in display_products if not has_environment_conflict(p, requirement)]
+        _SERVICE = RecommendationService()
+    return _SERVICE
 
-    # IFP filter - only filter if user explicitly doesn't want IFP
-    # If user explicitly said "don't want IFP" or "no need for touch", filter IFP
-    if not ifp_allowed:
-        # Check if user explicitly rejects IFP
-        explicit_no_ifp = False
-        no_ifp_patterns = [
-            r"no ifp", r"no interactive", r"no touch", r"no whiteboard",
-            r"don't.*ifp", r"don't.*interactive", r"don't.*touch",
-            r"only.*led", r"only.*lcd",
-        ]
-        for pattern in no_ifp_patterns:
-            if re.search(pattern, (customer_text or "").lower()):
-                explicit_no_ifp = True
-                break
 
-        if explicit_no_ifp:
-            pre_ifp = len(display_products)
-            display_products = [p for p in display_products if not is_ifp_product(p)]
-            logger.info("Recommend: dropped %d IFP products — user explicitly doesn't want IFP", pre_ifp - len(display_products))
+def _evidence_products(recommendations, raw_products):
+    """把选中的型号与 RAG 检索证据对应起来（RAG 只提供事实，不参与选型）。"""
+    by_model = {}
+    for item in raw_products or []:
+        meta = _get_product_metadata(item)
+        name = meta.get("model") or meta.get("product_id") or ""
+        if name and name not in by_model:
+            by_model[name] = item
+
+    products = []
+    for rec in recommendations or []:
+        model = rec.get("model")
+        evidence = by_model.get(model)
+        if evidence is not None:
+            products.append(evidence)
         else:
-            # User hasn't explicitly rejected IFP — keep IFP products
-            logger.info("Recommend: keeping IFP products (user wants interaction features)")
+            products.append({
+                "id": model,
+                "text": ", ".join([
+                    f"Model {model}",
+                    f"{rec.get('series_id')} series",
+                    f"pixel pitch {rec.get('pixel_pitch_mm')}mm",
+                    f"brightness {rec.get('brightness_nit')}nit",
+                    f"cabinet {rec.get('cabinet_size_mm')}",
+                    f"{rec.get('modules_per_cabinet')} modules per cabinet",
+                ]),
+                "metadata": {
+                    "model": model,
+                    "product_id": model,
+                    "series_id": rec.get("series_id"),
+                    "display_type": "LED",
+                    "indoor": rec.get("indoor"),
+                    "outdoor": rec.get("outdoor"),
+                    "is_rental": rec.get("installation") == "rental",
+                    "pixel_pitch_mm": rec.get("pixel_pitch_mm"),
+                    "brightness_nit": rec.get("brightness_nit"),
+                },
+            })
+    return products
 
-    products = named_products(display_products)
-    logger.info(f"Recommend: {len(products)} named products after filtering")
 
-    if not products:
-        # Relax filter: if it's a conference scenario without IFP, try LCD products
-        purpose = str(requirement.get("purpose", "")).lower()
-        is_conference = any(kw in purpose for kw in ["meeting", "conference", "classroom", "training", "exhibition"])
-        has_interaction = any(kw in (customer_text or "") for kw in ["touch", "interactive", "whiteboard", "annotation"])
+def _express_recommendation(
+    recommendations,
+    profile,
+    calculation,
+    additional_requirements,
+    customer_text,
+    need_size_question=False,
+    language: str = "en",
+):
+    """用一次 LLM 调用把确定性结论表达成销售话术；失败时退化为模板。"""
+    top = recommendations[0]
+    others = ", ".join(r["model"] for r in recommendations[1:3])
 
-        if is_conference and has_interaction:
-            logger.info("Conference with interaction but no IFP found, trying LCD fallback")
-            lcd_products = [p for p in raw_products if "lcd" in _get_product_text(p).lower() or "LCD" in _get_product_metadata(p).get("display_type", "")]
-            if lcd_products:
-                products = named_products(lcd_products)
-                logger.info(f"LCD fallback: {len(products)} LCD products found")
-
-        if not products:
-            all_displays = [p for p in raw_products if is_display_candidate(p)]
-            if all_displays:
-                products = named_products(all_displays)
-                logger.info(f"Fallback: using all {len(products)} display products")
-            else:
-                # No products at all — return a friendly message
-                return {
-                    "recommendation": "Based on your needs, I can match standard products for meeting rooms and classrooms. Could you share more specific size requirements, or tell me how many people the space needs to accommodate? That'll help me narrow it down.",
-                    "next_action": "reflect"
-                }
-
-    llm = get_llm(temperature=0.3)
-    req_str = ", ".join([f"{k}: {v}" for k, v in requirement.items() if v])
-    
-    additional_reqs = state.get("additional_requirements", [])
-    if additional_reqs:
-        additional_context = f"\nCustomer additional requirements: {', '.join(additional_reqs)}\nPlease recommend product features that specifically address these requirements."
-    else:
-        additional_context = ""
-
-    recommendations = []
-    for rank, product in enumerate(products, 1):
-        model = product_identifier(product)
-        prompt = RECOMMEND_PROMPT.format(
-            product=_get_product_text(product)[:600],
-            requirement=req_str,
-            additional_context=additional_context,
+    spec_lines = [
+        f"- {rec['model']}: pixel pitch {rec['pixel_pitch_mm']}mm, "
+        f"brightness {rec['brightness_nit']}nit, "
+        f"cabinet {rec['cabinet_size_mm']}, "
+        f"{rec['modules_per_cabinet']} modules per cabinet, "
+        f"{rec['price_tier']} price tier, {rec['warranty_years']} year warranty"
+        for rec in recommendations[:3]
+    ]
+    reasons = "; ".join(top.get("reasons") or [])
+    extra = ""
+    if additional_requirements:
+        extra = f"\nCustomer's additional requirements: {', '.join(additional_requirements)}"
+    calc_text = ""
+    if calculation:
+        calc_text = (
+            f"\nCalculated configuration (authoritative, do not recompute): "
+            f"{calculation['columns']}x{calculation['rows']} = {calculation['cabinet_count']} cabinets, "
+            f"actual size {calculation['actual_width_m']}m x {calculation['actual_height_m']}m "
+            f"({calculation['area_sqm']} sqm), {calculation['total_modules']} modules."
         )
+    next_step_rule = (
+        "4. Finish by asking for the target screen width and height so you can work out "
+        "the cabinet and module configuration.\n"
+        if need_size_question and not calculation
+        else "4. Finish with one short follow-up question about the next step.\n"
+    )
 
+    # v2.0 Phase 14：回复语言由策略决定（默认英语，auto 时跟随客户语言）
+    from ....rag.query_understanding import response_language_rule
+
+    language_rule = response_language_rule(language)
+
+    prompt = (
+        "You are a sales engineer for LED display products. Write the recommendation reply.\n\n"
+        "Selected model (already decided by the engineering system — do not change it):\n"
+        f"{top['model']}\n\n"
+        "Verified product data:\n" + "\n".join(spec_lines) + "\n\n"
+        f"Recommendation reasons: {reasons}\n"
+        f"Alternatives: {others or 'none'}"
+        f"{calc_text}{extra}\n\n"
+        "Rules:\n"
+        "1. Mention the selected model with its full model code — it does not have to be the very first words.\n"
+        "2. Add 1-2 concrete selling points using ONLY the verified data above.\n"
+        "3. If a calculated configuration is given, include the cabinet count and actual size.\n"
+        + next_step_rule +
+        f"5. Plain text only, no markdown, no bullets, max 90 words.\n"
+        "6. Vary your wording and sentence structure between replies — avoid any fixed template.\n"
+        f"7. {language_rule}\n"
+        "8. Never invent specs, never mention internal data sources.\n\n"
+        "Reply:"
+    )
+    try:
+        response = get_llm(temperature=0.3).invoke(prompt)
+        text = (response.content if hasattr(response, "content") else str(response)).strip()
+        text = re.sub(r"```[a-zA-Z]*", "", text).replace("```", "").strip()
+        text = text.replace("**", "").replace("__", "")
+        if text:
+            return text
+    except Exception as error:  # pragma: no cover - 网络/额度问题时的降级
+        logger.warning("Recommendation expression LLM failed, using template: %s", error)
+
+    import random as _random
+
+    opener = _random.choice((
+        "{model} looks like the best fit for what you described.",
+        "Based on your requirements, I'd go with {model}.",
+        "For this setup I'd suggest {model}.",
+        "{model} matches your needs best.",
+    )).format(model=top["model"])
+    fallback = opener
+    if top.get("reasons"):
+        fallback += " " + "; ".join(top["reasons"][:2]) + "."
+    if calculation:
+        fallback += (
+            f" For your target size we need {calculation['columns']}x{calculation['rows']} "
+            f"= {calculation['cabinet_count']} cabinets "
+            f"({calculation['total_modules']} modules), actual size "
+            f"{calculation['actual_width_m']}m x {calculation['actual_height_m']}m."
+        )
+    if need_size_question and not calculation:
+        fallback += " Could you share the target screen width and height so I can work out the cabinet and module configuration?"
+    else:
+        fallback += " Would you like me to prepare a quotation for this configuration?"
+    return fallback
+
+
+_SIZE_ASK_RE = re.compile(
+    r"(width|height|size|dimension|dimensions|wide|tall|尺寸|多宽|多高|宽\s*[x×*]?\s*高)",
+    re.IGNORECASE,
+)
+
+
+def _ensure_size_question(answer: str, question: str) -> str:
+    """缺尺寸时保证回复里一定带上尺寸追问（不依赖 LLM 是否遵守指令）。"""
+    text = (answer or "").strip()
+    if _SIZE_ASK_RE.search(text):
+        return text
+    if not text:
+        return question
+    return f"{text}\n\n{question}"
+
+
+def recommend_node(state: SolutionState) -> SolutionState:
+    """Phase 10：确定性选型 → RAG 证据 → 工程计算 → 一次 LLM 表达。
+
+    改造前：把检索到的每个候选都交给 LLM 各写一段推荐（N 次 LLM 调用），
+    由 LLM 决定推荐哪个产品 —— 结果不稳定、延迟高、可能编造参数。
+
+    改造后：``RecommendationEngine`` 用真实产品数据做确定性选型，
+    工程参数由 ``screen_calculator`` 计算，LLM 只把结论表达成销售话术
+    （全程 1 次 LLM 调用，失败时退化为模板）。
+    """
+    requirement = state.get("requirement", {}) or {}
+    raw_products = state.get("products", []) or []
+    customer_text = (
+        user_messages_text(state.get("messages", [])) or str(state.get("current_message", ""))
+    )
+
+    # ── 1. 需求档案（Phase 6）───────────────────────────────────────────
+    from ....models.requirement import RequirementProfile
+
+    profile = state.get("requirement_profile")
+    if not isinstance(profile, RequirementProfile):
+        profile = RequirementProfile.from_legacy(requirement)
+        slots = state.get("understood_slots") or {}
+        if slots:
+            profile = profile.merge(RequirementProfile.from_slots(slots))
+
+    # ── 2. 统一推荐入口：RecommendationService（Gate → 确定性选型）────────
+    selection = _get_service().recommend(profile=profile, top_k=3)
+    recommendations = selection.get("recommendations") or []
+    logger.info(
+        "Recommend(engine): candidates=%d top=%s",
+        selection.get("candidate_count", 0),
+        [r.get("model") for r in recommendations],
+    )
+
+    if selection.get("recommendation_status") == "NEED_CLARIFICATION":
+        # 第二道保险命中：即使上游漏判，这里也绝不进入推荐，改为追问
+        question = selection.get("next_question") or "Could you provide a bit more detail about your requirements?"
+        logger.warning(
+            "Recommend(service): NEED_CLARIFICATION missing=%s",
+            selection.get("missing_fields"),
+        )
+        return {
+            "recommendation": question,
+            "products": [],
+            "recommendation_result": selection,
+            "next_action": "clarify",
+        }
+
+    if not recommendations:
+        constraints = selection.get("hard_constraints") or {}
+        has_hard = any(value for key, value in constraints.items() if key != "sources")
+        logger.warning("Recommend: no matching model (hard_constraints=%s)", constraints)
+        message = (
+            "I couldn't find a model in our catalog that matches those requirements "
+            "(environment / installation / brightness / pixel pitch). "
+            "Let me know if any of those can be relaxed and I'll match a model for you."
+            if has_hard
+            else "Could you tell me the scenario and whether it is indoors or outdoors? "
+                 "That will let me match the right model for you."
+        )
+        return {
+            "recommendation": message,
+            "products": [],
+            "recommendation_result": selection,
+            "next_action": "reflect",
+        }
+
+    # ── 3. 工程计算（v2.0 Phase 8/9：Calculation Ready Gate）──────────────
+    from ....rag.readiness import check_calculation_ready
+
+    calc_decision = check_calculation_ready(profile)
+    logger.info(
+        "CalculationGate: ready=%s missing=%s reason=%s",
+        calc_decision.ready, calc_decision.missing, calc_decision.reason,
+    )
+
+    calculation = None
+    if calc_decision.ready:
         try:
-            response = llm.invoke(prompt)
-            content = response.content if hasattr(response, "content") else str(response)
-            content = content.strip().replace("**", "").replace("__", "")
-            content = re.sub(r"```[a-zA-Z]*", "", content).replace("```", "").strip()
-            
-            if rank > 1:
-                content = re.sub(r"^您好[，！。\s]+", "", content)
-                content = re.sub(r"^你好[，！。\s]+", "", content)
-            
-            if len(content) > 80:
-                cut = re.search(r"[。！？!?]", content)
-                if cut and cut.end() <= 80:
-                    content = content[: cut.end()]
-                else:
-                    content = content[:80].rstrip("，,;；") + "。"
-            
-            recommendations.append(content)
-        except Exception as error:
-            logger.error("Recommendation generation failed for %s: %s", model, error)
-            recommendations.append(f"Alternative {rank}: {model}.")
+            from ....tools.screen_calculator import calculate_screen, format_screen_spec
 
-    recommendations_text = "\n".join(recommendations)
-    follow_up = _generate_follow_up(llm, recommendations_text, req_str)
-    if follow_up:
-        recommendations_text = f"{recommendations_text}\n{follow_up}"
+            calculation = calculate_screen(
+                recommendations[0]["model"],
+                target_width_mm=profile.target_width_mm,
+                target_height_mm=profile.target_height_mm,
+            )
+            calculation["summary"] = format_screen_spec(calculation)
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("Screen calculation failed: %s", exc)
+    else:
+        logger.info("CalculationGate 未就绪 → 只推荐产品，本轮不做箱体/模组计算")
+
+    # ── 4. RAG 证据（v2.0 Phase 7：确定性证据排序 + 冲突检测）──────────────
+    # 顺序跟随引擎选型结果；环境冲突的证据直接丢弃，绝不交给 LLM"解释"
+    from ....rag.rerank import rank_evidence
+
+    ranked_evidence, dropped_evidence = rank_evidence(
+        raw_products, selection, profile, limit=3
+    )
+    if dropped_evidence:
+        logger.info("Evidence dropped by rerank: %s", dropped_evidence)
+    products = _evidence_products(recommendations, ranked_evidence or raw_products)
+
+    # ── 5. 一次 LLM 表达 ────────────────────────────────────────────────
+    answer = _express_recommendation(
+        recommendations=recommendations,
+        profile=profile,
+        calculation=calculation,
+        additional_requirements=state.get("additional_requirements", []) or [],
+        customer_text=customer_text,
+        need_size_question=not calc_decision.ready,
+        language=state.get("understood_language") or "en",
+    )
+
+    # 缺尺寸时必须追问（确定性兜底：模型若没问，就补一句尺寸追问，
+    # 保证"没尺寸一定问、有尺寸才算"，不依赖 LLM 是否听话）
+    if not calc_decision.ready and calc_decision.next_question:
+        answer = _ensure_size_question(answer, calc_decision.next_question)
 
     return {
         "products": products,
-        "recommendation": recommendations_text,
-        "next_action": "reflect"
+        "recommendation": answer,
+        "recommendation_result": selection,
+        "screen_calculation": calculation,
+        "calculation_gate": calc_decision.to_dict(),
+        "evidence_dropped": dropped_evidence,
+        "next_action": "reflect",
     }

@@ -31,6 +31,16 @@ from src.memory.store import memory
 
 logger = logging.getLogger(__name__)
 
+
+def _language_rule(language: str) -> str:
+    """v2.0 Phase 14：回复语言指令（默认英语，RESPONSE_LANGUAGE_POLICY=auto 时跟随客户语言）。"""
+    try:
+        from src.rag.query_understanding import response_language_rule
+
+        return response_language_rule(language)
+    except Exception:  # pragma: no cover - 防御式
+        return "ALWAYS use English, regardless of the customer's language."
+
 # ── Prompt ─────────────────────────────────────────────────────────────────
 # 注意：所有回复强制使用英语，无论客户使用何种语言
 
@@ -42,7 +52,7 @@ CRITICAL RULES:
 1. Use ONLY information from the company profile below. DO NOT invent or assume any details.
 2. If a field is empty or missing, skip it entirely.
 3. Write in a conversational, friendly tone - like a real person introducing themselves, not a corporate script.
-4. ALWAYS use English, regardless of the customer's language.
+4. {language_rule}
 5. Structure: Start with greeting + your name/role → briefly mention company highlights (founded year, expertise, experience) → mention 1-2 key strengths or what makes the company stand out → end with a friendly question asking for their name and needs.
 6. Keep it 3-5 sentences. Be concise but personable.
 7. Vary your wording naturally , don't use rigid templates. Make it feel genuine.
@@ -53,7 +63,7 @@ Company Profile:
 Customer's first message (for context):
 {customer_message}
 
-Generate a natural, personable self-introduction in English:"""
+Generate a natural, personable self-introduction:"""
 
 
 ASSET_TRANSITION_PROMPT = """\
@@ -63,7 +73,7 @@ Generate ONE brief, friendly message to transition after sending these materials
 CRITICAL RULES:
 1. Generate ONLY ONE message - do not provide multiple options or variations.
 2. Keep it natural and conversational - like you're chatting with a colleague.
-3. ALWAYS use English, regardless of the customer's language.
+3. {language_rule}
 4. Acknowledge that you've shared materials (videos/catalogs) to show what the company is about.
 5. Keep it to 1-2 sentences maximum.
 6. Sound warm and helpful, not robotic or overly formal.
@@ -72,7 +82,7 @@ CRITICAL RULES:
 
 Company name: {company_name}
 
-Generate ONE friendly transition message in English (no options, just the message):"""
+Generate ONE friendly transition message (no options, just the message):"""
 
 
 BUSINESS_CARD_PROMPT = """\
@@ -84,7 +94,7 @@ Generate TWO sentences:
 
 CRITICAL RULES:
 1. Generate EXACTLY TWO sentences, no more, no less.
-2. ALWAYS use English, regardless of the customer's language.
+2. {language_rule}
 3. Keep it professional but friendly and conversational.
 4. Vary your wording naturally - don't use rigid templates.
 5. DO NOT use emojis or special characters.
@@ -92,7 +102,7 @@ CRITICAL RULES:
 
 Sales person name: {sales_name}
 
-Generate the two-sentence message in English:"""
+Generate the two-sentence message:"""
 
 
 # ── 返回结构 ───────────────────────────────────────────────────────────────
@@ -242,7 +252,7 @@ class FirstContactHandler:
         all_success = all(r.success or r.skipped for r in asset_results)
 
         # 4. 生成素材发送后的过渡语
-        transition_text, transition_ok = self._generate_transition(profile.company)
+        transition_text, transition_ok = self._generate_transition(profile.company, language)
 
         # 5. 发送名片
         business_card_url, business_card_ok = self._send_business_card(session_id)
@@ -251,7 +261,9 @@ class FirstContactHandler:
         business_card_text = ""
         business_card_text_ok = False
         if business_card_ok:
-            business_card_text, business_card_text_ok = self._generate_business_card_message(profile.sales_name)
+            business_card_text, business_card_text_ok = self._generate_business_card_message(
+                profile.sales_name, language
+            )
 
         elapsed_ms = (time.time() - start) * 1000
         logger.info(
@@ -298,7 +310,8 @@ class FirstContactHandler:
             prompt = SELF_INTRO_PROMPT.format(
                 sales_name=sales_name,
                 profile_text=profile_text,
-                customer_message=customer_message
+                customer_message=customer_message,
+                language_rule=_language_rule(language),
             )
 
             response = self._llm.invoke(prompt)
@@ -317,7 +330,7 @@ class FirstContactHandler:
             fallback = " ".join(parts)
             return fallback, False
 
-    def _generate_transition(self, company_name: str) -> tuple[str, bool]:
+    def _generate_transition(self, company_name: str, language: str = "en") -> tuple[str, bool]:
         """
         生成素材发送后的过渡语（强制英语）。
 
@@ -325,7 +338,9 @@ class FirstContactHandler:
             (transition_text, success)
         """
         try:
-            prompt = ASSET_TRANSITION_PROMPT.format(company_name=company_name)
+            prompt = ASSET_TRANSITION_PROMPT.format(
+                company_name=company_name, language_rule=_language_rule(language)
+            )
             response = self._llm.invoke(prompt)
             text = response.content.strip() if hasattr(response, "content") else str(response)
             return text, True
@@ -335,7 +350,7 @@ class FirstContactHandler:
             fallback = f"Thank you for reaching out to {company_name}. I've shared some materials to show you what we're all about."
             return fallback, False
 
-    def _generate_business_card_message(self, sales_name: str) -> tuple[str, bool]:
+    def _generate_business_card_message(self, sales_name: str, language: str = "en") -> tuple[str, bool]:
         """
         生成名片发送后的话术（强制英语）。
 
@@ -343,7 +358,9 @@ class FirstContactHandler:
             (business_card_text, success)
         """
         try:
-            prompt = BUSINESS_CARD_PROMPT.format(sales_name=sales_name)
+            prompt = BUSINESS_CARD_PROMPT.format(
+                sales_name=sales_name, language_rule=_language_rule(language)
+            )
             response = self._llm.invoke(prompt)
             text = response.content.strip() if hasattr(response, "content") else str(response)
             return text, True

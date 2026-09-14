@@ -59,6 +59,11 @@ class Config:
     LLM_TIMEOUT_SECS  = int(os.getenv("LLM_TIMEOUT_SECS", "30"))
     LLM_MAX_RETRIES  = int(os.getenv("LLM_MAX_RETRIES", "2"))
 
+    # ── v2.0 Phase 14：回复语言策略 ──────────────────────────────────
+    #   en   = 始终英语回复（系统既有策略，默认值，保持行为不变）
+    #   auto = 跟随客户语言回复（v2.0 文档描述的"Original Language Response"）
+    RESPONSE_LANGUAGE_POLICY = os.getenv("RESPONSE_LANGUAGE_POLICY", "en").strip().lower() or "en"
+
 
 def resolve_embedding_model_path() -> str:
     """Return the on-disk BGE-M3 directory. Raises if the local model is missing."""

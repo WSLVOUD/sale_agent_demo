@@ -79,200 +79,60 @@ def _format_products(products: List[Dict[str, Any]], top_k: int = 6) -> str:
 
 
 def reflection_node(state: SolutionState) -> SolutionState:
-    """Evaluate retrieved chunks and the recommendation with budget control."""
-    import time
+    """Phase 11：Reflection 从"让 LLM 重新决策"改为"确定性校验"。
 
-    requirement = state.get("requirement", {})
-    recommendation = state.get("recommendation", "")
-    products = state.get("products", [])
+    校验项见 ``src/rag/validation.py``：型号真实性、canonical 来源、环境/安装方式、
+    点间距、箱体与模组数据、箱体与模组数量、以及回复是否出现虚构参数。
 
-    # ── 预算提取 ─────────────────────────────────────────────────────────
-    max_rounds     = state.get("reflection_max_rounds", DEFAULT_MAX_REFLECTION_ROUNDS)
-    max_tokens     = state.get("reflection_max_tokens", DEFAULT_MAX_REFLECTION_TOKENS)
-    max_time_ms    = state.get("reflection_max_time_ms", DEFAULT_MAX_REFLECTION_TIME_MS)
-    no_improve_stop = state.get("reflection_no_improve_stop", DEFAULT_NO_IMPROVEMENT_STOP)
+    校验通过 → 直接结束（不再调用 LLM）；发现问题 → 剔除无效产品并把问题写进
+    ``validation_report``，由回复层决定是否追问，而不是让 LLM 换一个产品。
+    """
+    from ....rag.validation import validate_recommendation
 
-    reflection_count  = state.get("reflection_count", 0)
-    best_score       = state.get("best_score", 0)
-    consecutive_no_improve = state.get("consecutive_no_improve", 0)
+    products = state.get("products") or []
+    recommendation = state.get("recommendation") or ""
+    profile = state.get("requirement_profile")
+    selection = state.get("recommendation_result") or {}
+    calculation = state.get("screen_calculation")
+    reflection_count = int(state.get("reflection_count") or 0) + 1
 
-    # ── 预算检查：已达最大轮数 ───────────────────────────────────────────
-    if reflection_count >= max_rounds:
-        logger.info("Reflection budget: max rounds %d reached, stopping.", max_rounds)
+    if not recommendation:
         return {
             **state,
-            "reflection_score": best_score,
-            "reflection_notes": f"Max reflection rounds ({max_rounds}) reached, stopping",
+            "reflection_score": 0.0,
+            "reflection_notes": "没有可校验的推荐内容",
             "needs_refine": False,
             "next_action": "end",
             "reflection_count": reflection_count,
-            "best_score": best_score,
-            "consecutive_no_improve": 0,
+            "best_score": state.get("best_score", 0.0),
         }
 
-    if not recommendation or recommendation.startswith("Sorry") or not products:
-        return {
-            **state,
-            "reflection_score": 0,
-            "reflection_notes": "No recommendation content, skipping evaluation",
-            "needs_refine": False,
-            "next_action": "end",
-            "reflection_count": reflection_count,
-            "best_score": best_score,
-            "consecutive_no_improve": 0,
-        }
-
-    req_text = _format_requirement(requirement)
-    products_text = _format_products(products)
-    prompt = REFLECTION_PROMPT.format(
-        requirement=req_text,
-        products=products_text,
+    report = validate_recommendation(
         recommendation=recommendation,
+        products=products,
+        profile=profile,
+        selection=selection,
+        calculation=calculation,
     )
 
-    # Token 估算（粗略：prompt 长度 / 4）
-    estimated_tokens = len(prompt) // 4
-    total_estimated = (reflection_count + 1) * estimated_tokens
-    if total_estimated > max_tokens * (reflection_count + 1):
-        # 超 token 预算，但允许最后一轮
-        if reflection_count + 1 >= max_rounds:
-            logger.info("Reflection: token budget exceeded at round %d, stopping.", reflection_count + 1)
-            return {
-                **state,
-                "reflection_score": best_score,
-                "reflection_notes": "Token budget exhausted, stopping reflection",
-                "needs_refine": False,
-                "next_action": "end",
-                "reflection_count": reflection_count,
-                "best_score": best_score,
-                "consecutive_no_improve": 0,
-            }
+    validated_products = report.get("valid_products") or []
+    if validated_products:
+        products = validated_products
 
-    round_start = time.time()
-    try:
-        llm = get_llm(temperature=0.3)
-        response = llm.invoke(prompt)
-        elapsed_ms = (time.time() - round_start) * 1000
+    logger.info(
+        "Reflection(validation): score=%.1f checks=%s",
+        report["score"], {k: v for k, v in report["checks"].items() if not v} or "all passed",
+    )
 
-        # 时间预算检查
-        if elapsed_ms > max_time_ms:
-            logger.warning("Reflection round %d took %.0fms (> budget %dms), stopping.", 
-                          reflection_count + 1, elapsed_ms, max_time_ms)
-            return {
-                **state,
-                "reflection_score": best_score,
-                "reflection_notes": f"Round took {elapsed_ms:.0f}ms, exceeded time budget, stopping",
-                "needs_refine": False,
-                "next_action": "end",
-                "reflection_count": reflection_count + 1,
-                "best_score": best_score,
-                "consecutive_no_improve": 0,
-            }
-
-        content = response.content if hasattr(response, "content") else str(response)
-
-        content = re.sub(r"```json\s*", "", content, flags=re.IGNORECASE)
-        content = re.sub(r"```\s*$", "", content, flags=re.MULTILINE).strip()
-        result = json.loads(content)
-
-        chunk_scores = result.get("chunk_scores", [])
-        rec_score = float(result.get("recommendation_score", 5))
-        rec_needs_refine = bool(result.get("needs_refine", False))
-
-        # Filter chunks below threshold
-        filtered_products = []
-        dropped_indices = []
-        for item in chunk_scores:
-            idx = int(item.get("index", -1))
-            score = float(item.get("score", 0))
-            if score >= CHUNK_MIN_SCORE and 0 <= idx < len(products):
-                filtered_products.append(products[idx])
-            else:
-                dropped_indices.append(idx)
-                logger.info("Reflection dropped chunk[%d] score=%.1f", idx, score)
-
-        # ── 早停逻辑 ───────────────────────────────────────────────────
-        # 计算本轮是否比上轮有改进
-        this_round_score = rec_score
-        is_improvement = this_round_score > best_score
-        new_consecutive_no_improve = 0 if is_improvement else consecutive_no_improve + 1
-
-        # 连续 N 轮无改进 → 停止
-        if new_consecutive_no_improve >= no_improve_stop:
-            logger.info(
-                "Reflection early stop: %d consecutive rounds without improvement.",
-                new_consecutive_no_improve,
-            )
-            return {
-                **state,
-                "reflection_score": best_score,
-                "reflection_notes": f"{new_consecutive_no_improve} consecutive rounds without improvement, stopping",
-                "needs_refine": False,
-                "next_action": "end",
-                "reflection_count": reflection_count + 1,
-                "best_score": best_score,
-                "consecutive_no_improve": new_consecutive_no_improve,
-            }
-
-        should_refine = bool(dropped_indices) or (
-            rec_needs_refine and is_improvement and reflection_count + 1 < max_rounds
-        )
-
-        new_best = max(best_score, this_round_score)
-        new_count = reflection_count + 1
-
-        notes = result.get("recommendation_notes", "")
-        if dropped_indices:
-            notes = f"[{len(dropped_indices)} mismatched chunks dropped] {notes}"
-        if not is_improvement:
-            notes = f"[score={this_round_score:.1f}, no improvement] {notes}"
-
-        logger.info(
-            "Reflection #%d: rec_score=%.1f best=%.1f improve=%s "
-            "kept=%d dropped=%d refine=%s time=%.0fms",
-            new_count,
-            this_round_score,
-            new_best,
-            is_improvement,
-            len(filtered_products),
-            len(dropped_indices),
-            should_refine,
-            elapsed_ms,
-        )
-
-        return {
-            **state,
-            "reflection_score": this_round_score,
-            "reflection_notes": notes,
-            "needs_refine": should_refine,
-            "reflection_count": new_count,
-            "best_score": new_best,
-            "products": filtered_products if filtered_products else products,
-            "next_action": "recommend" if should_refine else "end",
-            "consecutive_no_improve": new_consecutive_no_improve,
-        }
-
-    except json.JSONDecodeError as e:
-        logger.error("Reflection JSON parse error: %s", e)
-        return {
-            **state,
-            "reflection_score": 5,
-            "reflection_notes": "Evaluation parse failed, keeping existing results",
-            "needs_refine": False,
-            "next_action": "end",
-            "reflection_count": reflection_count,
-            "best_score": best_score,
-            "consecutive_no_improve": 0,
-        }
-    except Exception as e:
-        logger.error("Reflection error: %s", e)
-        return {
-            **state,
-            "reflection_score": 5,
-            "reflection_notes": f"Evaluation error: {e}",
-            "needs_refine": False,
-            "next_action": "end",
-            "reflection_count": reflection_count,
-            "best_score": best_score,
-            "consecutive_no_improve": 0,
-        }
+    return {
+        **state,
+        "products": products,
+        "reflection_score": report["score"],
+        "reflection_notes": report["summary"],
+        "validation_report": report,
+        "needs_refine": False,
+        "next_action": "end",
+        "reflection_count": reflection_count,
+        "best_score": max(float(state.get("best_score") or 0.0), report["score"]),
+        "consecutive_no_improve": 0,
+    }

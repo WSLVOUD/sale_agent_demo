@@ -24,6 +24,10 @@ from src.models.product import (
     IFPProduct,
     LEDSubModel,
     IFPSubModel,
+    CanonicalModel,
+    LEDGeometry,
+    parse_resolution,
+    parse_size_mm,
 )
 
 logger = logging.getLogger(__name__)
@@ -177,6 +181,295 @@ def load_structured_documents(data_dir: str) -> list[Document]:
         docs.extend(product_to_documents(p))
     logger.info("Converted %d products to %d documents", len(products), len(docs))
     return docs
+
+
+# ── Phase 2：Model 级 RAG Document ──────────────────────────────────────────
+ENVIRONMENT_METADATA_VERSION = 4  # 与 loader.py 保持一致
+
+
+def _clean_metadata_value(value: Any) -> Any:
+    """Chroma metadata 只接受 str / int / float / bool，列表统一转成字符串。"""
+    if isinstance(value, (list, tuple, set)):
+        return "|".join(str(v) for v in value)
+    return value
+
+
+def canonical_model_to_document(
+    model: CanonicalModel,
+    chunk_id: str | None = None,
+) -> Document:
+    """把一个 Model 级记录转成向量库 Document（一个实际销售型号 = 一个 Document）。"""
+    metadata: dict[str, Any] = {
+        # 身份
+        "chunk_id": chunk_id or f"model-{model.model}",
+        "level": "model",
+        "model": model.model,
+        "product_id": model.model,          # 兼容既有按 product_id 取用的代码
+        "series_id": model.series_id,
+        "series": model.series,
+        "display_type": model.display_type,
+        # 硬约束
+        "environment": _clean_metadata_value(model.environment),
+        "indoor": model.indoor,
+        "outdoor": model.outdoor,
+        "installation": model.installation,
+        "is_rental": model.installation == "rental",
+        # 光学 / 像素
+        "pixel_pitch_min_mm": model.pixel_pitch_mm,
+        "pixel_pitch_max_mm": model.pixel_pitch_mm,
+        "pixel_pitch_mm": model.pixel_pitch_mm,
+        "resolution_per_sqm": model.resolution_per_sqm,
+        "module_resolution": model.module_resolution,
+        "cabinet_resolution": model.cabinet_resolution or "",
+        "scanning": model.scanning or "",
+        "refresh_rate_hz": model.refresh_rate_hz,
+        # 亮度
+        "brightness_nit": model.brightness_nit,
+        "brightness_min_cd": model.brightness_min_nit,
+        "brightness_max_cd": model.brightness_max_nit,
+        # 工程尺寸
+        "module_size_mm": model.module_size_text,
+        "cabinet_size_mm": model.cabinet_size_text,
+        "module_width_mm": model.module_width_mm,
+        "module_height_mm": model.module_height_mm,
+        "cabinet_width_mm": model.cabinet_width_mm,
+        "cabinet_height_mm": model.cabinet_height_mm,
+        "modules_per_cabinet": model.modules_per_cabinet,
+        # 商业属性
+        "warranty_years": model.warranty_years,
+        "lamp_brand": model.lamp_brand or "",
+        "price_tier": model.price_tier,
+        "cob": model.cob,
+        "hdr": model.hdr,
+        "waterproof": model.waterproof,
+        "gob": model.gob,
+        "flexible": model.flexible,
+        "features": _clean_metadata_value(model.features),
+        # 系统字段
+        "environment_metadata_version": ENVIRONMENT_METADATA_VERSION,
+        "product_category": "display",
+        "source": "canonical_json",
+    }
+    return Document(page_content=model.to_text(), metadata=metadata)
+
+
+def load_model_documents(data_dir: str) -> list[Document]:
+    """Phase 2 语料：每个 Model 一个 Document，Series 作为 metadata。"""
+    models = load_canonical_models(data_dir)
+    documents = [canonical_model_to_document(m) for m in models]
+    logger.info("Built %d model-level documents", len(documents))
+    return documents
+
+
+# ── Phase 1：Model 级标准化数据 ─────────────────────────────────────────────
+def load_canonical_models(data_dir: str) -> list[CanonicalModel]:
+    """把 Series 数据展开成 Model 级标准化记录（一个实际销售型号一条）。
+
+    这是 Phase 2（Model 级 RAG）、Phase 8（推荐引擎）与
+    Phase 9（箱体模组计算）的共同数据源。
+    """
+    products = load_structured_products(data_dir)
+    models: list[CanonicalModel] = []
+    errors: list[str] = []
+    for product in products:
+        if not product.led_data:
+            continue
+        try:
+            models.extend(product.led_data.canonical_models())
+        except Exception as exc:  # pragma: no cover - 防御式
+            errors.append(f"{product.product_id}: {exc}")
+    if errors:
+        logger.error("Canonical model expansion errors:\n%s", "\n".join(errors))
+    logger.info("Expanded %d canonical model records", len(models))
+    return models
+
+
+def canonical_model_index(data_dir: str) -> dict[str, CanonicalModel]:
+    """``model`` → ``CanonicalModel`` 索引，供推荐/计算模块 O(1) 查询。"""
+    return {m.model: m for m in load_canonical_models(data_dir)}
+
+
+def validate_product_data(data_dir: str) -> dict[str, Any]:
+    """执行计划文档 Phase 1「数据检查」清单。
+
+    返回 ``{"ok": bool, "errors": [...], "warnings": [...], "stats": {...}}``。
+    errors 表示数据不可用（必须修）；warnings 表示厂商规格本身存在的不一致
+    （保留原始值，但在推荐/计算时以物理尺寸为准）。
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    products = load_structured_products(data_dir)
+    if not products:
+        return {
+            "ok": False,
+            "errors": ["未加载到任何产品数据"],
+            "warnings": [],
+            "stats": {"series": 0, "models": 0},
+        }
+
+    seen_series: dict[str, str] = {}
+    seen_models: dict[str, str] = {}
+
+    for product in products:
+        led = product.led_data
+        if not led:
+            errors.append(f"{product.product_id}: 非 LED 产品，Phase 1 尚未覆盖")
+            continue
+
+        # ── Series 唯一性 ──
+        if product.product_id in seen_series:
+            errors.append(f"重复 Series: {product.product_id}")
+        seen_series[product.product_id] = led.series_id or product.product_id
+
+        # ── Series 级必需字段 ──
+        if not led.environment:
+            errors.append(f"{product.product_id}: 缺少 environment")
+        if led.installation is None:
+            errors.append(f"{product.product_id}: 缺少 installation")
+        if led.geometry is None:
+            errors.append(f"{product.product_id}: 缺少 geometry（无法做箱体/模组计算）")
+        if not led.sub_models:
+            errors.append(f"{product.product_id}: 没有任何 Model")
+            continue
+
+        # ── 亮度区间 ──
+        if led.brightness_min_nit and led.brightness_max_nit:
+            if led.brightness_min_nit > led.brightness_max_nit:
+                errors.append(
+                    f"{product.product_id}: brightness_min {led.brightness_min_nit} > "
+                    f"brightness_max {led.brightness_max_nit}"
+                )
+
+        # ── Model 级检查 ──
+        for sub in led.sub_models:
+            if sub.model in seen_models:
+                errors.append(f"重复 Model: {sub.model}（同时出现在 {seen_models[sub.model]} 与本系列）")
+            seen_models[sub.model] = product.product_id
+
+            if not (0.5 <= sub.pixel_pitch_mm <= 20):
+                errors.append(f"{sub.model}: 点间距 {sub.pixel_pitch_mm} 超出合理范围")
+            if not sub.module_resolution:
+                errors.append(f"{sub.model}: 缺少 module_resolution")
+
+            # resolution_per_sqm 与点间距一致性（±5%）
+            expected_per_sqm = 1_000_000 / (sub.pixel_pitch_mm ** 2)
+            deviation = abs(sub.resolution_per_sqm - expected_per_sqm) / expected_per_sqm
+            if deviation > 0.05:
+                warnings.append(
+                    f"{sub.model}: resolution_per_sqm={sub.resolution_per_sqm} 与点间距 "
+                    f"{sub.pixel_pitch_mm}mm 理论值 {expected_per_sqm:.0f} 偏差 {deviation:.1%}"
+                )
+
+            # module_resolution 与模组尺寸 ÷ 点间距一致性
+            if led.geometry and sub.module_resolution:
+                parsed = parse_resolution(sub.module_resolution)
+                if parsed:
+                    expected_module = (
+                        led.geometry.module_width_mm / sub.pixel_pitch_mm,
+                        led.geometry.module_height_mm / sub.pixel_pitch_mm,
+                    )
+                    for axis, actual, expected in zip(
+                        ("width", "height"), parsed, expected_module
+                    ):
+                        if expected <= 0:
+                            continue
+                        axis_deviation = abs(actual - expected) / expected
+                        if axis_deviation > 0.05:
+                            warnings.append(
+                                f"{sub.model}: module_resolution {axis}={actual} 与 "
+                                f"{led.geometry.module_width_mm}x{led.geometry.module_height_mm}mm ÷ "
+                                f"{sub.pixel_pitch_mm}mm ≈ {expected:.0f} 偏差 {axis_deviation:.1%}"
+                            )
+                            break
+
+            # cabinet_resolution 应等于 每箱模组排布 × module_resolution
+            if led.geometry and sub.cabinet_resolution and sub.module_resolution:
+                cabinet_px = parse_resolution(sub.cabinet_resolution)
+                module_px = parse_resolution(sub.module_resolution)
+                if cabinet_px and module_px:
+                    per_row = round(led.geometry.cabinet_width_mm / led.geometry.module_width_mm)
+                    per_col = round(led.geometry.cabinet_height_mm / led.geometry.module_height_mm)
+                    expected_cabinet = (module_px[0] * per_row, module_px[1] * per_col)
+                    if cabinet_px != expected_cabinet:
+                        warnings.append(
+                            f"{sub.model}: cabinet_resolution={sub.cabinet_resolution} 与 "
+                            f"module_resolution 平铺值 {expected_cabinet[0]}*{expected_cabinet[1]} 不一致"
+                        )
+
+            # 型号级亮度必须落在 Series 区间内
+            if sub.brightness_nit is not None and led.brightness_min_nit and led.brightness_max_nit:
+                if not (led.brightness_min_nit <= sub.brightness_nit <= led.brightness_max_nit):
+                    errors.append(
+                        f"{sub.model}: 亮度 {sub.brightness_nit} 超出 Series 区间 "
+                        f"[{led.brightness_min_nit}, {led.brightness_max_nit}]"
+                    )
+
+    # ── Model 级记录完整性（验收标准）──
+    canonical = load_canonical_models(data_dir)
+    required_attrs = (
+        "model", "series_id", "pixel_pitch_mm", "brightness_nit",
+        "module_width_mm", "module_height_mm",
+        "cabinet_width_mm", "cabinet_height_mm", "modules_per_cabinet",
+    )
+    incomplete = [
+        m.model for m in canonical
+        if any(getattr(m, attr, None) in (None, "", 0) for attr in required_attrs)
+    ]
+    if incomplete:
+        errors.append(f"以下 Model 记录不完整: {', '.join(incomplete)}")
+
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "warnings": warnings,
+        "stats": {
+            "series": len(products),
+            "models": len(canonical),
+            "series_ids": sorted(seen_series.values()),
+            "indoor_series": sum(1 for p in products if p.led_data and "indoor" in p.led_data.environment),
+            "outdoor_series": sum(1 for p in products if p.led_data and "outdoor" in p.led_data.environment),
+            "rental_series": sum(1 for p in products if p.led_data and p.led_data.is_rental),
+            "fixed_series": sum(1 for p in products if p.led_data and not p.led_data.is_rental),
+        },
+    }
+
+
+def _main() -> int:
+    """``python -m src.rag.json_loader --validate`` 数据检查入口。"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Phase 1 产品数据检查")
+    parser.add_argument("--data-dir", default=None, help="产品数据目录（默认取 config.DATA_DIR）")
+    parser.add_argument("--validate", action="store_true", help="执行数据检查")
+    args = parser.parse_args()
+
+    data_dir = args.data_dir
+    if not data_dir:
+        from src.config import config
+        data_dir = config.DATA_DIR
+
+    report = validate_product_data(data_dir)
+    stats = report["stats"]
+    print(f"产品数据检查: {'通过' if report['ok'] else '失败'}")
+    print(f"  Series: {stats['series']}  Model: {stats['models']}")
+    print(
+        f"  室内 {stats['indoor_series']} / 户外 {stats['outdoor_series']} / "
+        f"固装 {stats['fixed_series']} / 租赁 {stats['rental_series']}"
+    )
+    if report["errors"]:
+        print("\n[ERRORS]")
+        for item in report["errors"]:
+            print(f"  - {item}")
+    if report["warnings"]:
+        print("\n[WARNINGS]（厂商规格自身不一致，保留原值）")
+        for item in report["warnings"]:
+            print(f"  - {item}")
+    return 0 if report["ok"] else 1
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(_main())
 
 
 # ── 结构化过滤 ─────────────────────────────────────────────────────────────

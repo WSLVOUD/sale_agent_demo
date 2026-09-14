@@ -7,7 +7,7 @@
        {"messages": [ {role, content}, ... ],
         "requirements": {...},
         "first_contact_sent": bool}
-3. 超过 MAX_MEMORY_SIZE 条消息时丢弃最早的消息（FIFO），保留最近 20 条。
+3. 超过 MAX_MEMORY_SIZE 条消息时丢弃最早的消息（FIFO），保留最近 50 条。
 4. 提供 dict-like 接口 (get / __setitem__ / __contains__ / clear) 给老代码用，
    同时提供面向消息的 add / get_history 接口给新代码用。
 5. first_contact_sent 用明确的业务状态判断首次接待，不依赖消息数量。
@@ -15,12 +15,13 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-MAX_MEMORY_SIZE = 20  # 每个会话最多保留的消息条数
+MAX_MEMORY_SIZE = 50  # 每个会话最多保留的消息条数（短期记忆上限）
 
 
 def _normalize_role(role: str) -> str:
@@ -130,6 +131,38 @@ class MemoryStore:
         self._ensure(session_id)
         self._sessions[session_id]["requirements"] = dict(requirements or {})
 
+    # ── Phase 6：结构化需求档案 ──────────────────────────────────────────
+    def get_requirement_profile(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """取结构化需求档案（RequirementProfile 的 dict 形式）。"""
+        if session_id not in self._sessions:
+            return None
+        profile = self._sessions[session_id].get("requirement_profile")
+        return dict(profile) if profile else None
+
+    def set_requirement_profile(self, session_id: str, profile: Any) -> None:
+        """写入结构化需求档案（接受 RequirementProfile 或 dict）。
+
+        全空档案（每个字段都是 None / []）按"没有档案"处理 —— 需求重置后
+        不应该留下一个"看起来存在、其实什么都没有"的档案给下一轮复用。
+        """
+        if profile is None:
+            return
+        self._ensure(session_id)
+        if hasattr(profile, "model_dump"):
+            profile = profile.model_dump()
+        data = dict(profile or {})
+        meaningful = {
+            key: value
+            for key, value in data.items()
+            if key != "sources" and value not in (None, "", [], {})
+        }
+        self._sessions[session_id]["requirement_profile"] = data if meaningful else None
+
+    def clear_requirement_profile(self, session_id: str) -> None:
+        """清空结构化需求档案（屏幕类型切换时调用）。"""
+        if session_id in self._sessions:
+            self._sessions[session_id]["requirement_profile"] = None
+
     def get_previous_display_type(self, session_id: str) -> Optional[str]:
         """取上一个已知的屏幕类型（LED/LCD/IFP/BOTH）。"""
         if session_id not in self._sessions:
@@ -146,6 +179,59 @@ class MemoryStore:
         if session_id in self._sessions:
             self._sessions[session_id]["requirements"] = {}
             logger.info("Cleared accumulated requirements for session: %s", session_id)
+
+    # ── 会话内推荐状态（用于识别"客户要换产品 / 换需求"）──────────────────
+    def mark_recommendation_done(self, session_id: str, products: Optional[List[Any]] = None) -> None:
+        """记录"本会话已经给过产品推荐"，供下一轮判断客户是否在换产品。
+
+        只保留型号名，避免把整份产品对象留在会话里。
+        """
+        self._ensure(session_id)
+        models: List[str] = []
+        for item in products or []:
+            if isinstance(item, dict):
+                model = item.get("model") or item.get("name") or item.get("series")
+            else:
+                model = getattr(item, "model", None)
+            if model and str(model) not in models:
+                models.append(str(model))
+        self._sessions[session_id]["recommendation"] = {
+            "delivered": True,
+            "models": models[:10],
+            "at": time.time(),
+        }
+        logger.info("Marked recommendation delivered for session: %s (%s)", session_id, models[:3])
+
+    def has_recommendation(self, session_id: str) -> bool:
+        """本会话是否已经给客户推荐过产品。"""
+        if session_id not in self._sessions:
+            return False
+        record = self._sessions[session_id].get("recommendation") or {}
+        return bool(record.get("delivered"))
+
+    def get_recommendation(self, session_id: str) -> Dict[str, Any]:
+        """取本会话最近一次推荐记录（没有则返回 {}）。"""
+        if session_id not in self._sessions:
+            return {}
+        return dict(self._sessions[session_id].get("recommendation") or {})
+
+    def clear_recommendation(self, session_id: str) -> None:
+        """清除推荐记录（需求重置后，这是一次全新的咨询）。"""
+        if session_id in self._sessions:
+            self._sessions[session_id]["recommendation"] = None
+
+    def reset_requirement_state(self, session_id: str) -> None:
+        """清空一次咨询的全部中间状态：累计需求 + 结构化档案 + 推荐记录。
+
+        客户在拿到推荐之后要换产品 / 换项目 / 改需求时调用，
+        让 Sales Agent 回到"从零开始采集需求"的状态。
+        """
+        if session_id not in self._sessions:
+            return
+        self._sessions[session_id]["requirements"] = {}
+        self._sessions[session_id]["requirement_profile"] = None
+        self._sessions[session_id]["recommendation"] = None
+        logger.info("Reset requirement state for session: %s", session_id)
 
     def get_size(self, session_id: str) -> int:
         """当前会话消息条数。"""
@@ -223,6 +309,7 @@ class MemoryStore:
                 "previous_display_type": None,
                 "first_contact_sent": False,
                 "suppress_sales_greeting": False,
+                "recommendation": None,
             }
 
     def _set(self, session_id: str, value: Any) -> None:
@@ -248,6 +335,8 @@ class MemoryStore:
             "previous_display_type": self.get_previous_display_type(session_id),
             "first_contact_sent": self._sessions[session_id].get("first_contact_sent", False)
             if session_id in self._sessions else False,
+            "recommendation": self._sessions[session_id].get("recommendation")
+            if session_id in self._sessions else None,
         }
 
 

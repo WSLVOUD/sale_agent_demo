@@ -202,6 +202,18 @@ def _strip_markdown(text: str) -> str:
     return cleaned.strip()
 
 
+def _turn_seed(state: SalesState) -> int:
+    """提问 / 回应话术的轮换种子：客户说过几句话 + 会话标识（保证同一会话内逐轮换）。"""
+    session_id = str(state.get("session_id") or "")
+    user_turns = sum(
+        1
+        for msg in (state.get("messages") or [])
+        if (msg.get("role") if isinstance(msg, dict) else getattr(msg, "type", ""))
+        in ("user", "human")
+    )
+    return user_turns + (sum(ord(ch) for ch in session_id) % 7)
+
+
 def script_generator(state: SalesState) -> SalesState:
     """Produce the final user-facing response."""
     # Check if router has already processed
@@ -214,6 +226,39 @@ def script_generator(state: SalesState) -> SalesState:
     
     # 检查是否需要抑制问候语（首次接待刚完成后）
     suppress_greeting = state.get("suppress_greeting", False)
+
+    # ── Phase 7：需求采集 —— 一次只问一个高价值问题 ─────────────────────────
+    # 由 question_planner / Ready Gate 决定"问什么"；
+    # 回复由 reply_composer 合成："先接住客户这句话 + 再追问"，
+    # 避免销售只会重复问问题（不调用 LLM，措辞按轮次轮换）。
+    # 注意：product_question / others 不在这一支 —— 它们要先让 Solution Agent
+    # 用 RAG 回答客户的问题，再由 orchestrator 把追问接在答复后面。
+    pending_question = state.get("pending_question")
+    if (
+        pending_question
+        and intent in ("need_query", "greeting", "industry")
+        and not state.get("should_generate_solution")
+        and not state.get("response")
+    ):
+        from ....rag.reply_composer import compose_requirement_reply
+
+        state["response"] = _strip_markdown(
+            compose_requirement_reply(
+                question=pending_question,
+                slot=str(state.get("pending_slot") or ""),
+                message=str(state.get("current_message") or ""),
+                seed=_turn_seed(state),
+                requirement=state.get("requirements") or {},
+                llm_ack=str(state.get("acknowledgement") or ""),
+                # 需求重置时 runner 已经加过"我们重新来一遍"的确认语，这里不重复
+                include_ack=not state.get("requirements_reset"),
+            )
+        )
+        state["next_action"] = "ask"
+        logger.info(
+            "Requirement mining continues — reply: %s", state["response"]
+        )
+        return state
     
     response_text = ""
     

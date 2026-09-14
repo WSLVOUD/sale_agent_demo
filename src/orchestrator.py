@@ -14,9 +14,16 @@ from .first_contact.profile import load_profile
 
 logger = logging.getLogger(__name__)
 
-# ── 语言配置 ──────────────────────────────────────────────────────────────
-# 所有 AI 回复强制使用英语，无论客户使用何种语言
-RESPONSE_LANGUAGE = "en"
+# ── 语言配置（v2.0 Phase 14）────────────────────────────────────────────────
+# 由 config.RESPONSE_LANGUAGE_POLICY 控制：
+#   "en"   → 所有 AI 回复强制英语（系统既有策略，默认）
+#   "auto" → 跟随客户语言回复（v2.0 的 Original Language Response）
+try:
+    from .config import config as _config
+
+    RESPONSE_LANGUAGE = _config.RESPONSE_LANGUAGE_POLICY
+except Exception:  # pragma: no cover - 防御式
+    RESPONSE_LANGUAGE = "en"
 
 
 class PerfTracker:
@@ -130,13 +137,26 @@ class DualAgentOrchestrator:
             logger.info("[%s] First contact detected, running fixed flow...", session_id)
 
             # 执行首次接待流程（强制使用英语）
+            # v2.0 Phase 14：策略为 auto 时按客户语言回复，否则保持英语
+            if RESPONSE_LANGUAGE == "auto":
+                try:
+                    from .rag.query_understanding import detect_language
+
+                    fc_language = detect_language(message)
+                except Exception:  # pragma: no cover - 防御式
+                    fc_language = "en"
+            else:
+                fc_language = "en"
+
             fc_result = first_contact_handler.run(
                 session_id=session_id,
                 customer_message=message,
-                language=RESPONSE_LANGUAGE,  # 强制英语
+                language=fc_language,
             )
 
-            # 记录首次接待生成的消息到 memory
+            # 记录客户的首条消息 + 首次接待生成的消息到 memory
+            # （否则后续轮次的历史里会缺失客户的第一句话）
+            self.memory_store.add(session_id, "user", message)
             fc_messages = fc_result.to_messages()
             for msg in fc_messages:
                 role = msg.get("role", "assistant")
@@ -164,6 +184,8 @@ class DualAgentOrchestrator:
             result = {
                 "response": fc_result.intro_text,
                 "agent": "first_contact",
+                "route": "first_contact",
+                "complexity": "fixed_flow",
                 "requirements": {},
                 "products": [],
                 "next_action": "first_contact_done",
@@ -213,8 +235,15 @@ class DualAgentOrchestrator:
             )
             perf.solution_route = solution_result.get("route", "agent")
             perf.llm_calls += 1
+            answer = solution_result.get("answer", sales_result.get("response", ""))
             result = {
-                "response": solution_result.get("answer", sales_result.get("response", "")),
+                # 先回答客户这个问题，再接着问还缺的需求（不能只会反问）
+                "response": self._compose_with_requirement_question(
+                    answer=answer,
+                    sales_result=sales_result,
+                    message=message,
+                    seed=len(history),
+                ),
                 "agent": "solution_question",
                 "requirements": requirements,
                 "products": solution_result.get("products", []),
@@ -232,8 +261,14 @@ class DualAgentOrchestrator:
             )
             perf.solution_route = solution_result.get("route", "agent")
             perf.llm_calls += 1
+            answer = solution_result.get("answer", sales_result.get("response", ""))
             result = {
-                "response": solution_result.get("answer", sales_result.get("response", "")),
+                "response": self._compose_with_requirement_question(
+                    answer=answer,
+                    sales_result=sales_result,
+                    message=message,
+                    seed=len(history),
+                ),
                 "agent": "solution_others",
                 "requirements": requirements,
                 "products": solution_result.get("products", []),
@@ -280,3 +315,37 @@ class DualAgentOrchestrator:
         if isinstance(session_data, list):
             return session_data
         return []
+
+    def _compose_with_requirement_question(
+        self,
+        *,
+        answer: str,
+        sales_result: Dict[str, Any],
+        message: str,
+        seed: int = 0,
+    ) -> str:
+        """把"答复客户"与"继续追问需求"合成一句自然的销售回复。
+
+        需求还没问清时（Ready Gate 未放行），客户的问题照样要答 —— 但答完必须
+        把还缺的那个关键问题接上，否则销售就变成"只会问问题"或"答完就断线"。
+        """
+        question = str(sales_result.get("pending_question") or "")
+        if not question:
+            return answer
+        try:
+            from .rag.reply_composer import compose_requirement_reply, reply_language
+
+            return compose_requirement_reply(
+                answer=answer,
+                question=question,
+                slot=str(sales_result.get("pending_slot") or ""),
+                message=message,
+                language=reply_language(message),
+                seed=seed,
+                requirement=sales_result.get("requirements") or {},
+                include_ack=not sales_result.get("requirements_reset", False),
+                llm_ack=str(sales_result.get("acknowledgement") or ""),
+            )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("Compose requirement reply failed: %s", exc)
+            return answer or question

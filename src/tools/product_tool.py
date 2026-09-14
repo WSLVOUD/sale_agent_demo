@@ -2,7 +2,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from ..rag.retriever import HybridSearch
+from ..rag.fusion import HybridSearch
 
 logger = logging.getLogger(__name__)
 

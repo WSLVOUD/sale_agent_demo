@@ -57,3 +57,16 @@ class SalesState(TypedDict):
 
     # 首次接待刚完成后抑制销售问候语（因为已经自我介绍过了）
     suppress_greeting: bool
+
+    # ── Phase 6/7：结构化需求档案 + 下一个待问的高价值问题 ────────────────
+    requirement_profile: Optional[Any]
+    pending_question: str
+    pending_slot: str   # 待问的是哪一个槽位（用于判断答案里是否已经在问同一件事）
+
+    # ── 会话内需求重置（客户拿到推荐后又要换产品 / 换项目 / 改需求）──────
+    # requirements_reset=True 时本轮必须回到需求采集，不得沿用旧需求直接推荐。
+    requirements_reset: bool
+    reset_reason: str
+
+    # 本轮"回应客户这句话"的口语回应（LLM 生成，只影响措辞，不参与 Gate 判定）
+    acknowledgement: str

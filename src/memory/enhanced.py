@@ -25,7 +25,7 @@ from src.config import config
 logger = logging.getLogger(__name__)
 
 # 配置
-MAX_SHORT_TERM_MESSAGES = 20  # 短期记忆保留消息数
+MAX_SHORT_TERM_MESSAGES = 50  # 短期记忆保留消息数
 MAX_MESSAGES_BEFORE_SUMMARY = 30  # 超过此数量触发摘要
 SUMMARY_TRIGGER_THRESHOLD = 10  # 摘要触发阈值（超过后截断并摘要）
 

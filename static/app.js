@@ -176,11 +176,6 @@ class LEDChatApp {
                 this.addMessage('ai', data.answer);
             }
             
-            // 处理产品推荐
-            if (data.products && data.products.length > 0) {
-                this.addProducts(data.products);
-            }
-            
         } catch (error) {
             this.hideTyping();
             this.addMessage('ai', '抱歉，发生了错误。请检查API服务是否正常运行。');
@@ -250,58 +245,6 @@ class LEDChatApp {
         `;
         
         this.messagesArea.appendChild(messageEl);
-        this.scrollToBottom();
-    }
-    
-    addProducts(products) {
-        if (!products || products.length === 0) return;
-        
-        const container = document.createElement('div');
-        container.className = 'products-container';
-        
-        let html = '';
-        for (const product of products) {
-            const meta = product.metadata || {};
-            const name = product.name || product.product_name || meta.series || meta.product_id || '未知产品';
-            const score = product.rrf_score || product.score || 0;
-            const scoreDisplay = score > 0 
-                ? `<span class="product-score">匹配度: ${(score * 100).toFixed(0)}%</span>` 
-                : '';
-            
-            // 构建规格信息
-            let specsHtml = '';
-            if (meta) {
-                const specs = [];
-                if (meta.display_type) specs.push(`类型: ${meta.display_type}`);
-                if (meta.size) specs.push(`尺寸: ${meta.size}`);
-                if (meta.brightness) specs.push(`亮度: ${meta.brightness}`);
-                if (meta.resolution) specs.push(`分辨率: ${meta.resolution}`);
-                if (specs.length > 0) {
-                    specsHtml = `<div class="product-specs">${specs.join(' | ')}</div>`;
-                }
-            }
-            
-            // 产品描述
-            let descHtml = '';
-            const desc = product.text || product.page_content || '';
-            if (desc) {
-                descHtml = `<div class="product-desc">${desc.substring(0, 200)}...</div>`;
-            }
-            
-            html += `
-                <div class="product-card">
-                    <div class="product-header">
-                        <span class="product-name">${name}</span>
-                        ${scoreDisplay}
-                    </div>
-                    ${specsHtml}
-                    ${descHtml}
-                </div>
-            `;
-        }
-        
-        container.innerHTML = html;
-        this.messagesArea.appendChild(container);
         this.scrollToBottom();
     }
     

@@ -23,6 +23,13 @@ def _route_after_reflect(state: SolutionState) -> str:
     return "END"
 
 
+def _route_after_recommendation_gate(state: SolutionState) -> str:
+    """v2.0 Phase 4：Gate 决定"继续推荐"还是"先追问"。"""
+    if (state.get("recommendation_gate") or {}).get("ready") is False:
+        return "clarify"
+    return "retrieve"
+
+
 def build_solution_graph():
     """Compile and return the Solution Agent graph.
 
@@ -43,6 +50,10 @@ def build_solution_graph():
     graph.add_node("intent_recognition", intent_node)
     graph.add_node("understand", req_node.understand_node)
     graph.add_node("infer_parameters", req_node.infer_parameters_node)
+    # 注意：节点名不能与 state key 同名（LangGraph 会报
+    # "'recommendation_gate' is already being used as a state key"），
+    # 因此节点用 *_check 后缀，state 里保存判定结果的 key 仍是 recommendation_gate。
+    graph.add_node("recommendation_gate_check", req_node.recommendation_gate_node)
     graph.add_node("retrieve", ret_node.retrieval_node)
     graph.add_node("recommend", recommend_node)
     graph.add_node("reflect", reflection_node)
@@ -69,9 +80,18 @@ def build_solution_graph():
         }
     )
     
-    # Recommendation flow: understand -> infer_parameters -> retrieve -> recommend -> reflect -> END
+    # Recommendation flow: understand -> infer_parameters -> recommendation_gate
+    #                      -> (retrieve | clarify) -> recommend -> reflect -> END
     graph.add_edge("understand", "infer_parameters")
-    graph.add_edge("infer_parameters", "retrieve")
+    graph.add_edge("infer_parameters", "recommendation_gate_check")
+    graph.add_conditional_edges(
+        "recommendation_gate_check",
+        _route_after_recommendation_gate,
+        {
+            "retrieve": "retrieve",
+            "clarify": "clarify",
+        },
+    )
     graph.add_edge("retrieve", "recommend")
     graph.add_edge("recommend", "reflect")
     

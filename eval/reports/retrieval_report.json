@@ -1,0 +1,5296 @@
+{
+  "report": "retrieval_eval",
+  "phase": "Phase 0",
+  "timestamp": "2026-09-14T06:22:54.019405+00:00",
+  "git_commit": "c5ea6ff",
+  "dataset": "eval/golden_dataset.json",
+  "corpus_chunks": 49,
+  "top_k": 10,
+  "summary": {
+    "ranked": {
+      "cases_total": 72,
+      "cases_scored_series": 53,
+      "cases_scored_model": 41,
+      "recall_at_5": 0.8837,
+      "recall_at_10": 0.8837,
+      "mrr": 0.9151,
+      "series_hit_at_3": 0.9434,
+      "model_recall_at_5": 0.5406,
+      "model_recall_at_10": 0.7358,
+      "model_mrr": 0.5277,
+      "model_hit_at_1": 0.3902,
+      "model_hit_at_3": 0.5854,
+      "model_hit_at_5": 0.7317,
+      "pitch_fit_at_3": 0.8293,
+      "pitch_fit_at_5": 0.9512,
+      "hard_constraint_violation_rate": 0.0,
+      "total_violations": 0,
+      "violation_types": {},
+      "avg_latency_ms": 216.4,
+      "p95_latency_ms": 298.9,
+      "empty_result_rate": 0.0972
+    },
+    "filtered": {
+      "cases_total": 72,
+      "cases_scored_series": 53,
+      "cases_scored_model": 41,
+      "recall_at_5": 0.9245,
+      "recall_at_10": 0.9245,
+      "mrr": 0.8962,
+      "series_hit_at_3": 0.9434,
+      "model_recall_at_5": 0.748,
+      "model_recall_at_10": 0.9187,
+      "model_mrr": 0.6886,
+      "model_hit_at_1": 0.5122,
+      "model_hit_at_3": 0.8293,
+      "model_hit_at_5": 0.9268,
+      "pitch_fit_at_3": 0.9756,
+      "pitch_fit_at_5": 0.9756,
+      "hard_constraint_violation_rate": 0.0,
+      "total_violations": 0,
+      "violation_types": {},
+      "avg_latency_ms": 209.2,
+      "p95_latency_ms": 293.6,
+      "empty_result_rate": 0.0972
+    }
+  },
+  "recall_at_5_by_tag": {
+    "advertising": 0.8667,
+    "airport": 1.0,
+    "bank": 1.0,
+    "brightness_specified": 0.0,
+    "budget": 1.0,
+    "cabinet": 1.0,
+    "classroom": 1.0,
+    "concert": 1.0,
+    "conference": 0.881,
+    "conflict": 0.3333,
+    "de": 1.0,
+    "en": 0.7222,
+    "es": 1.0,
+    "event": 1.0,
+    "exhibition": 1.0,
+    "fast": 1.0,
+    "fixed": 0.8571,
+    "flexible": 1.0,
+    "fr": 1.0,
+    "gob": 1.0,
+    "hall": 1.0,
+    "indoor": 0.9278,
+    "ja": 1.0,
+    "lobby": 1.0,
+    "model_specified": 1.0,
+    "multi_turn": 0.7917,
+    "multilingual": 0.9583,
+    "museum": 1.0,
+    "office": 0.6667,
+    "outdoor": 0.7778,
+    "pitch_specified": 1.0,
+    "premium": 1.0,
+    "pt": 1.0,
+    "rental": 1.0,
+    "restaurant": 1.0,
+    "retail": 1.0,
+    "ru": 1.0,
+    "showroom": 1.0,
+    "spec_query": 1.0,
+    "stadium": 1.0,
+    "stage": 1.0,
+    "viewing_distance": 0.942,
+    "waterproof": 0.7778,
+    "zh": 0.8889
+  },
+  "cases": [
+    {
+      "id": "g001",
+      "query": "会议室大概15人用，推荐一块合适的显示屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "conference"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 298.0,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P1.5",
+          "TW11-3216-P1.5",
+          "TW31-COB-P1.5H",
+          "TW21-3216-P2.5",
+          "TW21-3216-P1.6",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.2",
+          "TW11-3216-P1.6",
+          "TW21-3216-P1.8",
+          "TW21-3216-P3.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      },
+      "filtered": {
+        "latency_ms": 191.7,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P1.5",
+          "TW11-3216-P1.5",
+          "TW31-COB-P1.5H",
+          "TW21-3216-P2.5",
+          "TW21-3216-P1.6",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.2",
+          "TW11-3216-P1.6",
+          "TW21-3216-P1.8",
+          "TW21-3216-P3.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      }
+    },
+    {
+      "id": "g002",
+      "query": "会议室大约3米视距，帮我选一块LED屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "conference",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216",
+        "TW31-COB"
+      ],
+      "expected_models": [
+        "TW21-3216-P1.8",
+        "TW11-3216-P1.8",
+        "TW11-3216-P2.0"
+      ],
+      "ranked": {
+        "latency_ms": 192.5,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P3.0",
+          "TW11-3216-P3.0",
+          "TW21-3216-P1.5",
+          "TW11-3216-P2.5",
+          "TW11-3216-P1.5",
+          "TW21-3216-P1.6",
+          "TW21-3216-P2.5",
+          "TW11-3216-P1.6",
+          "TW11-3216-P4.0",
+          "TW21-3216-P4.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 0.6667,
+        "recall_at_10": 0.6667,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.0,
+        "model_mrr": 0.0,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      },
+      "filtered": {
+        "latency_ms": 179.8,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P1.5",
+          "TW11-3216-P1.5",
+          "TW21-3216-P1.6",
+          "TW11-3216-P1.6",
+          "TW21-3216-P1.2",
+          "TW21-3216-P1.8",
+          "TW11-3216-P1.2",
+          "TW31-COB-P1.5H",
+          "TW31-COB-P0.9H",
+          "TW11-3216-P1.8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.6667,
+        "model_mrr": 0.1667,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      }
+    },
+    {
+      "id": "g003",
+      "query": "会议室5米视距用，要LED屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "conference",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [
+        "TW21-3216-P2.5",
+        "TW11-3216-P2.5",
+        "TW21-3216-P2.0"
+      ],
+      "ranked": {
+        "latency_ms": 186.6,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW21-3216",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P1.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.5",
+          "TW31-COB-P1.5H",
+          "TW11-3216-P3.0",
+          "TW21-3216-P2.5",
+          "TW21-3216-P3.0",
+          "TW21-3216-P1.6",
+          "TW11-3216-P1.6",
+          "TW11-3216-P4.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.3333,
+        "model_recall_at_10": 0.6667,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 189.2,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW21-3216",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P1.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.5",
+          "TW31-COB-P1.5H",
+          "TW21-3216-P2.5",
+          "TW21-3216-P1.6",
+          "TW11-3216-P1.6",
+          "TW11-3216-P2.0",
+          "TW21-3216-P1.8",
+          "TW11-3216-P1.8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.6667,
+        "model_recall_at_10": 0.6667,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g004",
+      "query": "教室大概8米视距，要装一块LED显示屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "classroom",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [
+        "TW21-3216-P2.5",
+        "TW11-3216-P2.5",
+        "TW21-3216-P3.0"
+      ],
+      "ranked": {
+        "latency_ms": 188.0,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P1.5",
+          "TW11-3216-P2.5",
+          "TW11-3216-P1.8",
+          "TW11-3216-P3.0",
+          "TW11-3216-P1.6",
+          "TW11-3216-P1.2",
+          "TW21-3216-P1.5",
+          "TW11-3216-P4.0",
+          "TW21-3216-P1.8",
+          "TW11-3216-P2.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.3333,
+        "model_recall_at_10": 0.3333,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 181.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW21-3216",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P1.5",
+          "TW11-3216-P2.5",
+          "TW11-3216-P1.8",
+          "TW11-3216-P1.6",
+          "TW21-3216-P1.5",
+          "TW21-3216-P1.8",
+          "TW11-3216-P2.0",
+          "TW21-3216-P1.6",
+          "TW31-COB-P1.5H",
+          "TW21-3216-P2.5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.3333,
+        "model_recall_at_10": 0.6667,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g005",
+      "query": "培训室6米视距，教学用LED屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "classroom",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [
+        "TW21-3216-P2.5",
+        "TW11-3216-P2.5"
+      ],
+      "ranked": {
+        "latency_ms": 175.9,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW21-3216",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P2.5",
+          "TW11-3216-P1.5",
+          "TW11-3216-P1.6",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.5",
+          "TW31-COB-P1.5H",
+          "TW21-3216-P2.5",
+          "TW31-COB-P0.9H",
+          "TW31-COB-P0.7H",
+          "TW11-3216-P3.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 177.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW21-3216",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P2.5",
+          "TW11-3216-P1.5",
+          "TW11-3216-P1.6",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.5",
+          "TW31-COB-P1.5H",
+          "TW21-3216-P2.5",
+          "TW21-3216-P1.8",
+          "TW11-3216-P1.8",
+          "TW11-3216-P2.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g006",
+      "query": "展厅做高端展示，观看距离2米以内，要清晰度高的屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "showroom",
+        "premium",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW31-COB"
+      ],
+      "expected_models": [
+        "TW31-COB-P0.7H",
+        "TW31-COB-P0.9H",
+        "TW31-COB-P1.2H"
+      ],
+      "ranked": {
+        "latency_ms": 189.5,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P0.9H",
+          "TW31-COB-P1.2H",
+          "TW31-COB-P1.5H",
+          "TW21-3216-P1.5",
+          "TW21-3216-P2.5",
+          "TW21-3216-P2.0",
+          "TW21-3216-P3.0",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.8",
+          "TW21-3216-P1.2"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.6667,
+        "model_recall_at_10": 0.6667,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 195.3,
+        "retrieved_count": 5,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P0.9H",
+          "TW31-COB-P1.2H",
+          "TW21-3216-P1.2",
+          "TW31-COB-P0.7H",
+          "TW11-3216-P1.2"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g007",
+      "query": "商场店铺做广告展示，视距3米左右",
+      "tags": [
+        "indoor",
+        "fixed",
+        "retail",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216",
+        "TW31-COB"
+      ],
+      "expected_models": [
+        "TW21-3216-P1.8",
+        "TW11-3216-P1.8"
+      ],
+      "ranked": {
+        "latency_ms": 195.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P1.5H",
+          "TW31-COB-P0.9H",
+          "TW21-3216-P3.0",
+          "TW31-COB-P1.2H",
+          "TW31-COB-P0.7H",
+          "TW21-3216-P1.5",
+          "TW21-3216-P1.8",
+          "TW21-3216-P2.5",
+          "TW11-3216-P3.0",
+          "TW21-3216-P1.6"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.5,
+        "model_mrr": 0.1429,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      },
+      "filtered": {
+        "latency_ms": 230.0,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P1.5H",
+          "TW31-COB-P0.9H",
+          "TW31-COB-P1.2H",
+          "TW21-3216-P1.5",
+          "TW21-3216-P1.8",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.2",
+          "TW21-3216-P2.0",
+          "TW11-3216-P1.5",
+          "TW11-3216-P1.8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.2,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g008",
+      "query": "指挥中心要做拼接大屏，7x24小时运行",
+      "tags": [
+        "no_match",
+        "control-room",
+        "lcd"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 226.2,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 213.3,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g009",
+      "query": "酒店大堂要装一块LED屏，视距4米",
+      "tags": [
+        "indoor",
+        "fixed",
+        "lobby",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [
+        "TW21-3216-P2.5",
+        "TW11-3216-P2.5",
+        "TW21-3216-P2.0"
+      ],
+      "ranked": {
+        "latency_ms": 244.7,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P4.0",
+          "TW11-3216-P4.0",
+          "TW11-3216-P2.5",
+          "TW21-3216-P2.5",
+          "TW21-3216-P1.6",
+          "TW11-3216-P1.6",
+          "TW21-3216-P1.2",
+          "TW21-3216-P3.0",
+          "TW21-3216-P1.5",
+          "TW11-3216-P1.5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.6667,
+        "model_recall_at_10": 0.6667,
+        "model_mrr": 0.3333,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 214.6,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P2.5",
+          "TW21-3216-P2.5",
+          "TW21-3216-P1.6",
+          "TW11-3216-P1.6",
+          "TW21-3216-P1.5",
+          "TW11-3216-P1.5",
+          "TW21-3216-P1.8",
+          "TW11-3216-P1.8",
+          "TW21-3216-P2.0",
+          "TW11-3216-P2.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.6667,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g010",
+      "query": "会议室想要HDR高端的LED屏，视距3米",
+      "tags": [
+        "indoor",
+        "fixed",
+        "conference",
+        "premium",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW31-COB",
+        "TW21-3216",
+        "TW11-3216"
+      ],
+      "expected_models": [
+        "TW31-COB-P1.2H",
+        "TW31-COB-P1.5H"
+      ],
+      "ranked": {
+        "latency_ms": 292.5,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P1.5H",
+          "TW31-COB-P0.9H",
+          "TW31-COB-P1.2H",
+          "TW31-COB-P0.7H",
+          "TW21-3216-P3.0",
+          "TW11-3216-P3.0",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.5",
+          "TW21-3216-P4.0",
+          "TW21-3216-P2.5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 237.5,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P1.5H",
+          "TW31-COB-P0.9H",
+          "TW31-COB-P1.2H",
+          "TW31-COB-P0.7H",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.5",
+          "TW21-3216-P1.2",
+          "TW21-3216-P1.8",
+          "TW21-3216-P2.0",
+          "TW11-3216-P1.6"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g011",
+      "query": "室内大厅，12米视距，装LED屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "hall",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [
+        "TW21-3216-P3.0",
+        "TW11-3216-P3.0",
+        "TW21-3216-P4.0"
+      ],
+      "ranked": {
+        "latency_ms": 211.6,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.2",
+          "TW21-3216-P1.5",
+          "TW21-3216-P1.6",
+          "TW21-3216-P3.0",
+          "TW11-3216-P1.5",
+          "TW11-3216-P3.0",
+          "TW11-3216-P1.2",
+          "TW11-3216-P1.6"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.6667,
+        "model_mrr": 0.1667,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      },
+      "filtered": {
+        "latency_ms": 218.1,
+        "retrieved_count": 6,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P3.0",
+          "TW11-3216-P3.0",
+          "TW21-3216-P4.0",
+          "TW11-3216-P4.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.3333,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g012",
+      "query": "办公室挂墙的LED屏，3.5米视距",
+      "tags": [
+        "indoor",
+        "fixed",
+        "office",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216",
+        "TW31-COB"
+      ],
+      "expected_models": [
+        "TW21-3216-P1.8",
+        "TW11-3216-P1.8"
+      ],
+      "ranked": {
+        "latency_ms": 211.8,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P3.0",
+          "TW21-3216-P3.0",
+          "TW11-3216-P1.5",
+          "TW11-3216-P2.5",
+          "TW11-3216-P4.0",
+          "TW11-3216-P1.8",
+          "TW11-3216-P1.6",
+          "TW11-3216-P2.0",
+          "TW11-3216-P1.2",
+          "TW21-3216-P1.5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 0.6667,
+        "recall_at_10": 0.6667,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.5,
+        "model_mrr": 0.1667,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      },
+      "filtered": {
+        "latency_ms": 194.7,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW21-3216",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P1.5",
+          "TW11-3216-P1.8",
+          "TW11-3216-P1.6",
+          "TW11-3216-P2.0",
+          "TW11-3216-P1.2",
+          "TW21-3216-P1.5",
+          "TW21-3216-P1.8",
+          "TW31-COB-P1.5H",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.2"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g013",
+      "query": "博物馆展陈用的LED屏，观看距离2.5米",
+      "tags": [
+        "indoor",
+        "fixed",
+        "museum",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216",
+        "TW31-COB"
+      ],
+      "expected_models": [
+        "TW21-3216-P1.8",
+        "TW11-3216-P1.8",
+        "TW31-COB-P1.5H"
+      ],
+      "ranked": {
+        "latency_ms": 205.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.5",
+          "TW31-COB-P1.5H",
+          "TW21-3216-P2.0",
+          "TW11-3216-P1.5",
+          "TW11-3216-P2.0",
+          "TW21-3216-P1.2",
+          "TW21-3216-P3.0",
+          "TW21-3216-P1.8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.3333,
+        "model_recall_at_10": 0.6667,
+        "model_mrr": 0.25,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 198.5,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW31-COB",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P1.5",
+          "TW31-COB-P1.5H",
+          "TW21-3216-P2.0",
+          "TW11-3216-P1.5",
+          "TW11-3216-P2.0",
+          "TW21-3216-P1.2",
+          "TW21-3216-P1.8",
+          "TW31-COB-P1.2H",
+          "TW31-COB-P0.9H",
+          "TW21-3216-P1.6"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.3333,
+        "model_recall_at_10": 0.6667,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g014",
+      "query": "银行网点大厅，5米视距LED屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "bank",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [
+        "TW21-3216-P2.5",
+        "TW11-3216-P2.5"
+      ],
+      "ranked": {
+        "latency_ms": 214.8,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW31-COB",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P1.5",
+          "TW21-3216-P2.5",
+          "TW31-COB-P1.5H",
+          "TW11-3216-P1.5",
+          "TW21-3216-P1.6",
+          "TW21-3216-P3.0",
+          "TW21-3216-P1.2",
+          "TW21-3216-P1.8",
+          "TW11-3216-P2.5",
+          "TW21-3216-P4.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 192.6,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW31-COB",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P1.5",
+          "TW21-3216-P2.5",
+          "TW31-COB-P1.5H",
+          "TW11-3216-P1.5",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.8",
+          "TW11-3216-P2.5",
+          "TW21-3216-P2.0",
+          "TW11-3216-P1.6",
+          "TW11-3216-P1.8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g015",
+      "query": "餐厅做菜单展示，视距4米",
+      "tags": [
+        "indoor",
+        "fixed",
+        "restaurant",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [
+        "TW21-3216-P2.5",
+        "TW11-3216-P2.5"
+      ],
+      "ranked": {
+        "latency_ms": 210.5,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P0.9H",
+          "TW31-COB-P1.5H",
+          "TW31-COB-P0.7H",
+          "TW31-COB-P1.2H",
+          "TW21-3216-P4.0",
+          "TW11-3216-P4.0",
+          "TW21-3216-P3.0",
+          "TW21-3216-P1.8",
+          "TW21-3216-P1.5",
+          "TW11-3216-P3.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 0.5,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.0,
+        "model_mrr": 0.0,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      },
+      "filtered": {
+        "latency_ms": 215.1,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P1.5H",
+          "TW21-3216-P1.8",
+          "TW21-3216-P1.5",
+          "TW21-3216-P2.5",
+          "TW11-3216-P1.5",
+          "TW21-3216-P1.6",
+          "TW11-3216-P1.8",
+          "TW11-3216-P2.5",
+          "TW11-3216-P1.6",
+          "TW21-3216-P2.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 0.5,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.25,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g016",
+      "query": "机场航站楼信息屏，10米视距",
+      "tags": [
+        "indoor",
+        "fixed",
+        "airport",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [
+        "TW21-3216-P3.0",
+        "TW11-3216-P3.0"
+      ],
+      "ranked": {
+        "latency_ms": 253.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P1.5",
+          "TW21-3216-P1.8",
+          "TW21-3216-P3.0",
+          "TW11-3216-P1.5",
+          "TW11-3216-P3.0",
+          "TW11-3216-P1.8",
+          "TW21-3216-P1.2",
+          "TW21-3216-P4.0",
+          "TW21-3216-P1.6",
+          "TW21-3216-P2.5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.3333,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 292.0,
+        "retrieved_count": 6,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P3.0",
+          "TW11-3216-P3.0",
+          "TW21-3216-P4.0",
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5",
+          "TW11-3216-P4.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g017",
+      "query": "室内演唱会租赁，P3.9左右的屏",
+      "tags": [
+        "indoor",
+        "rental",
+        "concert",
+        "pitch_specified"
+      ],
+      "expected_series": [
+        "TW11-IR",
+        "TW21-IRHD",
+        "TW31-IRHD"
+      ],
+      "expected_models": [
+        "TW11-IR-P3.9",
+        "TW21-IRHD-P3.9H",
+        "TW31-IRHD-P3.9"
+      ],
+      "ranked": {
+        "latency_ms": 275.0,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P3.9",
+          "TW31-IRHD-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW11-IR-P2.9",
+          "TW11-IR-P4.8",
+          "TW31-IRHD-P2.9",
+          "TW31-IRHD-P2.6",
+          "TW11-IR-P2.6",
+          "TW11-IR-P1.95(GOB)",
+          "TW21-IRHD-P2.9H"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 219.6,
+        "retrieved_count": 3,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P3.9",
+          "TW31-IRHD-P3.9",
+          "TW21-IRHD-P3.9H"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g018",
+      "query": "室内活动租赁，P2.6的屏",
+      "tags": [
+        "indoor",
+        "rental",
+        "event",
+        "pitch_specified"
+      ],
+      "expected_series": [
+        "TW11-IR",
+        "TW21-IRHD",
+        "TW31-IRHD"
+      ],
+      "expected_models": [
+        "TW11-IR-P2.6",
+        "TW21-IRHD-P2.6H",
+        "TW31-IRHD-P2.6"
+      ],
+      "ranked": {
+        "latency_ms": 202.5,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW21-IRHD",
+          "TW31-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P2.6",
+          "TW11-IR-P2.9",
+          "TW21-IRHD-P2.6H",
+          "TW31-IRHD-P2.6",
+          "TW21-IRHD-P2.9H",
+          "TW31-IRHD-P2.9",
+          "TW11-IR-P3.9",
+          "TW11-IR-P4.8",
+          "TW11-IR-P1.95(GOB)",
+          "TW31-IRHD-P3.9"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 182.5,
+        "retrieved_count": 3,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P2.6",
+          "TW31-IRHD-P2.6",
+          "TW21-IRHD-P2.6H"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g019",
+      "query": "室内租赁要柔性屏，P2.9",
+      "tags": [
+        "indoor",
+        "rental",
+        "flexible",
+        "pitch_specified"
+      ],
+      "expected_series": [
+        "TW31-IRHD"
+      ],
+      "expected_models": [
+        "TW31-IRHD-P2.9"
+      ],
+      "ranked": {
+        "latency_ms": 205.7,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P2.9",
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.6",
+          "TW31-IRHD-P2.9",
+          "TW31-IRHD-P3.9",
+          "TW21-IRHD-P2.9H",
+          "TW31-IRHD-P2.6",
+          "TW21-IRHD-P2.6H",
+          "TW11-IR-P1.95(GOB)",
+          "TW11-IR-P4.8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 0.5,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.25,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 193.9,
+        "retrieved_count": 3,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P2.9",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P2.9H"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 0.5,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g020",
+      "query": "展会租赁，要1.9mm点间距的屏",
+      "tags": [
+        "indoor",
+        "rental",
+        "exhibition",
+        "pitch_specified"
+      ],
+      "expected_series": [
+        "TW11-IR"
+      ],
+      "expected_models": [
+        "TW11-IR-P1.95(GOB)"
+      ],
+      "ranked": {
+        "latency_ms": 197.6,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW21-IRHD",
+          "TW31-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.9",
+          "TW21-IRHD-P3.9H",
+          "TW31-IRHD-P3.9",
+          "TW11-IR-P2.6",
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P2.9H",
+          "TW21-IRHD-P2.6H",
+          "TW11-IR-P4.8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 0.0,
+        "pitch_fit_at_5": 0.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.0,
+        "model_mrr": 0.0,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      },
+      "filtered": {
+        "latency_ms": 211.9,
+        "retrieved_count": 1,
+        "retrieved_series": [
+          "TW11-IR"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P1.95(GOB)"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g021",
+      "query": "室内租赁要有GOB防护的屏",
+      "tags": [
+        "indoor",
+        "rental",
+        "gob"
+      ],
+      "expected_series": [
+        "TW11-IR"
+      ],
+      "expected_models": [
+        "TW11-IR-P1.95(GOB)"
+      ],
+      "ranked": {
+        "latency_ms": 192.9,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P1.95(GOB)",
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.6",
+          "TW11-IR-P4.8",
+          "TW11-IR-P2.9",
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW21-IRHD-P2.6H",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P3.9H"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 188.9,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P1.95(GOB)",
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.6",
+          "TW11-IR-P4.8",
+          "TW11-IR-P2.9",
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW21-IRHD-P2.6H",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P3.9H"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g022",
+      "query": "室内演出租赁，预算有限，推荐便宜点的",
+      "tags": [
+        "indoor",
+        "rental",
+        "stage",
+        "budget"
+      ],
+      "expected_series": [
+        "TW11-IR"
+      ],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 209.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P4.8",
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.6",
+          "TW11-IR-P2.9",
+          "TW31-IRHD-P2.6",
+          "TW21-IRHD-P2.6H",
+          "TW31-IRHD-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW21-IRHD-P2.9H",
+          "TW11-IR-P1.95(GOB)"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      },
+      "filtered": {
+        "latency_ms": 192.1,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P4.8",
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.6",
+          "TW11-IR-P2.9",
+          "TW31-IRHD-P2.6",
+          "TW21-IRHD-P2.6H",
+          "TW31-IRHD-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW21-IRHD-P2.9H",
+          "TW11-IR-P1.95(GOB)"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      }
+    },
+    {
+      "id": "g023",
+      "query": "室内展览用大点间距的租赁屏，P4.8",
+      "tags": [
+        "indoor",
+        "rental",
+        "exhibition",
+        "pitch_specified"
+      ],
+      "expected_series": [
+        "TW11-IR"
+      ],
+      "expected_models": [
+        "TW11-IR-P4.8"
+      ],
+      "ranked": {
+        "latency_ms": 264.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P4.8",
+          "TW11-IR-P2.9",
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P2.9H",
+          "TW11-IR-P1.95(GOB)",
+          "TW21-IRHD-P3.9H"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 232.2,
+        "retrieved_count": 1,
+        "retrieved_series": [
+          "TW11-IR"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P4.8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g024",
+      "query": "室内租赁屏，P2.9，推荐一款",
+      "tags": [
+        "indoor",
+        "rental",
+        "pitch_specified"
+      ],
+      "expected_series": [
+        "TW11-IR",
+        "TW21-IRHD",
+        "TW31-IRHD"
+      ],
+      "expected_models": [
+        "TW11-IR-P2.9",
+        "TW21-IRHD-P2.9H",
+        "TW31-IRHD-P2.9"
+      ],
+      "ranked": {
+        "latency_ms": 204.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P2.9",
+          "TW11-IR-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW11-IR-P2.6",
+          "TW21-IRHD-P2.9H",
+          "TW31-IRHD-P3.9",
+          "TW21-IRHD-P2.6H",
+          "TW31-IRHD-P2.6",
+          "TW11-IR-P4.8",
+          "TW11-IR-P1.95(GOB)"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 226.1,
+        "retrieved_count": 3,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW21-IRHD",
+          "TW31-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P2.9",
+          "TW21-IRHD-P2.9H",
+          "TW31-IRHD-P2.9"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g025",
+      "query": "户外广告屏，视距20米左右",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "advertising",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD",
+        "TW31-HOD"
+      ],
+      "expected_models": [
+        "TW21-OD-P6",
+        "TW11-OD-P6",
+        "TW31-HOD-P6.67E"
+      ],
+      "ranked": {
+        "latency_ms": 275.7,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW11-OD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P3",
+          "TW21-OD-P10",
+          "TW21-OD-P2.5",
+          "TW21-OD-P6",
+          "TW21-OD-P8",
+          "TW21-OD-P5",
+          "TW21-OD-P4",
+          "TW11-OD-P3",
+          "TW11-OD-P10",
+          "TW11-OD-P6"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 0.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 0.6667,
+        "recall_at_10": 0.6667,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.3333,
+        "model_recall_at_10": 0.6667,
+        "model_mrr": 0.25,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 204.8,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW11-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P6",
+          "TW21-OD-P8",
+          "TW21-OD-P5",
+          "TW21-OD-P4",
+          "TW11-OD-P6",
+          "TW31-HOD-P6.67E",
+          "TW11-OD-P5",
+          "TW11-OD-P8",
+          "TW31-HOD-P5.7E",
+          "TW31-HOD-P8E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.6667,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g026",
+      "query": "户外楼体广告屏，观看距离40米以上",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "advertising",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD",
+        "TW31-HOD"
+      ],
+      "expected_models": [
+        "TW11-OD-P10",
+        "TW21-OD-P10",
+        "TW31-HOD-P10E"
+      ],
+      "ranked": {
+        "latency_ms": 255.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-HOD",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW31-HOD-P6.67E",
+          "TW21-OD-P3",
+          "TW31-HOD-P5.7E",
+          "TW21-OD-P4",
+          "TW31-HOD-P10E",
+          "TW21-OD-P2.5",
+          "TW21-OD-P6",
+          "TW31-HOD-P8E",
+          "TW21-OD-P10",
+          "TW21-OD-P8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 0.6667,
+        "recall_at_10": 0.6667,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.3333,
+        "model_recall_at_10": 0.6667,
+        "model_mrr": 0.2,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 230.5,
+        "retrieved_count": 9,
+        "retrieved_series": [
+          "TW31-HOD",
+          "TW21-OD",
+          "TW11-OD"
+        ],
+        "retrieved_models": [
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P10E",
+          "TW21-OD-P6",
+          "TW31-HOD-P8E",
+          "TW21-OD-P10",
+          "TW21-OD-P8",
+          "TW11-OD-P6",
+          "TW11-OD-P8",
+          "TW11-OD-P10"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.6667,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g027",
+      "query": "体育场外围的LED屏，30米视距",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "stadium",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD",
+        "TW31-HOD"
+      ],
+      "expected_models": [
+        "TW21-OD-P8",
+        "TW11-OD-P8",
+        "TW31-HOD-P8E"
+      ],
+      "ranked": {
+        "latency_ms": 210.7,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-HOD",
+          "TW21-OD",
+          "TW11-OD"
+        ],
+        "retrieved_models": [
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P10E",
+          "TW31-HOD-P8E",
+          "TW31-HOD-P5.7E",
+          "TW21-OD-P3",
+          "TW11-OD-P3",
+          "TW21-OD-P10",
+          "TW21-OD-P2.5",
+          "TW21-OD-P8",
+          "TW11-OD-P8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.3333,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.3333,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 187.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-HOD",
+          "TW21-OD",
+          "TW11-OD"
+        ],
+        "retrieved_models": [
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P8E",
+          "TW31-HOD-P5.7E",
+          "TW21-OD-P8",
+          "TW11-OD-P8",
+          "TW21-OD-P6",
+          "TW11-OD-P6",
+          "TW21-OD-P5",
+          "TW21-OD-P4",
+          "TW11-OD-P5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g028",
+      "query": "商场外墙幕墙广告屏，20米视距",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "advertising",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD",
+        "TW31-HOD"
+      ],
+      "expected_models": [
+        "TW21-OD-P6",
+        "TW11-OD-P6",
+        "TW31-HOD-P6.67E"
+      ],
+      "ranked": {
+        "latency_ms": 216.9,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW11-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P10",
+          "TW21-OD-P3",
+          "TW21-OD-P2.5",
+          "TW21-OD-P8",
+          "TW21-OD-P5",
+          "TW21-OD-P6",
+          "TW21-OD-P4",
+          "TW11-OD-P3",
+          "TW31-HOD-P10E",
+          "TW31-HOD-P6.67E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 0.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.6667,
+        "model_mrr": 0.1667,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      },
+      "filtered": {
+        "latency_ms": 202.8,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW31-HOD",
+          "TW11-OD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P8",
+          "TW21-OD-P5",
+          "TW21-OD-P6",
+          "TW21-OD-P4",
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P5.7E",
+          "TW11-OD-P8",
+          "TW31-HOD-P8E",
+          "TW11-OD-P6",
+          "TW11-OD-P5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.6667,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.3333,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g029",
+      "query": "户外高亮屏，亮度要8000nit以上",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "brightness_specified"
+      ],
+      "expected_series": [
+        "TW31-HOD"
+      ],
+      "expected_models": [
+        "TW31-HOD-P6.67E",
+        "TW31-HOD-P8E",
+        "TW31-HOD-P10E"
+      ],
+      "ranked": {
+        "latency_ms": 191.4,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 0.0,
+        "recall_at_10": 0.0,
+        "mrr": 0.0,
+        "series_hit_at_3": 0.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.0,
+        "model_mrr": 0.0,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      },
+      "filtered": {
+        "latency_ms": 203.2,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 0.0,
+        "recall_at_10": 0.0,
+        "mrr": 0.0,
+        "series_hit_at_3": 0.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.0,
+        "model_mrr": 0.0,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      }
+    },
+    {
+      "id": "g030",
+      "query": "户外P10的固定安装屏",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "pitch_specified"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD",
+        "TW31-HOD"
+      ],
+      "expected_models": [
+        "TW11-OD-P10",
+        "TW21-OD-P10",
+        "TW31-HOD-P10E"
+      ],
+      "ranked": {
+        "latency_ms": 194.9,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P10",
+          "TW21-OD-P10",
+          "TW31-HOD-P10E",
+          "TW11-OD-P5",
+          "TW11-OD-P6",
+          "TW11-OD-P3",
+          "TW11-OD-P8",
+          "TW11-OD-P2.5",
+          "TW11-OD-P4",
+          "TW31-HOD-P5.7E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 188.8,
+        "retrieved_count": 3,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P10",
+          "TW21-OD-P10",
+          "TW31-HOD-P10E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g031",
+      "query": "户外防水屏，P5左右",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "waterproof",
+        "pitch_specified"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD"
+      ],
+      "expected_models": [
+        "TW11-OD-P5",
+        "TW21-OD-P5"
+      ],
+      "ranked": {
+        "latency_ms": 174.2,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P5",
+          "TW21-OD-P5",
+          "TW21-OD-P6",
+          "TW21-OD-P3",
+          "TW21-OD-P2.5",
+          "TW11-OD-P6",
+          "TW11-OD-P2.5",
+          "TW21-OD-P8",
+          "TW11-OD-P10",
+          "TW11-OD-P3"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 175.2,
+        "retrieved_count": 2,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P5",
+          "TW21-OD-P5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g032",
+      "query": "户外广告屏预算低，18米视距",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "advertising",
+        "budget"
+      ],
+      "expected_series": [
+        "TW11-OD"
+      ],
+      "expected_models": [
+        "TW11-OD-P6",
+        "TW11-OD-P5"
+      ],
+      "ranked": {
+        "latency_ms": 246.8,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P8",
+          "TW11-OD-P3",
+          "TW11-OD-P2.5",
+          "TW11-OD-P6",
+          "TW11-OD-P10",
+          "TW21-OD-P8",
+          "TW21-OD-P3",
+          "TW21-OD-P2.5",
+          "TW11-OD-P4",
+          "TW11-OD-P5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.25,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 195.1,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P8",
+          "TW11-OD-P6",
+          "TW21-OD-P8",
+          "TW11-OD-P4",
+          "TW11-OD-P5",
+          "TW21-OD-P6",
+          "TW21-OD-P4",
+          "TW31-HOD-P8E",
+          "TW21-OD-P5",
+          "TW31-HOD-P6.67E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g033",
+      "query": "户外25米视距，中档价位的屏",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "budget",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW21-OD"
+      ],
+      "expected_models": [
+        "TW21-OD-P6",
+        "TW21-OD-P5"
+      ],
+      "ranked": {
+        "latency_ms": 219.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW31-HOD",
+          "TW11-OD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P2.5",
+          "TW21-OD-P3",
+          "TW21-OD-P5",
+          "TW21-OD-P8",
+          "TW21-OD-P10",
+          "TW21-OD-P6",
+          "TW31-HOD-P5.7E",
+          "TW21-OD-P4",
+          "TW11-OD-P2.5",
+          "TW31-HOD-P6.67E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.3333,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 193.9,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW31-HOD",
+          "TW11-OD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P5",
+          "TW21-OD-P8",
+          "TW21-OD-P6",
+          "TW31-HOD-P5.7E",
+          "TW21-OD-P4",
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P8E",
+          "TW11-OD-P5",
+          "TW11-OD-P8",
+          "TW11-OD-P6"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g034",
+      "query": "户外要10000nit超高亮的屏",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "brightness_specified"
+      ],
+      "expected_series": [
+        "TW31-HOD"
+      ],
+      "expected_models": [
+        "TW31-HOD-P8E",
+        "TW31-HOD-P10E"
+      ],
+      "ranked": {
+        "latency_ms": 168.8,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 0.0,
+        "recall_at_10": 0.0,
+        "mrr": 0.0,
+        "series_hit_at_3": 0.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.0,
+        "model_mrr": 0.0,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      },
+      "filtered": {
+        "latency_ms": 176.3,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 0.0,
+        "recall_at_10": 0.0,
+        "mrr": 0.0,
+        "series_hit_at_3": 0.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.0,
+        "model_mrr": 0.0,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      }
+    },
+    {
+      "id": "g035",
+      "query": "户外P2.5的屏",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "pitch_specified"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD"
+      ],
+      "expected_models": [
+        "TW11-OD-P2.5",
+        "TW21-OD-P2.5"
+      ],
+      "ranked": {
+        "latency_ms": 155.1,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P2.5",
+          "TW21-OD-P2.5",
+          "TW11-OD-P5",
+          "TW21-OD-P5",
+          "TW11-OD-P10",
+          "TW31-HOD-P5.7E",
+          "TW21-OD-P10",
+          "TW11-OD-P6",
+          "TW21-OD-P6",
+          "TW21-OD-P3"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 165.3,
+        "retrieved_count": 2,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P2.5",
+          "TW21-OD-P2.5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g036",
+      "query": "TW21-3216-P2.5 的亮度是多少？",
+      "tags": [
+        "fast",
+        "spec_query",
+        "model_specified"
+      ],
+      "expected_series": [
+        "TW21-3216"
+      ],
+      "expected_models": [
+        "TW21-3216-P2.5"
+      ],
+      "ranked": {
+        "latency_ms": 256.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P2.5",
+          "TW21-3216-P1.5",
+          "TW21-3216-P2.0",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.2",
+          "TW11-3216-P1.5",
+          "TW21-3216-P3.0",
+          "TW21-OD-P2.5",
+          "TW21-3216-P1.8",
+          "TW11-3216-P2.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 248.8,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P2.5",
+          "TW21-3216-P1.5",
+          "TW21-3216-P2.0",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.2",
+          "TW11-3216-P1.5",
+          "TW21-3216-P3.0",
+          "TW21-OD-P2.5",
+          "TW21-3216-P1.8",
+          "TW11-3216-P2.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g037",
+      "query": "P3.0的点间距具体是多少毫米",
+      "tags": [
+        "fast",
+        "spec_query"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 243.6,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW11-OD",
+          "TW21-3216",
+          "TW21-OD",
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW31-HOD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P3.0",
+          "TW11-OD-P3",
+          "TW21-3216-P3.0",
+          "TW21-OD-P3",
+          "TW11-IR-P3.9",
+          "TW31-IRHD-P3.9",
+          "TW31-HOD-P5.7E",
+          "TW31-HOD-P6.67E",
+          "TW21-IRHD-P3.9H",
+          "TW31-HOD-P10E"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 223.9,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW11-OD",
+          "TW21-3216",
+          "TW21-OD",
+          "TW11-IR",
+          "TW31-IRHD",
+          "TW31-HOD",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P3.0",
+          "TW11-OD-P3",
+          "TW21-3216-P3.0",
+          "TW21-OD-P3",
+          "TW11-IR-P3.9",
+          "TW31-IRHD-P3.9",
+          "TW31-HOD-P5.7E",
+          "TW31-HOD-P6.67E",
+          "TW21-IRHD-P3.9H",
+          "TW31-HOD-P10E"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g038",
+      "query": "你们户外屏最高亮度能到多少",
+      "tags": [
+        "fast",
+        "spec_query"
+      ],
+      "expected_series": [
+        "TW31-HOD"
+      ],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 234.2,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-HOD",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW31-HOD-P5.7E",
+          "TW31-HOD-P6.67E",
+          "TW21-OD-P2.5",
+          "TW31-HOD-P10E",
+          "TW31-HOD-P8E",
+          "TW21-OD-P5",
+          "TW21-OD-P3",
+          "TW21-OD-P8",
+          "TW21-OD-P6",
+          "TW21-OD-P10"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      },
+      "filtered": {
+        "latency_ms": 208.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-HOD",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW31-HOD-P5.7E",
+          "TW31-HOD-P6.67E",
+          "TW21-OD-P2.5",
+          "TW31-HOD-P10E",
+          "TW31-HOD-P8E",
+          "TW21-OD-P5",
+          "TW21-OD-P3",
+          "TW21-OD-P8",
+          "TW21-OD-P6",
+          "TW21-OD-P10"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      }
+    },
+    {
+      "id": "g039",
+      "query": "TW31-COB-P1.2H 支持HDR吗",
+      "tags": [
+        "fast",
+        "spec_query",
+        "model_specified"
+      ],
+      "expected_series": [
+        "TW31-COB"
+      ],
+      "expected_models": [
+        "TW31-COB-P1.2H"
+      ],
+      "ranked": {
+        "latency_ms": 232.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW31-IRHD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P1.2H",
+          "TW31-COB-P1.5H",
+          "TW31-COB-P0.9H",
+          "TW31-COB-P0.7H",
+          "TW31-IRHD-P2.9",
+          "TW31-IRHD-P2.6",
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P5.7E",
+          "TW31-IRHD-P3.9",
+          "TW31-HOD-P10E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 261.8,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW31-IRHD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P1.2H",
+          "TW31-COB-P1.5H",
+          "TW31-COB-P0.9H",
+          "TW31-COB-P0.7H",
+          "TW31-IRHD-P2.9",
+          "TW31-IRHD-P2.6",
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P5.7E",
+          "TW31-IRHD-P3.9",
+          "TW31-HOD-P10E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g040",
+      "query": "租赁屏的质保是几年",
+      "tags": [
+        "fast",
+        "warranty"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 209.5,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW21-IRHD",
+          "TW11-IR"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW21-IRHD-P2.6H",
+          "TW31-IRHD-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW11-IR-P2.6",
+          "TW11-IR-P4.8",
+          "TW11-IR-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW11-IR-P2.9",
+          "TW21-IRHD-P2.9H"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 193.2,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW21-IRHD",
+          "TW11-IR"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW21-IRHD-P2.6H",
+          "TW31-IRHD-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW11-IR-P2.6",
+          "TW11-IR-P4.8",
+          "TW11-IR-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW11-IR-P2.9",
+          "TW21-IRHD-P2.9H"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g041",
+      "query": "TW11-OD-P6 的箱体尺寸是多少",
+      "tags": [
+        "fast",
+        "spec_query",
+        "cabinet"
+      ],
+      "expected_series": [
+        "TW11-OD"
+      ],
+      "expected_models": [
+        "TW11-OD-P6"
+      ],
+      "ranked": {
+        "latency_ms": 243.5,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P6",
+          "TW11-OD-P8",
+          "TW11-OD-P5",
+          "TW11-OD-P4",
+          "TW21-OD-P6",
+          "TW11-OD-P3",
+          "TW11-OD-P10",
+          "TW11-OD-P2.5",
+          "TW31-HOD-P6.67E",
+          "TW21-OD-P10"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 247.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P6",
+          "TW11-OD-P8",
+          "TW11-OD-P5",
+          "TW11-OD-P4",
+          "TW21-OD-P6",
+          "TW11-OD-P3",
+          "TW11-OD-P10",
+          "TW11-OD-P2.5",
+          "TW31-HOD-P6.67E",
+          "TW21-OD-P10"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g042",
+      "query": "有没有防水IP65的户外屏",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "waterproof"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD",
+        "TW31-HOD"
+      ],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 195.8,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW11-OD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P2.5",
+          "TW21-OD-P5",
+          "TW21-OD-P3",
+          "TW21-OD-P6",
+          "TW21-OD-P10",
+          "TW11-OD-P5",
+          "TW11-OD-P6",
+          "TW11-OD-P2.5",
+          "TW21-OD-P4",
+          "TW21-OD-P8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 0.6667,
+        "recall_at_10": 0.6667,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      },
+      "filtered": {
+        "latency_ms": 211.2,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW11-OD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P2.5",
+          "TW21-OD-P5",
+          "TW21-OD-P3",
+          "TW21-OD-P6",
+          "TW21-OD-P10",
+          "TW11-OD-P5",
+          "TW11-OD-P6",
+          "TW11-OD-P2.5",
+          "TW21-OD-P4",
+          "TW21-OD-P8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 0.6667,
+        "recall_at_10": 0.6667,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      }
+    },
+    {
+      "id": "g043",
+      "query": "LED屏的刷新率一般是多少",
+      "tags": [
+        "fast",
+        "spec_query"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 196.0,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-HOD",
+          "TW11-OD",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW31-HOD-P5.7E",
+          "TW11-OD-P8",
+          "TW21-OD-P8",
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P8E",
+          "TW21-OD-P10",
+          "TW31-HOD-P10E",
+          "TW21-OD-P2.5",
+          "TW11-OD-P6",
+          "TW21-OD-P6"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 194.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-HOD",
+          "TW11-OD",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW31-HOD-P5.7E",
+          "TW11-OD-P8",
+          "TW21-OD-P8",
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P8E",
+          "TW21-OD-P10",
+          "TW31-HOD-P10E",
+          "TW21-OD-P2.5",
+          "TW11-OD-P6",
+          "TW21-OD-P6"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g044",
+      "query": "帮我推荐一块屏",
+      "tags": [
+        "vague",
+        "clarify"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 152.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW21-IRHD",
+          "TW11-IR",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P3.9H",
+          "TW21-IRHD-P2.6H",
+          "TW21-IRHD-P2.9H",
+          "TW11-IR-P4.8",
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.6",
+          "TW21-3216-P1.6"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 150.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW21-IRHD",
+          "TW11-IR",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P3.9H",
+          "TW21-IRHD-P2.6H",
+          "TW21-IRHD-P2.9H",
+          "TW11-IR-P4.8",
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.6",
+          "TW21-3216-P1.6"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g045",
+      "query": "我需要LED显示屏",
+      "tags": [
+        "vague",
+        "clarify"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 166.6,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW11-OD",
+          "TW11-IR",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW11-OD-P8",
+          "TW31-IRHD-P2.9",
+          "TW11-IR-P3.9",
+          "TW11-OD-P2.5",
+          "TW11-OD-P6",
+          "TW31-IRHD-P3.9",
+          "TW11-IR-P2.9",
+          "TW11-IR-P2.6",
+          "TW21-OD-P10"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 172.6,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW11-OD",
+          "TW11-IR",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW11-OD-P8",
+          "TW31-IRHD-P2.9",
+          "TW11-IR-P3.9",
+          "TW11-OD-P2.5",
+          "TW11-OD-P6",
+          "TW31-IRHD-P3.9",
+          "TW11-IR-P2.9",
+          "TW11-IR-P2.6",
+          "TW21-OD-P10"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g046",
+      "query": "有什么好屏推荐吗",
+      "tags": [
+        "vague",
+        "clarify"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 164.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P3.9",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.2",
+          "TW31-IRHD-P2.6",
+          "TW21-3216-P1.5",
+          "TW21-3216-P2.5",
+          "TW21-3216-P1.8",
+          "TW21-3216-P3.0",
+          "TW21-3216-P4.0",
+          "TW31-IRHD-P2.9"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 174.0,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P3.9",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.2",
+          "TW31-IRHD-P2.6",
+          "TW21-3216-P1.5",
+          "TW21-3216-P2.5",
+          "TW21-3216-P1.8",
+          "TW21-3216-P3.0",
+          "TW21-3216-P4.0",
+          "TW31-IRHD-P2.9"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g047",
+      "query": "多少钱",
+      "tags": [
+        "vague",
+        "clarify",
+        "price"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 166.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW11-IR",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW11-IR-P2.6",
+          "TW21-IRHD-P2.6H",
+          "TW11-IR-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW31-IRHD-P3.9",
+          "TW11-IR-P2.9",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P2.9H",
+          "TW11-IR-P4.8"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 151.9,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW11-IR",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW11-IR-P2.6",
+          "TW21-IRHD-P2.6H",
+          "TW11-IR-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW31-IRHD-P3.9",
+          "TW11-IR-P2.9",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P2.9H",
+          "TW11-IR-P4.8"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g048",
+      "query": "我要采购屏幕",
+      "tags": [
+        "vague",
+        "clarify"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 142.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW21-IRHD",
+          "TW11-IR",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P3.9H",
+          "TW21-IRHD-P2.9H",
+          "TW21-IRHD-P2.6H",
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.6",
+          "TW21-3216-P3.0",
+          "TW11-IR-P4.8"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 125.7,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW21-IRHD",
+          "TW11-IR",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P3.9H",
+          "TW21-IRHD-P2.9H",
+          "TW21-IRHD-P2.6H",
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.6",
+          "TW21-3216-P3.0",
+          "TW11-IR-P4.8"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g049",
+      "query": "我在户外用，但希望用室内的型号",
+      "tags": [
+        "conflict",
+        "outdoor"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD",
+        "TW31-HOD"
+      ],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 208.8,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P2.5",
+          "TW21-OD-P10",
+          "TW21-OD-P5",
+          "TW21-OD-P8",
+          "TW21-OD-P4",
+          "TW21-OD-P6",
+          "TW21-OD-P3",
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P5.7E",
+          "TW31-HOD-P10E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 0.6667,
+        "recall_at_10": 0.6667,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      },
+      "filtered": {
+        "latency_ms": 224.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P2.5",
+          "TW21-OD-P10",
+          "TW21-OD-P5",
+          "TW21-OD-P8",
+          "TW21-OD-P4",
+          "TW21-OD-P6",
+          "TW21-OD-P3",
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P5.7E",
+          "TW31-HOD-P10E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 0.6667,
+        "recall_at_10": 0.6667,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      }
+    },
+    {
+      "id": "g050",
+      "query": "室内使用，但要高亮户外屏",
+      "tags": [
+        "conflict",
+        "indoor"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 198.5,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW11-IR",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW11-IR-P2.6",
+          "TW11-IR-P1.95(GOB)",
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.9",
+          "TW11-IR-P4.8",
+          "TW21-IRHD-P2.9H",
+          "TW21-IRHD-P2.6H"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 0.0,
+        "recall_at_10": 0.0,
+        "mrr": 0.0,
+        "series_hit_at_3": 0.0
+      },
+      "filtered": {
+        "latency_ms": 193.6,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW11-IR",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW11-IR-P2.6",
+          "TW11-IR-P1.95(GOB)",
+          "TW11-IR-P3.9",
+          "TW11-IR-P2.9",
+          "TW11-IR-P4.8",
+          "TW21-IRHD-P2.9H",
+          "TW21-IRHD-P2.6H"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 0.0,
+        "recall_at_10": 0.0,
+        "mrr": 0.0,
+        "series_hit_at_3": 0.0
+      }
+    },
+    {
+      "id": "g051",
+      "query": "户外租赁的LED屏",
+      "tags": [
+        "no_match",
+        "outdoor",
+        "rental"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 143.5,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 165.5,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g052",
+      "query": "户外演唱会租赁用的LED屏，P3左右，亮度要高",
+      "tags": [
+        "no_match",
+        "outdoor",
+        "rental",
+        "concert"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 242.3,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 0.0,
+        "pitch_fit_at_5": 0.0
+      },
+      "filtered": {
+        "latency_ms": 241.3,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 0.0,
+        "pitch_fit_at_5": 0.0
+      }
+    },
+    {
+      "id": "g053",
+      "query": "要LCD拼接屏",
+      "tags": [
+        "no_match",
+        "lcd"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 156.5,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 160.6,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g054",
+      "query": "要会议一体机、交互平板",
+      "tags": [
+        "no_match",
+        "ifp"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 209.8,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 301.3,
+        "retrieved_count": 0,
+        "retrieved_series": [],
+        "retrieved_models": [],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g055",
+      "query": "要OLED透明屏",
+      "tags": [
+        "no_match",
+        "unsupported"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 191.2,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P2.5",
+          "TW11-OD-P8",
+          "TW11-OD-P6",
+          "TW11-OD-P3",
+          "TW11-OD-P4",
+          "TW11-OD-P5",
+          "TW11-OD-P10",
+          "TW21-OD-P2.5",
+          "TW21-OD-P8",
+          "TW21-OD-P10"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 185.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P2.5",
+          "TW11-OD-P8",
+          "TW11-OD-P6",
+          "TW11-OD-P3",
+          "TW11-OD-P4",
+          "TW11-OD-P5",
+          "TW11-OD-P10",
+          "TW21-OD-P2.5",
+          "TW21-OD-P8",
+          "TW21-OD-P10"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g056",
+      "query": "要投影仪",
+      "tags": [
+        "no_match",
+        "unsupported"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 165.1,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW11-IR",
+          "TW21-IRHD",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW11-IR-P2.6",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P2.6H",
+          "TW11-IR-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW21-IRHD-P2.9H",
+          "TW11-IR-P2.9",
+          "TW21-3216-P1.6"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 182.2,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW11-IR",
+          "TW21-IRHD",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW11-IR-P2.6",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P2.6H",
+          "TW11-IR-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW21-IRHD-P2.9H",
+          "TW11-IR-P2.9",
+          "TW21-3216-P1.6"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g057",
+      "query": "I need an outdoor LED display for a shopping mall facade, viewing distance around 20 meters",
+      "tags": [
+        "multilingual",
+        "en",
+        "outdoor",
+        "fixed"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD",
+        "TW31-HOD"
+      ],
+      "expected_models": [
+        "TW21-OD-P6",
+        "TW11-OD-P6"
+      ],
+      "ranked": {
+        "latency_ms": 327.1,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P3",
+          "TW11-OD-P6",
+          "TW21-OD-P3",
+          "TW11-OD-P4",
+          "TW11-OD-P5",
+          "TW11-OD-P2.5",
+          "TW21-OD-P2.5",
+          "TW11-OD-P8",
+          "TW21-OD-P4",
+          "TW21-OD-P5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 0.6667,
+        "recall_at_10": 0.6667,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 0.5,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 323.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-OD",
+          "TW21-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW11-OD-P4",
+          "TW11-OD-P6",
+          "TW11-OD-P5",
+          "TW21-OD-P4",
+          "TW21-OD-P5",
+          "TW11-OD-P8",
+          "TW21-OD-P6",
+          "TW21-OD-P8",
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P5.7E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g058",
+      "query": "Looking for an indoor rental LED screen for an event, pixel pitch around 2.6mm",
+      "tags": [
+        "multilingual",
+        "en",
+        "indoor",
+        "rental",
+        "pitch_specified"
+      ],
+      "expected_series": [
+        "TW11-IR",
+        "TW21-IRHD",
+        "TW31-IRHD"
+      ],
+      "expected_models": [
+        "TW11-IR-P2.6",
+        "TW21-IRHD-P2.6H",
+        "TW31-IRHD-P2.6"
+      ],
+      "ranked": {
+        "latency_ms": 255.8,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW21-IRHD",
+          "TW31-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P2.6",
+          "TW21-IRHD-P2.6H",
+          "TW11-IR-P2.9",
+          "TW31-IRHD-P2.6",
+          "TW11-IR-P3.9",
+          "TW11-IR-P1.95(GOB)",
+          "TW21-IRHD-P2.9H",
+          "TW11-IR-P4.8",
+          "TW31-IRHD-P2.9",
+          "TW21-IRHD-P3.9H"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 273.7,
+        "retrieved_count": 3,
+        "retrieved_series": [
+          "TW11-IR",
+          "TW21-IRHD",
+          "TW31-IRHD"
+        ],
+        "retrieved_models": [
+          "TW11-IR-P2.6",
+          "TW21-IRHD-P2.6H",
+          "TW31-IRHD-P2.6"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g059",
+      "query": "Necesito una pantalla LED para exterior, distancia de visión 15 metros",
+      "tags": [
+        "multilingual",
+        "es",
+        "outdoor",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD"
+      ],
+      "expected_models": [
+        "TW21-OD-P6",
+        "TW11-OD-P6",
+        "TW21-OD-P4"
+      ],
+      "ranked": {
+        "latency_ms": 263.0,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW11-OD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P2.5",
+          "TW21-OD-P5",
+          "TW21-OD-P10",
+          "TW21-OD-P6",
+          "TW21-OD-P8",
+          "TW21-OD-P3",
+          "TW21-OD-P4",
+          "TW11-OD-P5",
+          "TW11-OD-P2.5",
+          "TW11-OD-P6"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.3333,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.25,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 233.9,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW11-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P5",
+          "TW21-OD-P6",
+          "TW21-OD-P8",
+          "TW21-OD-P4",
+          "TW11-OD-P5",
+          "TW11-OD-P6",
+          "TW11-OD-P8",
+          "TW31-HOD-P5.7E",
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P8E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.6667,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.5,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g060",
+      "query": "Нужен светодиодный экран для улицы, расстояние просмотра 20 метров",
+      "tags": [
+        "multilingual",
+        "ru",
+        "outdoor",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD",
+        "TW31-HOD"
+      ],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 243.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW11-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P10",
+          "TW21-OD-P3",
+          "TW21-OD-P2.5",
+          "TW21-OD-P6",
+          "TW21-OD-P8",
+          "TW21-OD-P5",
+          "TW21-OD-P4",
+          "TW11-OD-P10",
+          "TW31-HOD-P10E",
+          "TW11-OD-P6"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 0.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      },
+      "filtered": {
+        "latency_ms": 295.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW11-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P6",
+          "TW21-OD-P8",
+          "TW21-OD-P5",
+          "TW21-OD-P4",
+          "TW11-OD-P6",
+          "TW31-HOD-P6.67E",
+          "TW11-OD-P8",
+          "TW11-OD-P5",
+          "TW31-HOD-P8E",
+          "TW31-HOD-P5.7E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      }
+    },
+    {
+      "id": "g061",
+      "query": "屋内会議室用のLEDディスプレイを探しています。視距離3メートル",
+      "tags": [
+        "multilingual",
+        "ja",
+        "indoor",
+        "conference"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 300.7,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P3.0",
+          "TW11-3216-P3.0",
+          "TW31-COB-P1.5H",
+          "TW21-3216-P1.5",
+          "TW31-COB-P0.9H",
+          "TW11-3216-P1.5",
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.6",
+          "TW31-COB-P1.2H"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      },
+      "filtered": {
+        "latency_ms": 280.6,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P1.5H",
+          "TW21-3216-P1.5",
+          "TW31-COB-P0.9H",
+          "TW11-3216-P1.5",
+          "TW21-3216-P1.6",
+          "TW31-COB-P1.2H",
+          "TW11-3216-P1.6",
+          "TW21-3216-P1.2",
+          "TW21-3216-P1.8",
+          "TW11-3216-P1.2"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 0.5,
+        "series_hit_at_3": 1.0
+      }
+    },
+    {
+      "id": "g062",
+      "query": "Ich brauche ein LED-Display für den Innenbereich, Betrachtungsabstand 5 Meter",
+      "tags": [
+        "multilingual",
+        "de",
+        "indoor",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 272.7,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P1.5",
+          "TW11-3216-P1.5",
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.8",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.2",
+          "TW21-3216-P3.0",
+          "TW21-3216-P4.0",
+          "TW21-3216-P2.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      },
+      "filtered": {
+        "latency_ms": 286.5,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW21-3216-P1.5",
+          "TW11-3216-P1.5",
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.8",
+          "TW21-3216-P2.0",
+          "TW11-3216-P1.8",
+          "TW11-3216-P1.6",
+          "TW11-3216-P2.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      }
+    },
+    {
+      "id": "g063",
+      "query": "Je cherche un écran LED extérieur pour publicité, distance de visionnage 25 mètres",
+      "tags": [
+        "multilingual",
+        "fr",
+        "outdoor",
+        "advertising"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD",
+        "TW31-HOD"
+      ],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 384.2,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW11-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P2.5",
+          "TW21-OD-P3",
+          "TW21-OD-P8",
+          "TW21-OD-P5",
+          "TW21-OD-P10",
+          "TW21-OD-P6",
+          "TW21-OD-P4",
+          "TW11-OD-P2.5",
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P5.7E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      },
+      "filtered": {
+        "latency_ms": 292.7,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW31-HOD",
+          "TW11-OD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P8",
+          "TW21-OD-P5",
+          "TW21-OD-P6",
+          "TW21-OD-P4",
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P5.7E",
+          "TW31-HOD-P8E",
+          "TW11-OD-P5",
+          "TW11-OD-P6",
+          "TW11-OD-P8"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      }
+    },
+    {
+      "id": "g064",
+      "query": "Preciso de um painel de LED para uso interno, distância de visualização 4 metros",
+      "tags": [
+        "multilingual",
+        "pt",
+        "indoor",
+        "viewing_distance"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 260.8,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P4.0",
+          "TW21-3216-P1.2",
+          "TW11-3216-P1.2",
+          "TW11-3216-P1.5",
+          "TW11-3216-P1.6",
+          "TW11-3216-P1.8",
+          "TW11-3216-P2.5",
+          "TW11-3216-P2.0",
+          "TW11-3216-P3.0",
+          "TW21-3216-P4.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 0.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      },
+      "filtered": {
+        "latency_ms": 277.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P1.5",
+          "TW11-3216-P1.6",
+          "TW11-3216-P1.8",
+          "TW11-3216-P2.0",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.5",
+          "TW21-3216-P1.8",
+          "TW21-3216-P2.0",
+          "TW21-3216-P2.5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      }
+    },
+    {
+      "id": "g065",
+      "query": "What do you recommend?",
+      "tags": [
+        "multi_turn",
+        "en",
+        "indoor",
+        "conference"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [
+        "TW21-3216-P2.5",
+        "TW11-3216-P2.5"
+      ],
+      "ranked": {
+        "latency_ms": 209.0,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P0.7H",
+          "TW31-COB-P1.2H",
+          "TW31-COB-P1.5H",
+          "TW31-COB-P0.9H",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.2",
+          "TW21-3216-P1.5",
+          "TW21-3216-P1.8",
+          "TW21-3216-P2.5",
+          "TW21-3216-P3.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 0.5,
+        "recall_at_10": 0.5,
+        "mrr": 0.5,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.5,
+        "model_mrr": 0.1111,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      },
+      "filtered": {
+        "latency_ms": 181.0,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW21-3216",
+          "TW11-3216"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P1.5H",
+          "TW21-3216-P1.6",
+          "TW21-3216-P1.5",
+          "TW21-3216-P1.8",
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P2.0",
+          "TW11-3216-P1.5",
+          "TW11-3216-P1.6",
+          "TW11-3216-P2.0"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 0.5,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.2,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g066",
+      "query": "大概4米视距",
+      "tags": [
+        "multi_turn",
+        "zh",
+        "indoor",
+        "conference"
+      ],
+      "expected_series": [
+        "TW11-3216",
+        "TW21-3216"
+      ],
+      "expected_models": [
+        "TW21-3216-P2.5",
+        "TW11-3216-P2.5"
+      ],
+      "ranked": {
+        "latency_ms": 184.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW11-3216",
+          "TW31-COB",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW11-3216-P4.0",
+          "TW31-COB-P0.9H",
+          "TW21-3216-P4.0",
+          "TW31-COB-P1.5H",
+          "TW31-COB-P1.2H",
+          "TW31-COB-P0.7H",
+          "TW11-3216-P3.0",
+          "TW11-3216-P1.8",
+          "TW11-3216-P1.5",
+          "TW11-3216-P2.5"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 0.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.0,
+        "model_recall_at_10": 0.5,
+        "model_mrr": 0.1,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 0.0
+      },
+      "filtered": {
+        "latency_ms": 180.0,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW11-3216",
+          "TW21-3216"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P1.5H",
+          "TW11-3216-P1.8",
+          "TW11-3216-P1.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P1.8",
+          "TW11-3216-P1.6",
+          "TW21-3216-P1.5",
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.0",
+          "TW21-3216-P1.6"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 0.5,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 0.5,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 0.25,
+        "model_hit_at_1": 0.0,
+        "model_hit_at_3": 0.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g067",
+      "query": "要防水的",
+      "tags": [
+        "multi_turn",
+        "zh",
+        "outdoor",
+        "waterproof"
+      ],
+      "expected_series": [
+        "TW11-OD",
+        "TW21-OD",
+        "TW31-HOD"
+      ],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 142.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P2.5",
+          "TW21-OD-P10",
+          "TW31-HOD-P5.7E",
+          "TW21-OD-P5",
+          "TW21-OD-P3",
+          "TW21-OD-P6",
+          "TW21-OD-P4",
+          "TW31-HOD-P6.67E",
+          "TW21-OD-P8",
+          "TW31-HOD-P10E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 0.6667,
+        "recall_at_10": 0.6667,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      },
+      "filtered": {
+        "latency_ms": 146.9,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW21-OD",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW21-OD-P2.5",
+          "TW21-OD-P10",
+          "TW31-HOD-P5.7E",
+          "TW21-OD-P5",
+          "TW21-OD-P3",
+          "TW21-OD-P6",
+          "TW21-OD-P4",
+          "TW31-HOD-P6.67E",
+          "TW21-OD-P8",
+          "TW31-HOD-P10E"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "recall_at_5": 0.6667,
+        "recall_at_10": 0.6667,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0
+      }
+    },
+    {
+      "id": "g068",
+      "query": "室内舞台用的，P3.9",
+      "tags": [
+        "multi_turn",
+        "zh",
+        "rental",
+        "pitch_specified"
+      ],
+      "expected_series": [
+        "TW11-IR",
+        "TW21-IRHD",
+        "TW31-IRHD"
+      ],
+      "expected_models": [
+        "TW11-IR-P3.9",
+        "TW21-IRHD-P3.9H",
+        "TW31-IRHD-P3.9"
+      ],
+      "ranked": {
+        "latency_ms": 186.5,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW11-IR",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P3.9",
+          "TW11-IR-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW31-IRHD-P2.9",
+          "TW11-IR-P2.9",
+          "TW31-IRHD-P2.6",
+          "TW21-IRHD-P2.9H",
+          "TW21-IRHD-P2.6H",
+          "TW11-IR-P4.8",
+          "TW11-IR-P1.95(GOB)"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      },
+      "filtered": {
+        "latency_ms": 180.8,
+        "retrieved_count": 3,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW11-IR",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P3.9",
+          "TW11-IR-P3.9",
+          "TW21-IRHD-P3.9H"
+        ],
+        "violations": [],
+        "violation_count": 0,
+        "pitch_fit_at_3": 1.0,
+        "pitch_fit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "series_hit_at_3": 1.0,
+        "model_recall_at_5": 1.0,
+        "model_recall_at_10": 1.0,
+        "model_mrr": 1.0,
+        "model_hit_at_1": 1.0,
+        "model_hit_at_3": 1.0,
+        "model_hit_at_5": 1.0
+      }
+    },
+    {
+      "id": "g069",
+      "query": "价格太贵了，能便宜点吗",
+      "tags": [
+        "objection",
+        "price"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 293.2,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW31-HOD",
+          "TW11-IR",
+          "TW31-COB",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW31-HOD-P6.67E",
+          "TW11-IR-P2.6",
+          "TW31-COB-P0.7H",
+          "TW31-COB-P0.9H",
+          "TW31-COB-P1.5H",
+          "TW31-HOD-P5.7E",
+          "TW21-IRHD-P2.6H"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 226.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW31-HOD",
+          "TW11-IR",
+          "TW31-COB",
+          "TW21-IRHD"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW31-HOD-P6.67E",
+          "TW11-IR-P2.6",
+          "TW31-COB-P0.7H",
+          "TW31-COB-P0.9H",
+          "TW31-COB-P1.5H",
+          "TW31-HOD-P5.7E",
+          "TW21-IRHD-P2.6H"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g070",
+      "query": "你们公司在哪里？怎么联系你们",
+      "tags": [
+        "others",
+        "company_info"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 208.3,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW31-HOD",
+          "TW31-COB",
+          "TW11-IR"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P2.9",
+          "TW31-HOD-P10E",
+          "TW31-HOD-P8E",
+          "TW31-COB-P0.9H",
+          "TW31-HOD-P6.67E",
+          "TW11-IR-P3.9",
+          "TW31-COB-P0.7H",
+          "TW31-COB-P1.5H"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 214.7,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW31-HOD",
+          "TW31-COB",
+          "TW11-IR"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.6",
+          "TW31-IRHD-P2.9",
+          "TW31-HOD-P10E",
+          "TW31-HOD-P8E",
+          "TW31-COB-P0.9H",
+          "TW31-HOD-P6.67E",
+          "TW11-IR-P3.9",
+          "TW31-COB-P0.7H",
+          "TW31-COB-P1.5H"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g071",
+      "query": "你们的保修政策是怎样的",
+      "tags": [
+        "objection",
+        "warranty"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 221.4,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW31-HOD",
+          "TW21-OD",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW31-HOD-P6.67E",
+          "TW31-IRHD-P3.9",
+          "TW31-HOD-P10E",
+          "TW31-HOD-P5.7E",
+          "TW21-OD-P2.5",
+          "TW31-IRHD-P2.9",
+          "TW31-COB-P0.9H",
+          "TW31-COB-P1.2H",
+          "TW21-OD-P10"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 215.1,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-IRHD",
+          "TW31-HOD",
+          "TW21-OD",
+          "TW31-COB"
+        ],
+        "retrieved_models": [
+          "TW31-IRHD-P2.6",
+          "TW31-HOD-P6.67E",
+          "TW31-IRHD-P3.9",
+          "TW31-HOD-P10E",
+          "TW31-HOD-P5.7E",
+          "TW21-OD-P2.5",
+          "TW31-IRHD-P2.9",
+          "TW31-COB-P0.9H",
+          "TW31-COB-P1.2H",
+          "TW21-OD-P10"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    },
+    {
+      "id": "g072",
+      "query": "你好",
+      "tags": [
+        "greeting"
+      ],
+      "expected_series": [],
+      "expected_models": [],
+      "ranked": {
+        "latency_ms": 154.2,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW31-IRHD",
+          "TW21-3216",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P0.9H",
+          "TW31-COB-P0.7H",
+          "TW31-COB-P1.2H",
+          "TW31-COB-P1.5H",
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW31-IRHD-P2.6",
+          "TW21-3216-P1.6",
+          "TW31-HOD-P6.67E",
+          "TW21-3216-P3.0"
+        ],
+        "violations": [],
+        "violation_count": 0
+      },
+      "filtered": {
+        "latency_ms": 144.6,
+        "retrieved_count": 10,
+        "retrieved_series": [
+          "TW31-COB",
+          "TW31-IRHD",
+          "TW21-3216",
+          "TW31-HOD"
+        ],
+        "retrieved_models": [
+          "TW31-COB-P0.9H",
+          "TW31-COB-P0.7H",
+          "TW31-COB-P1.2H",
+          "TW31-COB-P1.5H",
+          "TW31-IRHD-P3.9",
+          "TW31-IRHD-P2.9",
+          "TW31-IRHD-P2.6",
+          "TW21-3216-P1.6",
+          "TW31-HOD-P6.67E",
+          "TW21-3216-P3.0"
+        ],
+        "violations": [],
+        "violation_count": 0
+      }
+    }
+  ]
+}

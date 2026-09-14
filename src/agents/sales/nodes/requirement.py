@@ -95,14 +95,22 @@ def _should_clear_field_on_scene_change(old_category: str, new_category: str, fi
 
 
 def _rule_based_inference(message: str, requirements: dict) -> dict:
-    """基于规则从消息中推断需求，作为LLM提取的补充。"""
+    """基于规则从消息中推断需求，作为LLM提取的补充。
+
+    重要（v2.0 Ready Gate）：本函数分两类输出 ——
+      - **客户明说的**（"5米"、"20平米"、"3米x4米"）：写入 requirements，来源视为 confirmed
+      - **规则估算的**（从容纳人数反推面积/视距）：写入 requirements 的同时记入
+        ``_inferred_slots``，来源标记为 inferred —— **不得用来打开推荐 Gate**，
+        否则会出现"只知道室内外+场景就直接推荐"的错误行为。
+    """
     text = message
     inferred = dict(requirements)
     
-    # 推断 location_type / indoor / outdoor
+    # 推断 location_type / indoor / outdoor —— 只认客户明确说出的室内外关键词，
+    # 不从"会议室/展厅/商场"等场景词推断环境（环境必须由客户明说，见计划 v1.0 阶段 5.1）
     if not requirements.get("location_type"):
-        indoor_keywords = ["室内", "户内", "会议室", "教室", "办公室", "展厅", "商场", "店铺", "监控室", "指挥中心"]
-        outdoor_keywords = ["室外", "户外", "露天", "门口", "外墙", "广场", "体育场", "赛场"]
+        indoor_keywords = ["室内", "户内", "indoor", "indoors"]
+        outdoor_keywords = ["室外", "户外", "露天", "outdoor", "outdoors"]
         
         for kw in indoor_keywords:
             if kw in text:
@@ -147,34 +155,6 @@ def _rule_based_inference(message: str, requirements: dict) -> dict:
         elif any(kw in text for kw in led_keywords):
             inferred["display_type"] = "LED"
     
-    # 从容纳人数推断 size（会议室/教室：每人约2-3平米）
-    if not requirements.get("size") and not requirements.get("viewing_distance"):
-        # 匹配"能容纳X人"、"X个人的"、"大概能容纳X人"等
-        patterns = [
-            r'(?:大约|大概|约|差不多)?\s*能容纳\s*([零一二两三四五六七八九十百千\d]+)\s*个人?',
-            r'([零一二两三四五六七八九十百千\d]+)\s*个人?\s*(?:的|左右|左右)',
-            r'能容纳\s*([零一二两三四五六七八九十百千\d]+)\s*个人?',
-        ]
-        people = 0  # 初始化默认值
-        for pattern in patterns:
-            occupancy_match = re.search(pattern, text)
-            if occupancy_match:
-                people = _parse_number(occupancy_match.group(1))
-                if people > 0:
-                    break
-        
-        if people > 0:
-            # 会议室/教室按每人2.5平米估算，加上走道余量
-            area = people * 2.5 + 5  # 额外5平米作为走道和空间余量
-            inferred["size"] = f"约{area:.0f}平米"
-            # 观看距离：10人以内的会议室，距离约2-4米
-            if people <= 10:
-                inferred["viewing_distance"] = "2-4米"
-            elif people <= 20:
-                inferred["viewing_distance"] = "3-5米"
-            else:
-                inferred["viewing_distance"] = "4-6米"
-    
     return inferred
 
 
@@ -187,6 +167,41 @@ def _missing_requirements(requirements: dict) -> list:
     return missing
 
 
+# 客户在"问问题"的标志（问号 / 疑问词 / 业务咨询词）
+_INTERROGATIVE_RE = re.compile(
+    r"[?？]|"
+    r"\b(?:what|how|which|why|when|where|who|does|do you|do u|do ya|have you got|"
+    r"can you|could you|would you|is there|are there|tell me|"
+    r"price|cost|spec|specs|specification|warranty|quote|quotation)\b|"
+    r"多少|什么|怎么|哪|几|价格|报价|参数|规格|保修",
+    re.IGNORECASE,
+)
+
+# 客户"报了一个需求值"的槽位（有值 = 他在回答需求，不是在提问）
+_ANSWER_VALUE_SLOTS = (
+    "environment",
+    "installation",
+    "viewing_distance_m",
+    "distance",
+    "target_width_mm",
+    "target_height_mm",
+    "screen_size_hint_mm",
+)
+
+
+def _looks_like_requirement_answer(message: str, slots: dict) -> bool:
+    """客户这句话是不是在"报需求"，而不是在"问问题"。
+
+    实测 bug：客户回了一句 "129,2cm"，被 classify 判成 others →
+    直接走了 Solution 的自由问答，把 indoor/outdoor 型号一股脑倒了出来。
+    报需求的话必须留在需求采集流程里。
+    """
+    text = str(message or "").strip()
+    if not text or _INTERROGATIVE_RE.search(text):
+        return False
+    return any(slots.get(key) for key in _ANSWER_VALUE_SLOTS)
+
+
 def should_trigger_solution(requirements: dict) -> bool:
     """Trigger Solution Agent when all REQUIRED_KEYS are filled."""
     has_all_required = all(requirements.get(k) for k in REQUIRED_KEYS)
@@ -195,6 +210,8 @@ def should_trigger_solution(requirements: dict) -> bool:
 
 def requirement_mining(state: SalesState) -> SalesState:
     """Mine requirements from the conversation and decide next action."""
+    # 本轮"回应客户这句话"的口语回应（由下面的 LLM 抽取一并生成；失败则为空）
+    state["acknowledgement"] = ""
     llm = ChatOpenAI(
         model=config.MODEL_NAME,
         temperature=0,
@@ -203,48 +220,56 @@ def requirement_mining(state: SalesState) -> SalesState:
     )
     
     # Build conversation context (last 3 messages)
-    conversation = "\n".join([
-        f"{getattr(msg, 'type', 'unknown')}: {getattr(msg, 'content', str(msg))}" 
-        for msg in state["messages"][-3:]
-    ])
+    # 需求重置（客户换产品 / 换项目）时只看本轮这句话：
+    # 否则上一轮的"教堂 / 室内"会被 LLM 当成当前需求再提取回来，等于没清空。
+    if state.get("requirements_reset"):
+        conversation = f"user: {state.get('current_message', '')}"
+    else:
+        conversation = "\n".join([
+            f"{getattr(msg, 'type', 'unknown')}: {getattr(msg, 'content', str(msg))}"
+            for msg in state["messages"][-3:]
+        ])
     
-    prompt = SystemMessage(content="""从对话中提取 LED 和 LCD 显示产品的需求信息，返回JSON格式：
+    # 回应语言必须跟系统策略一致：默认策略是"永远英文"，但下面的提示词是中文写的，
+    # 模型很容易顺手用中文回一句（实测出现过
+    # "Sello 你好，很高兴认识你。Will it be an indoor or outdoor setup?"）。
+    try:
+        from ....config import config as _config
+
+        _policy = str(getattr(_config, "RESPONSE_LANGUAGE_POLICY", "en") or "en").lower()
+    except Exception:  # pragma: no cover - 防御式
+        _policy = "en"
+    _ack_language_rule = (
+        "ack 必须使用客户所用的语言。"
+        if _policy == "auto"
+        else "ack 必须**只用英文**（即使客户用中文或其它语言，也必须用英文回应），绝对不要中英混排。"
+    )
+
+    prompt = SystemMessage(content="""你是需求采集助手，同时是一位正在跟客户面对面沟通的销售顾问。
+请从对话中提取信息，**并给出一句自然的口语回应**，返回 JSON：
 {
-  "location_type": "室内" | "室外" | null,
-  "usage": "用户的原话场景" | null,
-  "viewing_distance": "可视距离描述，如'3米'、'10-20米'、'远距离'" | null,
-  "size": "尺寸描述" | null,
-  "brightness": "亮度要求" | null,
-  "resolution": "分辨率要求" | null,
-  "display_type": "LED" | "LCD" | null,
-  "additional_requirements": ["用户提到的其他特殊需求，如'需要租赁'、'要快装快拆'、'高刷新率'、'无缝拼接'等"]
+  "usage": "用户原话描述的使用场景，如'会议室'、'演唱会'、'展厅'；没有则 null",
+  "additional_requirements": ["用户明确提出的、无法归入场景的特殊要求，如'租赁'、'防水'、'高刷新率'"],
+  "ack": "一句话自然回应客户这句话本身；没有可回应的内容时返回空字符串"
 }
 
-**核心原则：只提取用户明确说过的字段，不要猜测或推断。**
+ack 的写法（很重要，销售不能只会追问）：
+1. **只回应客户这句话本身**：自我介绍 → 问候并称呼对方名字；说明单位 / 项目 / 身份
+   → 表示理解；客户提问 → 简短回应（不清楚的就说明会帮忙确认）；客户要报价 / 规格 /
+   资料 → 表示"确认几个关键点后马上准备"。
+2. 像真人销售顾问说话，一句话（最多两句），不要客套话堆砌，不要复述客户整句话。
+3. **禁止**编造任何技术参数、型号、价格、交期；不要说"根据资料/数据库/检索"。
+4. **禁止**在 ack 里提问（系统会另外接一个需求问题），也不要给推荐结论。
+5. 没有可回应内容（比如客户只回了一个词的数字）时，ack 返回 ""。
+6. 语言要求：""" + _ack_language_rule + """
 
-**usage 提取规则**：直接用用户说的场景原词，不要做任何映射转换。例如：
-- 用户说"演唱会" → usage="演唱会"
-- 用户说"护理用" → usage="护理"
-- 用户说"护理场景" → usage="护理"
-
-**location_type 提取规则**：
-- 用户说"室内"、"户内"、"室内使用" → "室内"
-- 用户说"室外"、"户外"、"外面"、"露天"、"户外使用"、"室外使用" → "室外"
-- 用户说"会议室用"、"办公室" → "室内"
-
-**size 提取规则**：
-- 用户说"3平米"、"3平方米"、"5平方"、"10平方"等面积 → "X平米"（保留原数字）
-- 用户说"3米x4米"、"2x3米"等具体尺寸 → "X米xY米"
-- 用户说"大屏"、"大尺寸" → "大尺寸"
-
-如果用户没有提到某个字段，该字段必须为 null，绝对不要凭空生成值。
-
-**额外需求 (additional_requirements) 提取规则：**
-1. 收集用户明确提到的所有特殊需求，不在上述必填/选填字段中的
-2. 常见额外需求示例：租赁、快装快拆、防水、高刷新率、无缝、低功耗、移动安装、弧形、异形等
-3. 如果用户没有提到任何额外需求，返回空列表 []
-
-只返回JSON，不要其他内容。已知信息保留，新信息补充。""")
+提取规则：
+1. **绝对不要**推断或补全以下任何工程参数：室内/室外、固装/租赁、观看距离、
+   屏幕尺寸、亮度、分辨率、点间距 —— 这些由系统的确定性解析器从用户原话提取，
+   如果用户没说，必须让系统继续询问，而不是由你猜测。
+2. usage 只写用户实际描述的场景原词，不要映射、不要扩展。
+3. 没有对应信息就返回 null 或 []，禁止编造。
+4. 只返回 JSON，不要任何解释。""")
     
     current_msg = HumanMessage(content=f"已有需求：{state['requirements']}\n\n当前对话：\n{conversation}")
     response = llm.invoke([prompt, current_msg])
@@ -256,7 +281,9 @@ def requirement_mining(state: SalesState) -> SalesState:
     import json
     try:
         extracted = json.loads(response.content.strip())
-        # Merge with existing requirements (new values override)
+        # 只信任 LLM 的 usage 与 additional_requirements。
+        # 其余工程参数（viewing_distance/size/brightness/resolution/location_type/display_type）
+        # 一律忽略 —— 由确定性解析器负责，防止 AI 根据场景自行补全参数导致过早推荐。
         for k, v in extracted.items():
             if k == "additional_requirements":
                 if not isinstance(state.get("additional_requirements"), list):
@@ -265,7 +292,18 @@ def requirement_mining(state: SalesState) -> SalesState:
                     for item in v:
                         if item and item not in state["additional_requirements"]:
                             state["additional_requirements"].append(item)
-            elif v:
+            elif k in ("ack", "acknowledgement"):
+                # 由 LLM 生成的"接住客户这句话"的口语回应。
+                # 只用于回复措辞，不参与任何 Gate 判定，且做安全清洗。
+                ack = " ".join(str(v or "").split())
+                if ack.endswith(("?", "？")) or any(mark in ack for mark in ("?", "？")):
+                    # 追问由系统另外拼接，避免一句话里出现两个问题
+                    logger.info("Dropping LLM ack containing a question: %r", ack[:80])
+                    ack = ""
+                if len(ack) > 240:
+                    ack = ack[:240].rstrip()
+                state["acknowledgement"] = ack
+            elif k == "usage" and v:
                 state["requirements"][k] = v
     except json.JSONDecodeError:
         logger.warning("Failed to parse requirements JSON")
@@ -290,6 +328,27 @@ def requirement_mining(state: SalesState) -> SalesState:
                 state["requirements"]["usage"] = usage_val
                 logger.info(f"Inferred usage='{usage_val}' from keyword '{kw}'")
                 break
+
+    # ── 关键修复：场景回答不能被 classify 误判成 others/product_question ──
+    # 当客户正在回答"用在什么场景"（例如只说 church），这属于需求采集，
+    # 必须继续走 need_query → Gate → 追问，而不是绕到 Solution 的自由问答检索。
+    current_intent = str(state.get("intent") or "")
+    if current_intent in ("others", "product_question"):
+        from ....rag.query_understanding import extract_slots
+
+        current_slots = extract_slots(current_msg_text)
+        has_scenario = bool(state["requirements"].get("usage")) or bool(
+            current_slots.get("purpose")
+        )
+        # 客户"报需求"（室内外 / 安装方式 / 视距 / 尺寸）而不是"问问题"时，
+        # 必须留在需求采集流程：否则会绕到自由问答，在 Gate 没通过的情况下
+        # 把一堆型号和参数倒给客户（实测出现过）。
+        if has_scenario or _looks_like_requirement_answer(current_msg_text, current_slots):
+            logger.info(
+                "Detected requirement answer %r under intent '%s' → reclassify as need_query",
+                current_msg_text, current_intent,
+            )
+            state["intent"] = "need_query"
 
     # 上下文变化检测：当 usage 从一种场景类别变为另一种时，清除上下文相关字段
     old_usage = pre_merge_requirements.get("usage", "")
@@ -336,6 +395,163 @@ def requirement_mining(state: SalesState) -> SalesState:
     # Check trigger condition
     state["should_generate_solution"] = should_trigger_solution(state["requirements"])
 
+    # ── v2.0 Phase 4：Recommendation Ready Gate 门控推荐 ────────────────────
+    # 旧逻辑只要拿到 usage 就立刻推荐；现在由 Gate 决定：
+    #   未就绪 → 不触发推荐，一次只问一个高价值问题
+    #   已就绪 → 触发推荐（即使旧 usage 规则尚未满足，例如英文场景表达）
+    try:
+        from ....models.requirement import RequirementProfile
+        from ....rag.query_understanding import extract_slots
+        from ....rag.readiness import check_recommendation_ready, first_missing_slot
+        from ..question_planner import plan_next_question, should_ask_before_recommend
+
+        profile = RequirementProfile.from_legacy(state["requirements"])
+        # 本轮消息里解析出的字段是**客户刚说过的**，必须标记为 explicit，
+        # 否则会被误判成"推断值"而挡住推荐（例如客户明说"固定安装"却被当成没说过）。
+        message_slots = extract_slots(current_msg_text)
+        profile = profile.merge(
+            RequirementProfile.from_slots(message_slots, explicit_keys=set(message_slots))
+        )
+
+        # 客户只报了一个长度（"129,2cm"）时，等他指认这是宽 / 高 / 对角线：
+        #   - 说"宽度" → 记成宽度；说"高度" → 记成高度
+        #   - 说"对角线" → 这个数字不能直接用于箱体排布，丢掉线索，回到"问宽高"
+        #   - 客户直接给了宽高 → 线索作废
+        if profile.screen_size_hint_mm is not None and not profile.has_target_size:
+            axis = str(message_slots.get("size_axis") or "").strip().lower()
+            if axis in ("width", "height"):
+                hint_m = profile.screen_size_hint_mm / 1000.0
+                if axis == "width":
+                    profile.target_width_m = hint_m
+                    profile.sources["target_width_m"] = "explicit"
+                else:
+                    profile.target_height_m = hint_m
+                    profile.sources["target_height_m"] = "explicit"
+                profile.screen_size_hint_mm = None
+                profile.sources.pop("screen_size_hint_mm", None)
+                logger.info("Resolved size hint to %s = %s m", axis, hint_m)
+            elif axis == "diagonal":
+                logger.info("Customer said the measurement is a diagonal — asking for width/height instead")
+                profile.screen_size_hint_mm = None
+                profile.sources.pop("screen_size_hint_mm", None)
+        elif profile.has_target_size:
+            profile.screen_size_hint_mm = None
+
+        state["requirement_profile"] = profile
+        logger.debug("\n%s", profile.describe())
+
+        # 把本轮从消息里解析出的结构化事实回写到 requirements，
+        # 供下一轮 / 方案 Agent 复用（不覆盖 LLM 或客户已明确的既有值）。
+        # 没有这一步时，多轮对话每轮都会从零开始，LLM 不可用时会反复追问同一问题。
+        #
+        # 【关键防呆】只有"客户明确确认"的字段才允许持久化，
+        # 否则"能容纳15个人"估算出的视距会在下一轮被误当成客户说过的话。
+        facts = profile.to_facts()
+        confirmed = profile.sources
+
+        def _confirmed(field: str) -> bool:
+            return confirmed.get(field) in ("explicit", "confirmed")
+
+        writeback: dict = {}
+        environment = facts.get("environment")
+        if environment:
+            writeback["location_type"] = "室外" if environment in ("outdoor", "semi_outdoor") else "室内"
+            writeback["indoor"] = environment == "indoor"
+            writeback["outdoor"] = environment in ("outdoor", "semi_outdoor")
+        if facts.get("installation") and _confirmed("installation"):
+            writeback["is_rental"] = facts["installation"] == "rental"
+        if profile.purpose:
+            writeback["usage"] = profile.purpose
+        if profile.viewing_distance_m is not None and _confirmed("viewing_distance_m"):
+            writeback["distance"] = f"{profile.viewing_distance_m:g}米"
+        if profile.display_type and _confirmed("display_type"):
+            writeback["display_type"] = profile.display_type
+        if profile.pixel_pitch_mm is not None and _confirmed("pixel_pitch_mm"):
+            writeback["pixel_pitch"] = profile.pixel_pitch_mm
+        if profile.brightness_min_nit is not None and _confirmed("brightness_min_nit"):
+            writeback["brightness_min"] = profile.brightness_min_nit
+        if profile.has_target_size and (
+            _confirmed("target_width_m") or _confirmed("target_height_m")
+        ):
+            # 只写客户真正给过的那一维：缺高度时不能补成 "x0米"
+            # （实测日志里出现过 size='9.144米x0米' 这种被"补 0"的脏数据）
+            width, height = profile.target_width_m, profile.target_height_m
+            if width and height:
+                writeback["size"] = f"{width:g}米x{height:g}米"
+            elif width:
+                writeback["size"] = f"{width:g}米宽"
+            elif height:
+                writeback["size"] = f"{height:g}米高"
+        # 只报了一个长度、还没指认方向的线索，必须接着传下去，
+        # 否则下一轮客户回"是宽度"，系统已经忘了那个数字
+        if (
+            profile.screen_size_hint_mm is not None
+            and _confirmed("screen_size_hint_mm")
+        ):
+            writeback["screen_size_hint_mm"] = profile.screen_size_hint_mm
+        if profile.size_axis:
+            writeback["size_axis"] = profile.size_axis
+        for key, value in writeback.items():
+            if value not in (None, "", []):
+                state["requirements"].setdefault(key, value)
+
+        # 尺寸线索以本轮档案为准：线索已消费（指认成宽/高，或改给宽高）时
+        # 必须从 requirements 里删掉，否则 setdefault 会让它在下一轮"复活"
+        if profile.screen_size_hint_mm is None:
+            state["requirements"].pop("screen_size_hint_mm", None)
+        if not profile.size_axis:
+            state["requirements"].pop("size_axis", None)
+
+        # 提问话术轮换：同一槽位有多种自然说法，按"会话 + 轮次"稳定地换一句，
+        # 保证问的内容完全一致、措辞不重复。
+        # 轮次按"客户已经说过几句话"推进（每轮 +1），这样所有问法都会被轮到；
+        # 用消息总条数会每轮跳两步，问法轮换不完整。
+        _session_id = str(state.get("session_id") or "")
+        _user_turns = sum(
+            1
+            for msg in (state.get("messages") or [])
+            if (
+                msg.get("role") if isinstance(msg, dict) else getattr(msg, "type", "")
+            ) in ("user", "human")
+        )
+        _turn_seed = _user_turns + (sum(ord(ch) for ch in _session_id) % 7)
+        decision = check_recommendation_ready(profile, variant_seed=_turn_seed)
+        state["recommendation_gate"] = decision.to_dict()
+        current_intent = str(state.get("intent") or "")
+
+        if decision.ready:
+            # Gate 放行：触发推荐（后面的 greeting/closing 分支仍可再否决）
+            state["should_generate_solution"] = True
+            state["pending_question"] = ""
+        else:
+            # Gate 未放行：本轮不推荐，改为追问一个关键问题
+            # 追问内容以 Gate 的 missing 为准（保证问的就是拦住推荐的那一项），
+            # 没有对应模板时再退回 question_planner 的扩展问题（如预算）。
+            question = decision.next_question or ""
+            slot = first_missing_slot(decision.missing) or ""
+            if not question:
+                plan = plan_next_question(profile, seed=_turn_seed) or {}
+                question = plan.get("question") or ""
+                slot = plan.get("slot") or slot
+            # 需求重置时（客户要换产品 / 换项目），无论 classify 把这句话分到哪一类，
+            # 都必须回到"问下一个关键问题"，不能沿用 others / product_question 的自由问答路由。
+            # 其余意图（product_question / others）同样要产出待问项：
+            # 由 orchestrator 把"回答客户问题"与"继续追问需求"拼成一句回复。
+            if question and current_intent != "closing":
+                state["pending_question"] = question
+                state["pending_slot"] = slot
+                logger.info(
+                    "RecommendationGate blocked (missing=%s, slot=%s) — asking: %s",
+                    decision.missing, slot, question,
+                )
+            else:
+                state["pending_question"] = state.get("pending_question", "")
+                state["pending_slot"] = state.get("pending_slot", "")
+            state["should_generate_solution"] = False
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("Requirement profile planning failed: %s", exc)
+        state["pending_question"] = state.get("pending_question", "")
+
     # Compute missing requirements
     missing = _missing_requirements(state["requirements"])
     state["required_met"] = len(missing) == 0 or len([k for k in REQUIRED_KEYS if state["requirements"].get(k)]) == len(REQUIRED_KEYS)
@@ -372,5 +588,19 @@ def requirement_mining(state: SalesState) -> SalesState:
             state["should_generate_solution"] = False
     else:
         logger.info(f"Requirements: {state['requirements']}, should_trigger: {state['should_generate_solution']}, required_met: {state['required_met']}")
+
+    # ── 需求重置后必须回到需求采集 ─────────────────────────────────────────
+    # 客户在同一会话里换产品 / 换项目时，本轮以"重新问一个关键问题"收尾：
+    # 覆盖 classify 给出的 product_question / others 路由，避免绕到自由问答检索。
+    if state.get("requirements_reset") and not state.get("should_generate_solution"):
+        if str(state.get("intent") or "") != "closing":
+            if state.get("pending_question"):
+                if state.get("intent") in ("others", "product_question", "industry"):
+                    state["intent"] = "need_query"
+                state["next_action"] = "ask"
+                logger.info(
+                    "Requirement reset (%s) — back to requirement mining, asking: %s",
+                    state.get("reset_reason"), state.get("pending_question"),
+                )
 
     return state

@@ -344,7 +344,7 @@ class SolutionAgentRunner:
                 "requirement": result.get("requirement", {}),
                 "reflection_score": result.get("reflection_score", 0),
                 "reflection_notes": result.get("reflection_notes", ""),
-                "products": response_products[:3],
+                "products": response_products[:1],
                 "route": routing.route.value,
                 "complexity": routing.complexity,
             }

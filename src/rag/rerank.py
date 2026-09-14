@@ -113,73 +113,90 @@ def fallback_rerank(products: List[Dict[str, Any]], requirement: Dict[str, Any])
     return result
 
 
-def rerank_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Use LLM to rerank retrieved chunks based on requirements."""
-    requirement = state.get("requirement", {})
-    raw_products = state.get("products", [])
-    
-    logger.info(f"Rerank received {len(raw_products)} products from retrieval")
-    
-    # Filter to displays only
-    display_products = [p for p in raw_products if is_display_candidate(p)]
-    logger.info(f"Filtered to {len(display_products)} display candidates")
-    
-    if not display_products:
-        return {**state, "products": [], "next_action": "recommend"}
-    
-    # Filter environment conflicts
-    candidates = [p for p in display_products if not has_environment_conflict(p, requirement)]
-    
-    if not candidates:
-        candidates = display_products
-    
-    # Build candidates text
-    lines = []
-    for i, product in enumerate(candidates[:8], 1):
-        text = _get_product_text(product)
-        truncated = text[:600] if len(text) > 600 else text
-        lines.append(f"{i}. 【产品资料】\n{truncated}")
-    candidates_text = "\n\n".join(lines)
-    
-    req_parts = [f"{k}: {v}" for k, v in requirement.items() if v]
-    requirement_text = ", ".join(req_parts) or "No specific requirements"
-    
-    try:
-        response = get_llm(temperature=0).invoke(
-            RERANK_PROMPT.format(requirement=requirement_text, candidates=candidates_text)
+def _model_of(product) -> str:
+    """从证据条目里取出型号（metadata.model → metadata.product_id → 文本解析）。"""
+    metadata = _get_product_metadata(product)
+    name = metadata.get("model") or metadata.get("product_id")
+    if name:
+        return str(name)
+    text = _get_product_text(product)
+    match = re.search(
+        r"TW\d{2}-(?:IRHD|HOD|COB|3216|IR|OD)-P\d+(?:\.\d+)?(?:[HE])?(?:\(GOB\))?",
+        text, re.IGNORECASE,
+    )
+    return match.group(0) if match else ""
+
+
+def rank_evidence(
+    products: List[Dict[str, Any]],
+    selection: Optional[Dict[str, Any]] = None,
+    profile: Any = None,
+    limit: int = 3,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """v2.0 Phase 7：确定性的证据排序 + 冲突检测。
+
+    职责边界（v2.0 明确要求）：
+      - **不决定卖哪个产品**：顺序完全跟随 Recommendation Engine 的选型结果
+      - 只做"证据排序"（把选中型号的 RAG 证据排到前面）
+      - 只做"冲突检测"（丢弃环境冲突 / 非显示器证据）
+      - **绝不突破硬约束**：冲突证据直接丢弃，不"复活"、不交给 LLM 解释
+
+    Returns:
+        (kept, dropped)：按引擎顺序排列的证据，以及被丢弃的条目
+    """
+    engine_order: List[str] = [
+        str(rec.get("model"))
+        for rec in (selection or {}).get("recommendations") or []
+        if rec.get("model")
+    ]
+    requirement: Dict[str, Any] = {}
+    if profile is not None:
+        requirement = profile.to_facts() if hasattr(profile, "to_facts") else dict(profile)
+
+    ranked: List[tuple[int, Dict[str, Any]]] = []
+    dropped: List[Dict[str, Any]] = []
+
+    for index, product in enumerate(products or []):
+        name = _model_of(product)
+        if not is_display_candidate(product):
+            dropped.append({"model": name, "reason": "非显示产品"})
+            continue
+        if requirement and has_environment_conflict(product, requirement):
+            dropped.append({"model": name, "reason": "环境与需求冲突"})
+            continue
+        position = engine_order.index(name) if name in engine_order else len(engine_order) + index
+        ranked.append((position, product))
+
+    ranked.sort(key=lambda item: item[0])
+    kept = [product for _, product in ranked[:limit]]
+    if dropped:
+        logger.info(
+            "Evidence rerank: dropped %d item(s): %s",
+            len(dropped), [item["reason"] for item in dropped],
         )
-        content = response.content if hasattr(response, "content") else str(response)
-        if "```json" in content:
-            content = content.split("```json", 1)[1].split("```", 1)[0]
-        elif "```" in content:
-            content = content.split("```", 1)[1].split("```", 1)[0]
-        
-        parsed = json.loads(content.strip())
-        selected_indices = parsed.get("selected_indices", []) if isinstance(parsed, dict) else []
-        
-        selected = []
-        seen = set()
-        for index in selected_indices:
-            if not isinstance(index, int) or index in seen:
-                continue
-            if 1 <= index <= len(candidates):
-                selected.append(candidates[index - 1])
-                seen.add(index)
-            if len(selected) == 3:
-                break
-        
-        if not selected:
-            selected = candidates[:3]
-        
-        return {**state, "products": selected, "next_action": "recommend"}
-        
-    except Exception as error:
-        logger.warning(f"Reranking failed: {error}")
-        return {
-            **state,
-            "products": fallback_rerank(candidates, requirement),
-            "next_action": "recommend",
-        }
+    return kept, dropped
+
+
+def rerank_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """v2.0 Phase 7：Rerank 节点 = 证据排序 / 冲突检测。
+
+    相比旧实现（把候选丢给 LLM 打分并"选 3 个"），现在：
+      - 不调用 LLM，结果完全确定
+      - 顺序跟随 Recommendation Engine，LLM 不再参与产品选择
+      - 冲突证据直接丢弃，硬约束不可被突破
+    """
+    products = state.get("products") or []
+    selection = state.get("recommendation_result") or {}
+    profile = state.get("requirement_profile")
+
+    kept, dropped = rank_evidence(products, selection, profile, limit=3)
+    logger.info("Rerank(evidence): kept=%d dropped=%d", len(kept), len(dropped))
+    return {
+        **state,
+        "products": kept,
+        "evidence_dropped": dropped,
+        "next_action": state.get("next_action", "recommend"),
+    }
 
 
 def sanitize_customer_response(text: str, *, outdoor: bool = False) -> str:

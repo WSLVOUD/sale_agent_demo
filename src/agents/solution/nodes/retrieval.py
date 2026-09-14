@@ -7,6 +7,18 @@ from ..state import SolutionState
 logger = logging.getLogger(__name__)
 
 
+def _last_user_message(state: SolutionState) -> str:
+    """取本轮用户消息（用于硬约束解析）。"""
+    current = state.get("current_message")
+    if current:
+        return str(current)
+    for msg in reversed(state.get("messages", []) or []):
+        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "type", "")
+        if role in ("user", "human"):
+            return str(msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", ""))
+    return ""
+
+
 def _normalize_history(messages: List) -> List[Dict[str, str]]:
     """Normalize messages to role/content dicts."""
     result = []
@@ -76,45 +88,93 @@ def _build_search_query(state: SolutionState) -> str:
 
 
 def retrieval_node(state: SolutionState) -> SolutionState:
-    """Retrieve relevant products using hybrid search."""
+    """Retrieve relevant products using hybrid search + hard metadata filter.
+
+    Phase 3：明确硬条件（产品类型 / 室内外 / 固装租赁 / 客户指定的点间距或亮度 /
+    特殊功能）在检索前通过 metadata filter 完成过滤，绝不允许把违规产品交给 LLM
+    去"解释为什么也可以"。
+
+    观看距离推导出的点间距与亮度属于**软条件**：不参与过滤，交给排序与
+    Reflection 校验（Phase 8 / Phase 11）。
+    """
     hybrid_search = state.get("hybrid_search")
     
     if not hybrid_search:
         logger.warning("No hybrid_search available in state")
         return {**state, "products": []}
     
-    # Build search query
-    query = _build_search_query(state)
-    
-    # Get inferred parameters for filtering
-    brightness_min = state.get("inferred_brightness_min_nit")
-    brightness_max = state.get("inferred_brightness_max_nit")
-    pitch_max = state.get("inferred_pixel_pitch_max_mm")
-    pitch_min = state.get("inferred_pixel_pitch_min_mm")
-    is_rental = state.get("inferred_is_rental")
-    display_type = state.get("requirement", {}).get("display_type")
-    
+    from ....rag.hard_filter import build_hard_constraints
+    from ....rag.query_understanding import understand_query
+
+    requirement = dict(state.get("requirement", {}) or {})
+    message = _last_user_message(state)
+    history = _normalize_history(state.get("messages", []) or [])
+
+    # Phase 4：先把自然语言改写成结构化槽位 + 标准化英文检索式，再进 RAG
+    profile = state.get("requirement_profile")
+    understanding = understand_query(message, history=history, profile=profile)
+    query = understanding.retrieval_query or _build_search_query(state)
+    logger.info(
+        "Query understanding: lang=%s slots=%s → query=%r",
+        understanding.language, understanding.slots, query[:120],
+    )
+
+    # Phase 6：需求档案 —— 以"客户原话的确定性解析"为准；
+    # legacy requirement（LLM 提取）只补 purpose（场景原话），
+    # 其它工程参数一律不采用，避免 AI 自行补全/覆盖客户确认的事实。
+    merged_profile = understanding.profile
+    if merged_profile is not None and not merged_profile.purpose and requirement:
+        from ....models.requirement import RequirementProfile
+
+        legacy_profile = RequirementProfile.from_legacy(requirement)
+        if legacy_profile.purpose:
+            merged_profile.purpose = legacy_profile.purpose
+            merged_profile.sources["purpose"] = "confirmed"
+    if merged_profile is not None:
+        logger.info(
+            "Requirement profile: completeness=%.2f sufficient=%s missing=%s",
+            merged_profile.completeness(), merged_profile.is_sufficient(),
+            merged_profile.missing_slots(),
+        )
+
+    constraints = build_hard_constraints(
+        merged_profile if merged_profile is not None else requirement,
+        message=message,
+    )
+    logger.info("Hard filters: %s", constraints.describe())
+
     try:
-        # Build filter including display_type
-        search_filters = {}
-        if display_type:
-            search_filters["display_type"] = display_type
-        
-        # Perform hybrid search
+        # 硬约束 → metadata filter；不做点间距/亮度的推断值过滤
         products = hybrid_search.search(
             query=query,
             top_k=20,  # Retrieve more for reranking
-            filters=search_filters if search_filters else None,
-            brightness_min=brightness_min,
-            brightness_max=brightness_max,
-            pitch_max=pitch_max,
-            pitch_min=pitch_min,
-            is_rental=is_rental,
+            filters=constraints.chroma_where() or None,
+            **constraints.search_kwargs(),
         )
-        
-        logger.info(f"Retrieval: retrieved {len(products)} products for query: {query[:80]}")
-        return {**state, "products": products}
-        
+
+        # 兜底：任何违反硬约束的条目都不得进入后续推荐
+        filtered_products = constraints.apply(products)
+        dropped = len(products) - len(filtered_products)
+
+        logger.info(
+            "Retrieval: %d products (%d dropped by hard filter) for query: %s",
+            len(filtered_products), dropped, query[:80],
+        )
+        return {
+            **state,
+            "products": filtered_products,
+            # 软条件留给排序 / Reflection 使用
+            "soft_pitch_min_mm": state.get("inferred_pixel_pitch_min_mm"),
+            "soft_pitch_max_mm": state.get("inferred_pixel_pitch_max_mm"),
+            "soft_brightness_min_nit": state.get("inferred_brightness_min_nit"),
+            "hard_constraints": constraints.to_dict(),
+            "hard_filter_dropped": dropped,
+            "understood_slots": understanding.slots,
+            "understood_language": understanding.language,
+            "retrieval_query": query,
+            "requirement_profile": merged_profile,
+        }
+
     except Exception as e:
         logger.error(f"Retrieval error: {e}")
         return {**state, "products": []}

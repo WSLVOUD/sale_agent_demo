@@ -1,0 +1,3852 @@
+{
+  "report": "recommendation_eval",
+  "phase": "Phase 0",
+  "timestamp": "2026-09-14T07:41:46.379634+00:00",
+  "dataset": "eval/golden_dataset.json",
+  "summary": {
+    "cases_total": 72,
+    "cases_scored": 62,
+    "requirement_slot_accuracy": 0.996,
+    "profile_completeness": 0.496,
+    "profile_sufficient_rate": 0.5417,
+    "per_slot_accuracy": {
+      "brightness_min": 1.0,
+      "display_type": 1.0,
+      "environment": 1.0,
+      "installation": 1.0,
+      "pixel_pitch_mm": 1.0,
+      "purpose": 1.0,
+      "viewing_distance_m": 0.9655
+    },
+    "hard_constraint_capture_rate": 0.8798,
+    "route_accuracy": 0.8472,
+    "route_confusion": {
+      "normal->normal": 54,
+      "normal->agent": 6,
+      "fast->fast": 6,
+      "fast->normal": 3,
+      "agent->normal": 2,
+      "agent->agent": 1
+    }
+  },
+  "recommendation_engine": {
+    "status": "ok",
+    "cases": 16,
+    "needs_clarification_count": 25,
+    "needs_clarification": [
+      "g002",
+      "g003",
+      "g004",
+      "g005",
+      "g006",
+      "g007",
+      "g009",
+      "g010",
+      "g011",
+      "g012",
+      "g013",
+      "g014",
+      "g015",
+      "g016",
+      "g021",
+      "g025",
+      "g026",
+      "g027",
+      "g028",
+      "g032",
+      "g033",
+      "g057",
+      "g059",
+      "g065",
+      "g066"
+    ],
+    "top1_accuracy": 1.0,
+    "top3_coverage": 1.0,
+    "pitch_band_coverage_at_3": 1.0,
+    "hard_constraint_violation_rate": 0.0,
+    "cases_detail": [
+      {
+        "id": "g002",
+        "expected_models": [
+          "TW21-3216-P1.8",
+          "TW11-3216-P1.8",
+          "TW11-3216-P2.0"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g003",
+        "expected_models": [
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P2.0"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g004",
+        "expected_models": [
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P3.0"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g005",
+        "expected_models": [
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g006",
+        "expected_models": [
+          "TW31-COB-P0.7H",
+          "TW31-COB-P0.9H",
+          "TW31-COB-P1.2H"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g007",
+        "expected_models": [
+          "TW21-3216-P1.8",
+          "TW11-3216-P1.8"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g009",
+        "expected_models": [
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5",
+          "TW21-3216-P2.0"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g010",
+        "expected_models": [
+          "TW31-COB-P1.2H",
+          "TW31-COB-P1.5H"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g011",
+        "expected_models": [
+          "TW21-3216-P3.0",
+          "TW11-3216-P3.0",
+          "TW21-3216-P4.0"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "installation"
+        ]
+      },
+      {
+        "id": "g012",
+        "expected_models": [
+          "TW21-3216-P1.8",
+          "TW11-3216-P1.8"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment"
+        ]
+      },
+      {
+        "id": "g013",
+        "expected_models": [
+          "TW21-3216-P1.8",
+          "TW11-3216-P1.8",
+          "TW31-COB-P1.5H"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g014",
+        "expected_models": [
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g015",
+        "expected_models": [
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g016",
+        "expected_models": [
+          "TW21-3216-P3.0",
+          "TW11-3216-P3.0"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g017",
+        "expected_models": [
+          "TW11-IR-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW31-IRHD-P3.9"
+        ],
+        "predicted_models": [
+          "TW11-IR-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW31-IRHD-P3.9"
+        ]
+      },
+      {
+        "id": "g018",
+        "expected_models": [
+          "TW11-IR-P2.6",
+          "TW21-IRHD-P2.6H",
+          "TW31-IRHD-P2.6"
+        ],
+        "predicted_models": [
+          "TW11-IR-P2.6",
+          "TW11-IR-P2.9",
+          "TW21-IRHD-P2.6H"
+        ]
+      },
+      {
+        "id": "g019",
+        "expected_models": [
+          "TW31-IRHD-P2.9"
+        ],
+        "predicted_models": [
+          "TW31-IRHD-P2.9",
+          "TW31-IRHD-P2.6"
+        ]
+      },
+      {
+        "id": "g020",
+        "expected_models": [
+          "TW11-IR-P1.95(GOB)"
+        ],
+        "predicted_models": [
+          "TW11-IR-P1.95(GOB)"
+        ]
+      },
+      {
+        "id": "g021",
+        "expected_models": [
+          "TW11-IR-P1.95(GOB)"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "viewing_distance"
+        ]
+      },
+      {
+        "id": "g023",
+        "expected_models": [
+          "TW11-IR-P4.8"
+        ],
+        "predicted_models": [
+          "TW11-IR-P4.8"
+        ]
+      },
+      {
+        "id": "g024",
+        "expected_models": [
+          "TW11-IR-P2.9",
+          "TW21-IRHD-P2.9H",
+          "TW31-IRHD-P2.9"
+        ],
+        "predicted_models": [
+          "TW11-IR-P2.9",
+          "TW11-IR-P2.6",
+          "TW21-IRHD-P2.9H"
+        ]
+      },
+      {
+        "id": "g025",
+        "expected_models": [
+          "TW21-OD-P6",
+          "TW11-OD-P6",
+          "TW31-HOD-P6.67E"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "installation"
+        ]
+      },
+      {
+        "id": "g026",
+        "expected_models": [
+          "TW11-OD-P10",
+          "TW21-OD-P10",
+          "TW31-HOD-P10E"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "installation"
+        ]
+      },
+      {
+        "id": "g027",
+        "expected_models": [
+          "TW21-OD-P8",
+          "TW11-OD-P8",
+          "TW31-HOD-P8E"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g028",
+        "expected_models": [
+          "TW21-OD-P6",
+          "TW11-OD-P6",
+          "TW31-HOD-P6.67E"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "installation"
+        ]
+      },
+      {
+        "id": "g029",
+        "expected_models": [
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P8E",
+          "TW31-HOD-P10E"
+        ],
+        "predicted_models": [
+          "TW31-HOD-P6.67E",
+          "TW31-HOD-P8E",
+          "TW31-HOD-P10E"
+        ]
+      },
+      {
+        "id": "g030",
+        "expected_models": [
+          "TW11-OD-P10",
+          "TW21-OD-P10",
+          "TW31-HOD-P10E"
+        ],
+        "predicted_models": [
+          "TW11-OD-P10",
+          "TW21-OD-P10",
+          "TW31-HOD-P10E"
+        ]
+      },
+      {
+        "id": "g031",
+        "expected_models": [
+          "TW11-OD-P5",
+          "TW21-OD-P5"
+        ],
+        "predicted_models": [
+          "TW11-OD-P5",
+          "TW21-OD-P5"
+        ]
+      },
+      {
+        "id": "g032",
+        "expected_models": [
+          "TW11-OD-P6",
+          "TW11-OD-P5"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "installation"
+        ]
+      },
+      {
+        "id": "g033",
+        "expected_models": [
+          "TW21-OD-P6",
+          "TW21-OD-P5"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "purpose",
+          "installation"
+        ]
+      },
+      {
+        "id": "g034",
+        "expected_models": [
+          "TW31-HOD-P8E",
+          "TW31-HOD-P10E"
+        ],
+        "predicted_models": [
+          "TW31-HOD-P8E",
+          "TW31-HOD-P10E"
+        ]
+      },
+      {
+        "id": "g035",
+        "expected_models": [
+          "TW11-OD-P2.5",
+          "TW21-OD-P2.5"
+        ],
+        "predicted_models": [
+          "TW11-OD-P2.5",
+          "TW21-OD-P2.5"
+        ]
+      },
+      {
+        "id": "g036",
+        "expected_models": [
+          "TW21-3216-P2.5"
+        ],
+        "predicted_models": [
+          "TW21-3216-P2.5"
+        ]
+      },
+      {
+        "id": "g039",
+        "expected_models": [
+          "TW31-COB-P1.2H"
+        ],
+        "predicted_models": [
+          "TW31-COB-P1.2H"
+        ]
+      },
+      {
+        "id": "g041",
+        "expected_models": [
+          "TW11-OD-P6"
+        ],
+        "predicted_models": [
+          "TW11-OD-P6"
+        ]
+      },
+      {
+        "id": "g057",
+        "expected_models": [
+          "TW21-OD-P6",
+          "TW11-OD-P6"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "installation"
+        ]
+      },
+      {
+        "id": "g058",
+        "expected_models": [
+          "TW11-IR-P2.6",
+          "TW21-IRHD-P2.6H",
+          "TW31-IRHD-P2.6"
+        ],
+        "predicted_models": [
+          "TW11-IR-P2.6",
+          "TW11-IR-P2.9",
+          "TW21-IRHD-P2.6H"
+        ]
+      },
+      {
+        "id": "g059",
+        "expected_models": [
+          "TW21-OD-P6",
+          "TW11-OD-P6",
+          "TW21-OD-P4"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "purpose",
+          "installation"
+        ]
+      },
+      {
+        "id": "g065",
+        "expected_models": [
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation",
+          "viewing_distance"
+        ]
+      },
+      {
+        "id": "g066",
+        "expected_models": [
+          "TW21-3216-P2.5",
+          "TW11-3216-P2.5"
+        ],
+        "predicted_models": [],
+        "status": "NEED_CLARIFICATION",
+        "missing_fields": [
+          "environment",
+          "installation"
+        ]
+      },
+      {
+        "id": "g068",
+        "expected_models": [
+          "TW11-IR-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW31-IRHD-P3.9"
+        ],
+        "predicted_models": [
+          "TW11-IR-P3.9",
+          "TW21-IRHD-P3.9H",
+          "TW31-IRHD-P3.9"
+        ]
+      }
+    ]
+  },
+  "agent_end_to_end": null,
+  "cases": [
+    {
+      "id": "g001",
+      "query": "会议室大概15人用，推荐一块合适的显示屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "conference"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "会议室"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "conference"
+      },
+      "retrieval_query": "indoor fixed installation LED display conference room meeting room",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g002",
+      "query": "会议室大约3米视距，帮我选一块LED屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "conference",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "会议室",
+        "viewing_distance_m": 3
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "conference",
+        "viewing_distance_m": 3.0
+      },
+      "retrieval_query": "indoor fixed installation LED display conference room meeting room viewing distance 3m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "agent",
+      "route_correct": false,
+      "route_reason": "模糊推荐/比较/疑问，需要 Agent 推理",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g003",
+      "query": "会议室5米视距用，要LED屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "conference",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "会议室",
+        "viewing_distance_m": 5
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "conference",
+        "viewing_distance_m": 5.0
+      },
+      "retrieval_query": "indoor fixed installation LED display conference room meeting room viewing distance 5m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g004",
+      "query": "教室大概8米视距，要装一块LED显示屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "classroom",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "教室",
+        "viewing_distance_m": 8
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "classroom",
+        "viewing_distance_m": 8.0
+      },
+      "retrieval_query": "indoor fixed installation LED display classroom education training viewing distance 8m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g005",
+      "query": "培训室6米视距，教学用LED屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "classroom",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "培训室",
+        "viewing_distance_m": 6
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "classroom",
+        "viewing_distance_m": 6.0
+      },
+      "retrieval_query": "indoor fixed installation LED display classroom education training viewing distance 6m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g006",
+      "query": "展厅做高端展示，观看距离2米以内，要清晰度高的屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "showroom",
+        "premium",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "展厅",
+        "viewing_distance_m": 2
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "showroom",
+        "viewing_distance_m": 2.0
+      },
+      "retrieval_query": "indoor fixed installation LED display showroom exhibition hall viewing distance 2m premium",
+      "language": "zh",
+      "profile_completeness": 0.8571,
+      "profile_missing": [
+        "target_size"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g007",
+      "query": "商场店铺做广告展示，视距3米左右",
+      "tags": [
+        "indoor",
+        "fixed",
+        "retail",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "商场",
+        "viewing_distance_m": 3
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "retail",
+        "viewing_distance_m": 3.0
+      },
+      "retrieval_query": "indoor fixed installation LED display retail store shop viewing distance 3m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g008",
+      "query": "指挥中心要做拼接大屏，7x24小时运行",
+      "tags": [
+        "no_match",
+        "control-room",
+        "lcd"
+      ],
+      "expected_slots": {
+        "display_type": "LCD",
+        "environment": "indoor",
+        "purpose": "指挥中心"
+      },
+      "predicted_slots": {
+        "display_type": "LCD",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "control_room"
+      },
+      "retrieval_query": "indoor fixed installation LCD display control room command center",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "viewing_distance_m",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "purpose": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g009",
+      "query": "酒店大堂要装一块LED屏，视距4米",
+      "tags": [
+        "indoor",
+        "fixed",
+        "lobby",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "酒店大堂",
+        "viewing_distance_m": 4
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "hotel",
+        "viewing_distance_m": 4.0
+      },
+      "retrieval_query": "indoor fixed installation LED display hotel lobby viewing distance 4m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g010",
+      "query": "会议室想要HDR高端的LED屏，视距3米",
+      "tags": [
+        "indoor",
+        "fixed",
+        "conference",
+        "premium",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "会议室",
+        "viewing_distance_m": 3
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "conference",
+        "viewing_distance_m": 3.0
+      },
+      "retrieval_query": "indoor fixed installation LED display conference room meeting room viewing distance 3m HDR premium",
+      "language": "zh",
+      "profile_completeness": 0.8571,
+      "profile_missing": [
+        "target_size"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g011",
+      "query": "室内大厅，12米视距，装LED屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "hall",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "室内大厅",
+        "viewing_distance_m": 12
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "hall",
+        "viewing_distance_m": 12.0
+      },
+      "retrieval_query": "indoor fixed installation LED display large indoor hall viewing distance 12m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g012",
+      "query": "办公室挂墙的LED屏，3.5米视距",
+      "tags": [
+        "indoor",
+        "fixed",
+        "office",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "办公室",
+        "viewing_distance_m": 3.5
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "office",
+        "viewing_distance_m": 3.5
+      },
+      "retrieval_query": "indoor fixed installation LED display office workspace viewing distance 3.5m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g013",
+      "query": "博物馆展陈用的LED屏，观看距离2.5米",
+      "tags": [
+        "indoor",
+        "fixed",
+        "museum",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "博物馆",
+        "viewing_distance_m": 2.5
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "museum",
+        "viewing_distance_m": 2.5
+      },
+      "retrieval_query": "indoor fixed installation LED display museum exhibition display viewing distance 2.5m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g014",
+      "query": "银行网点大厅，5米视距LED屏",
+      "tags": [
+        "indoor",
+        "fixed",
+        "bank",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "银行",
+        "viewing_distance_m": 5
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "bank",
+        "viewing_distance_m": 5.0
+      },
+      "retrieval_query": "indoor fixed installation LED display bank branch viewing distance 5m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g015",
+      "query": "餐厅做菜单展示，视距4米",
+      "tags": [
+        "indoor",
+        "fixed",
+        "restaurant",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "餐厅",
+        "viewing_distance_m": 4
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "restaurant",
+        "viewing_distance_m": 4.0
+      },
+      "retrieval_query": "indoor fixed installation LED display restaurant bar viewing distance 4m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g016",
+      "query": "机场航站楼信息屏，10米视距",
+      "tags": [
+        "indoor",
+        "fixed",
+        "airport",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "机场",
+        "viewing_distance_m": 10
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "airport",
+        "viewing_distance_m": 10.0
+      },
+      "retrieval_query": "indoor fixed installation LED display airport terminal transport hub viewing distance 10m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g017",
+      "query": "室内演唱会租赁，P3.9左右的屏",
+      "tags": [
+        "indoor",
+        "rental",
+        "concert",
+        "pitch_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "purpose": "演唱会",
+        "pixel_pitch_mm": 3.9
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "purpose": "concert",
+        "pixel_pitch_mm": 3.9
+      },
+      "retrieval_query": "indoor rental LED display concert live event pixel pitch 3.9mm",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "pixel_pitch_mm": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g018",
+      "query": "室内活动租赁，P2.6的屏",
+      "tags": [
+        "indoor",
+        "rental",
+        "event",
+        "pitch_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "pixel_pitch_mm": 2.6
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "purpose": "rental",
+        "pixel_pitch_mm": 2.6
+      },
+      "retrieval_query": "indoor rental LED display rental event pixel pitch 2.6mm",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "pixel_pitch_mm": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g019",
+      "query": "室内租赁要柔性屏，P2.9",
+      "tags": [
+        "indoor",
+        "rental",
+        "flexible",
+        "pitch_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "pixel_pitch_mm": 2.9
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "purpose": "rental",
+        "pixel_pitch_mm": 2.9
+      },
+      "retrieval_query": "indoor rental LED display rental event pixel pitch 2.9mm",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "pixel_pitch_mm": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g020",
+      "query": "展会租赁，要1.9mm点间距的屏",
+      "tags": [
+        "indoor",
+        "rental",
+        "exhibition",
+        "pitch_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "pixel_pitch_mm": 1.95
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "purpose": "exhibition",
+        "pixel_pitch_mm": 1.9
+      },
+      "retrieval_query": "indoor rental LED display exhibition trade show pixel pitch 1.9mm",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "pixel_pitch_mm": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g021",
+      "query": "室内租赁要有GOB防护的屏",
+      "tags": [
+        "indoor",
+        "rental",
+        "gob"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "purpose": "rental"
+      },
+      "retrieval_query": "indoor rental LED display rental event",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g022",
+      "query": "室内演出租赁，预算有限，推荐便宜点的",
+      "tags": [
+        "indoor",
+        "rental",
+        "stage",
+        "budget"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "purpose": "演出"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "purpose": "stage"
+      },
+      "retrieval_query": "indoor rental LED display stage performance low price",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "agent",
+      "route_correct": false,
+      "route_reason": "模糊推荐/比较/疑问，需要 Agent 推理",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g023",
+      "query": "室内展览用大点间距的租赁屏，P4.8",
+      "tags": [
+        "indoor",
+        "rental",
+        "exhibition",
+        "pitch_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "pixel_pitch_mm": 4.8
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "purpose": "showroom",
+        "pixel_pitch_mm": 4.8
+      },
+      "retrieval_query": "indoor rental LED display showroom exhibition hall pixel pitch 4.8mm",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "pixel_pitch_mm": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g024",
+      "query": "室内租赁屏，P2.9，推荐一款",
+      "tags": [
+        "indoor",
+        "rental",
+        "pitch_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "pixel_pitch_mm": 2.9
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "purpose": "rental",
+        "pixel_pitch_mm": 2.9
+      },
+      "retrieval_query": "indoor rental LED display rental event pixel pitch 2.9mm",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "pixel_pitch_mm": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g025",
+      "query": "户外广告屏，视距20米左右",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "advertising",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "广告",
+        "viewing_distance_m": 20
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "advertising",
+        "viewing_distance_m": 20.0
+      },
+      "retrieval_query": "outdoor fixed installation LED display advertising billboard digital signage viewing distance 20m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g026",
+      "query": "户外楼体广告屏，观看距离40米以上",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "advertising",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "楼体广告",
+        "viewing_distance_m": 40
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "advertising",
+        "viewing_distance_m": 40.0
+      },
+      "retrieval_query": "outdoor fixed installation LED display advertising billboard digital signage viewing distance 40m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g027",
+      "query": "体育场外围的LED屏，30米视距",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "stadium",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "体育场",
+        "viewing_distance_m": 30
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "stadium",
+        "viewing_distance_m": 30.0
+      },
+      "retrieval_query": "outdoor fixed installation LED display stadium sports venue viewing distance 30m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g028",
+      "query": "商场外墙幕墙广告屏，20米视距",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "advertising",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "幕墙广告",
+        "viewing_distance_m": 20
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "advertising",
+        "viewing_distance_m": 20.0
+      },
+      "retrieval_query": "outdoor fixed installation LED display advertising billboard digital signage viewing distance 20m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g029",
+      "query": "户外高亮屏，亮度要8000nit以上",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "brightness_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "brightness_min": 8000
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "brightness_min": 8000
+      },
+      "retrieval_query": "outdoor fixed installation LED display brightness above 8000nit",
+      "language": "zh",
+      "profile_completeness": 0.4286,
+      "profile_missing": [
+        "purpose",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "brightness_min": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "brightness_min": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g030",
+      "query": "户外P10的固定安装屏",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "pitch_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "pixel_pitch_mm": 10
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "pixel_pitch_mm": 10.0
+      },
+      "retrieval_query": "outdoor fixed installation LED display pixel pitch 10mm",
+      "language": "zh",
+      "profile_completeness": 0.4286,
+      "profile_missing": [
+        "purpose",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "pixel_pitch_mm": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g031",
+      "query": "户外防水屏，P5左右",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "waterproof",
+        "pitch_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "pixel_pitch_mm": 5
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "pixel_pitch_mm": 5.0
+      },
+      "retrieval_query": "outdoor fixed installation LED display pixel pitch 5mm waterproof IP65",
+      "language": "zh",
+      "profile_completeness": 0.4286,
+      "profile_missing": [
+        "purpose",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "pixel_pitch_mm": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g032",
+      "query": "户外广告屏预算低，18米视距",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "advertising",
+        "budget"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "广告",
+        "viewing_distance_m": 18
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "advertising",
+        "viewing_distance_m": 18.0
+      },
+      "retrieval_query": "outdoor fixed installation LED display advertising billboard digital signage viewing distance 18m low price",
+      "language": "zh",
+      "profile_completeness": 0.8571,
+      "profile_missing": [
+        "target_size"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g033",
+      "query": "户外25米视距，中档价位的屏",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "budget",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "viewing_distance_m": 25
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "viewing_distance_m": 25.0
+      },
+      "retrieval_query": "outdoor fixed installation LED display viewing distance 25m mid price",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "purpose",
+        "target_size"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g034",
+      "query": "户外要10000nit超高亮的屏",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "brightness_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "brightness_min": 9000
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "brightness_min": 10000
+      },
+      "retrieval_query": "outdoor fixed installation LED display brightness above 10000nit",
+      "language": "zh",
+      "profile_completeness": 0.4286,
+      "profile_missing": [
+        "purpose",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "brightness_min": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "brightness_min": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g035",
+      "query": "户外P2.5的屏",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "pitch_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "pixel_pitch_mm": 2.5
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "pixel_pitch_mm": 2.5
+      },
+      "retrieval_query": "outdoor fixed installation LED display pixel pitch 2.5mm",
+      "language": "zh",
+      "profile_completeness": 0.4286,
+      "profile_missing": [
+        "purpose",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "pixel_pitch_mm": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g036",
+      "query": "TW21-3216-P2.5 的亮度是多少？",
+      "tags": [
+        "fast",
+        "spec_query",
+        "model_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "pixel_pitch_mm": 2.5
+      },
+      "retrieval_query": "LED display pixel pitch 2.5mm TW21-3216-P2.5",
+      "language": "zh",
+      "profile_completeness": 0.1429,
+      "profile_missing": [
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true
+      },
+      "expected_route": "fast",
+      "predicted_route": "fast",
+      "route_correct": true,
+      "route_reason": "纯参数查询，提取约束: {'pixel_pitch': 2.5, 'pixel_pitch_tolerance': 0.5}",
+      "hard_checks": {
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g037",
+      "query": "P3.0的点间距具体是多少毫米",
+      "tags": [
+        "fast",
+        "spec_query"
+      ],
+      "expected_slots": {
+        "display_type": "LED"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "pixel_pitch_mm": 3.0
+      },
+      "retrieval_query": "LED display pixel pitch 3mm",
+      "language": "zh",
+      "profile_completeness": 0.1429,
+      "profile_missing": [
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true
+      },
+      "expected_route": "fast",
+      "predicted_route": "fast",
+      "route_correct": true,
+      "route_reason": "纯参数查询，提取约束: {'pixel_pitch': 3.0, 'pixel_pitch_tolerance': 0.5}",
+      "hard_checks": {
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g038",
+      "query": "你们户外屏最高亮度能到多少",
+      "tags": [
+        "fast",
+        "spec_query"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed"
+      },
+      "retrieval_query": "outdoor fixed installation LED display",
+      "language": "zh",
+      "profile_completeness": 0.4286,
+      "profile_missing": [
+        "purpose",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true
+      },
+      "expected_route": "fast",
+      "predicted_route": "normal",
+      "route_correct": false,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g039",
+      "query": "TW31-COB-P1.2H 支持HDR吗",
+      "tags": [
+        "fast",
+        "spec_query",
+        "model_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "pixel_pitch_mm": 1.0
+      },
+      "retrieval_query": "LED display pixel pitch 1mm COB HDR TW31-COB-P1.2H",
+      "language": "zh",
+      "profile_completeness": 0.1429,
+      "profile_missing": [
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true
+      },
+      "expected_route": "fast",
+      "predicted_route": "fast",
+      "route_correct": true,
+      "route_reason": "纯参数查询，提取约束: {'pixel_pitch': 1.2, 'pixel_pitch_tolerance': 0.5}",
+      "hard_checks": {
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g040",
+      "query": "租赁屏的质保是几年",
+      "tags": [
+        "fast",
+        "warranty"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "installation": "rental"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "installation": "rental",
+        "purpose": "rental"
+      },
+      "retrieval_query": "rental LED display rental event",
+      "language": "zh",
+      "profile_completeness": 0.4286,
+      "profile_missing": [
+        "environment",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "installation": true
+      },
+      "expected_route": "fast",
+      "predicted_route": "normal",
+      "route_correct": false,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g041",
+      "query": "TW11-OD-P6 的箱体尺寸是多少",
+      "tags": [
+        "fast",
+        "spec_query",
+        "cabinet"
+      ],
+      "expected_slots": {
+        "display_type": "LED"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "pixel_pitch_mm": 6.0
+      },
+      "retrieval_query": "LED display pixel pitch 6mm TW11-OD-P6",
+      "language": "zh",
+      "profile_completeness": 0.1429,
+      "profile_missing": [
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true
+      },
+      "expected_route": "fast",
+      "predicted_route": "fast",
+      "route_correct": true,
+      "route_reason": "纯参数查询，提取约束: {'pixel_pitch': 6.0, 'pixel_pitch_tolerance': 0.5}",
+      "hard_checks": {
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g042",
+      "query": "有没有防水IP65的户外屏",
+      "tags": [
+        "outdoor",
+        "fixed",
+        "waterproof"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed"
+      },
+      "retrieval_query": "outdoor fixed installation LED display waterproof IP65",
+      "language": "zh",
+      "profile_completeness": 0.4286,
+      "profile_missing": [
+        "purpose",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g043",
+      "query": "LED屏的刷新率一般是多少",
+      "tags": [
+        "fast",
+        "spec_query"
+      ],
+      "expected_slots": {
+        "display_type": "LED"
+      },
+      "predicted_slots": {
+        "display_type": "LED"
+      },
+      "retrieval_query": "LED display",
+      "language": "zh",
+      "profile_completeness": 0.1429,
+      "profile_missing": [
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true
+      },
+      "expected_route": "fast",
+      "predicted_route": "normal",
+      "route_correct": false,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g044",
+      "query": "帮我推荐一块屏",
+      "tags": [
+        "vague",
+        "clarify"
+      ],
+      "expected_slots": {},
+      "predicted_slots": {
+        "display_type": "LED"
+      },
+      "retrieval_query": "LED display",
+      "language": "zh",
+      "profile_completeness": 0.1429,
+      "profile_missing": [
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {},
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {},
+      "hard_capture_rate": null
+    },
+    {
+      "id": "g045",
+      "query": "我需要LED显示屏",
+      "tags": [
+        "vague",
+        "clarify"
+      ],
+      "expected_slots": {
+        "display_type": "LED"
+      },
+      "predicted_slots": {
+        "display_type": "LED"
+      },
+      "retrieval_query": "LED display",
+      "language": "zh",
+      "profile_completeness": 0.1429,
+      "profile_missing": [
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g046",
+      "query": "有什么好屏推荐吗",
+      "tags": [
+        "vague",
+        "clarify"
+      ],
+      "expected_slots": {},
+      "predicted_slots": {
+        "display_type": "LED"
+      },
+      "retrieval_query": "LED display",
+      "language": "zh",
+      "profile_completeness": 0.1429,
+      "profile_missing": [
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {},
+      "expected_route": "agent",
+      "predicted_route": "agent",
+      "route_correct": true,
+      "route_reason": "模糊推荐/比较/疑问，需要 Agent 推理",
+      "hard_checks": {},
+      "hard_capture_rate": null
+    },
+    {
+      "id": "g047",
+      "query": "多少钱",
+      "tags": [
+        "vague",
+        "clarify",
+        "price"
+      ],
+      "expected_slots": {},
+      "predicted_slots": {},
+      "retrieval_query": "多少钱",
+      "language": "zh",
+      "profile_completeness": 0.0,
+      "profile_missing": [
+        "display_type",
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {},
+      "expected_route": "normal",
+      "predicted_route": "agent",
+      "route_correct": false,
+      "route_reason": "默认：无法确定简单程度，委托 Agent",
+      "hard_checks": {},
+      "hard_capture_rate": null
+    },
+    {
+      "id": "g048",
+      "query": "我要采购屏幕",
+      "tags": [
+        "vague",
+        "clarify"
+      ],
+      "expected_slots": {},
+      "predicted_slots": {
+        "display_type": "LED"
+      },
+      "retrieval_query": "LED display",
+      "language": "zh",
+      "profile_completeness": 0.1429,
+      "profile_missing": [
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {},
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {},
+      "hard_capture_rate": null
+    },
+    {
+      "id": "g049",
+      "query": "我在户外用，但希望用室内的型号",
+      "tags": [
+        "conflict",
+        "outdoor"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed"
+      },
+      "retrieval_query": "outdoor fixed installation LED display",
+      "language": "zh",
+      "profile_completeness": 0.4286,
+      "profile_missing": [
+        "purpose",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true
+      },
+      "expected_route": "agent",
+      "predicted_route": "normal",
+      "route_correct": false,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g050",
+      "query": "室内使用，但要高亮户外屏",
+      "tags": [
+        "conflict",
+        "indoor"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed"
+      },
+      "retrieval_query": "indoor fixed installation LED display",
+      "language": "zh",
+      "profile_completeness": 0.4286,
+      "profile_missing": [
+        "purpose",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true
+      },
+      "expected_route": "agent",
+      "predicted_route": "normal",
+      "route_correct": false,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g051",
+      "query": "户外租赁的LED屏",
+      "tags": [
+        "no_match",
+        "outdoor",
+        "rental"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "rental"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "rental",
+        "purpose": "rental"
+      },
+      "retrieval_query": "outdoor rental LED display rental event",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g052",
+      "query": "户外演唱会租赁用的LED屏，P3左右，亮度要高",
+      "tags": [
+        "no_match",
+        "outdoor",
+        "rental",
+        "concert"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "rental",
+        "purpose": "演唱会",
+        "pixel_pitch_mm": 3
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "rental",
+        "purpose": "concert",
+        "pixel_pitch_mm": 3.0
+      },
+      "retrieval_query": "outdoor rental LED display concert live event pixel pitch 3mm",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "pixel_pitch_mm": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "brightness_min": false,
+        "pixel_pitch": true
+      },
+      "hard_capture_rate": 0.8
+    },
+    {
+      "id": "g053",
+      "query": "要LCD拼接屏",
+      "tags": [
+        "no_match",
+        "lcd"
+      ],
+      "expected_slots": {
+        "display_type": "LCD"
+      },
+      "predicted_slots": {
+        "display_type": "LCD"
+      },
+      "retrieval_query": "LCD display",
+      "language": "zh",
+      "profile_completeness": 0.1429,
+      "profile_missing": [
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g054",
+      "query": "要会议一体机、交互平板",
+      "tags": [
+        "no_match",
+        "ifp"
+      ],
+      "expected_slots": {
+        "display_type": "IFP"
+      },
+      "predicted_slots": {
+        "display_type": "IFP",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "conference"
+      },
+      "retrieval_query": "indoor fixed installation IFP display conference room meeting room",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（无额外约束），进 NORMAL",
+      "hard_checks": {
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g055",
+      "query": "要OLED透明屏",
+      "tags": [
+        "no_match",
+        "unsupported"
+      ],
+      "expected_slots": {},
+      "predicted_slots": {
+        "display_type": "LED"
+      },
+      "retrieval_query": "LED display",
+      "language": "zh",
+      "profile_completeness": 0.1429,
+      "profile_missing": [
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {},
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {},
+      "hard_capture_rate": null
+    },
+    {
+      "id": "g056",
+      "query": "要投影仪",
+      "tags": [
+        "no_match",
+        "unsupported"
+      ],
+      "expected_slots": {},
+      "predicted_slots": {},
+      "retrieval_query": "要投影仪",
+      "language": "zh",
+      "profile_completeness": 0.0,
+      "profile_missing": [
+        "display_type",
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {},
+      "expected_route": "normal",
+      "predicted_route": "agent",
+      "route_correct": false,
+      "route_reason": "默认：无法确定简单程度，委托 Agent",
+      "hard_checks": {},
+      "hard_capture_rate": null
+    },
+    {
+      "id": "g057",
+      "query": "I need an outdoor LED display for a shopping mall facade, viewing distance around 20 meters",
+      "tags": [
+        "multilingual",
+        "en",
+        "outdoor",
+        "fixed"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "viewing_distance_m": 20
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "advertising",
+        "viewing_distance_m": 20.0
+      },
+      "retrieval_query": "outdoor fixed installation LED display advertising billboard digital signage viewing distance 20m",
+      "language": "fr",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g058",
+      "query": "Looking for an indoor rental LED screen for an event, pixel pitch around 2.6mm",
+      "tags": [
+        "multilingual",
+        "en",
+        "indoor",
+        "rental",
+        "pitch_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "pixel_pitch_mm": 2.6
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "purpose": "rental",
+        "pixel_pitch_mm": 2.6
+      },
+      "retrieval_query": "indoor rental LED display rental event pixel pitch 2.6mm",
+      "language": "en",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "pixel_pitch_mm": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g059",
+      "query": "Necesito una pantalla LED para exterior, distancia de visión 15 metros",
+      "tags": [
+        "multilingual",
+        "es",
+        "outdoor",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "viewing_distance_m": 15
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "viewing_distance_m": 15.0
+      },
+      "retrieval_query": "outdoor fixed installation LED display viewing distance 15m",
+      "language": "es",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "purpose",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g060",
+      "query": "Нужен светодиодный экран для улицы, расстояние просмотра 20 метров",
+      "tags": [
+        "multilingual",
+        "ru",
+        "outdoor",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "viewing_distance_m": 20
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "viewing_distance_m": 20.0
+      },
+      "retrieval_query": "outdoor fixed installation LED display viewing distance 20m",
+      "language": "ru",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "purpose",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g061",
+      "query": "屋内会議室用のLEDディスプレイを探しています。視距離3メートル",
+      "tags": [
+        "multilingual",
+        "ja",
+        "indoor",
+        "conference"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "会議室",
+        "viewing_distance_m": 3
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "conference",
+        "viewing_distance_m": 3.0
+      },
+      "retrieval_query": "indoor fixed installation LED display conference room meeting room viewing distance 3m",
+      "language": "ja",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g062",
+      "query": "Ich brauche ein LED-Display für den Innenbereich, Betrachtungsabstand 5 Meter",
+      "tags": [
+        "multilingual",
+        "de",
+        "indoor",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "viewing_distance_m": 5
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "viewing_distance_m": 5.0
+      },
+      "retrieval_query": "indoor fixed installation LED display viewing distance 5m",
+      "language": "de",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "purpose",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g063",
+      "query": "Je cherche un écran LED extérieur pour publicité, distance de visionnage 25 mètres",
+      "tags": [
+        "multilingual",
+        "fr",
+        "outdoor",
+        "advertising"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "viewing_distance_m": 25
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "viewing_distance_m": 25.0
+      },
+      "retrieval_query": "outdoor fixed installation LED display viewing distance 25m",
+      "language": "fr",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "purpose",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g064",
+      "query": "Preciso de um painel de LED para uso interno, distância de visualização 4 metros",
+      "tags": [
+        "multilingual",
+        "pt",
+        "indoor",
+        "viewing_distance"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "viewing_distance_m": 4
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed"
+      },
+      "retrieval_query": "indoor fixed installation LED display",
+      "language": "pt",
+      "profile_completeness": 0.4286,
+      "profile_missing": [
+        "purpose",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 0.75,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "viewing_distance_m": false
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g065",
+      "query": "What do you recommend?",
+      "tags": [
+        "multi_turn",
+        "en",
+        "indoor",
+        "conference"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "会议室",
+        "viewing_distance_m": 5
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "conference",
+        "viewing_distance_m": 5.0
+      },
+      "retrieval_query": "indoor fixed installation LED display conference room meeting room viewing distance 5m",
+      "language": "en",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g066",
+      "query": "大概4米视距",
+      "tags": [
+        "multi_turn",
+        "zh",
+        "indoor",
+        "conference"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "会议室",
+        "viewing_distance_m": 4
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "fixed",
+        "purpose": "conference",
+        "viewing_distance_m": 4.0
+      },
+      "retrieval_query": "indoor fixed installation LED display conference room meeting room viewing distance 4m",
+      "language": "zh",
+      "profile_completeness": 0.7143,
+      "profile_missing": [
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true,
+        "viewing_distance_m": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": false
+      },
+      "hard_capture_rate": 0.75
+    },
+    {
+      "id": "g067",
+      "query": "要防水的",
+      "tags": [
+        "multi_turn",
+        "zh",
+        "outdoor",
+        "waterproof"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "广告"
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "outdoor",
+        "installation": "fixed",
+        "purpose": "advertising"
+      },
+      "retrieval_query": "outdoor fixed installation LED display advertising billboard digital signage waterproof IP65",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "purpose": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "已有需求上下文，复用 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g068",
+      "query": "室内舞台用的，P3.9",
+      "tags": [
+        "multi_turn",
+        "zh",
+        "rental",
+        "pitch_specified"
+      ],
+      "expected_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "pixel_pitch_mm": 3.9
+      },
+      "predicted_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "installation": "rental",
+        "purpose": "stage",
+        "pixel_pitch_mm": 3.9
+      },
+      "retrieval_query": "indoor rental LED display stage performance pixel pitch 3.9mm",
+      "language": "zh",
+      "profile_completeness": 0.5714,
+      "profile_missing": [
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": true,
+      "slot_match_rate": 1.0,
+      "slot_details": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "pixel_pitch_mm": true
+      },
+      "expected_route": "normal",
+      "predicted_route": "normal",
+      "route_correct": true,
+      "route_reason": "明确场景推荐（有参数约束），进 NORMAL",
+      "hard_checks": {
+        "environment": true,
+        "installation": true,
+        "display_type": true,
+        "pixel_pitch": true
+      },
+      "hard_capture_rate": 1.0
+    },
+    {
+      "id": "g069",
+      "query": "价格太贵了，能便宜点吗",
+      "tags": [
+        "objection",
+        "price"
+      ],
+      "expected_slots": {},
+      "predicted_slots": {},
+      "retrieval_query": "LED display low price",
+      "language": "zh",
+      "profile_completeness": 0.1429,
+      "profile_missing": [
+        "display_type",
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {},
+      "expected_route": "normal",
+      "predicted_route": "agent",
+      "route_correct": false,
+      "route_reason": "默认：无法确定简单程度，委托 Agent",
+      "hard_checks": {},
+      "hard_capture_rate": null
+    },
+    {
+      "id": "g070",
+      "query": "你们公司在哪里？怎么联系你们",
+      "tags": [
+        "others",
+        "company_info"
+      ],
+      "expected_slots": {},
+      "predicted_slots": {},
+      "retrieval_query": "你们公司在哪里？怎么联系你们",
+      "language": "zh",
+      "profile_completeness": 0.0,
+      "profile_missing": [
+        "display_type",
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {},
+      "expected_route": "normal",
+      "predicted_route": "agent",
+      "route_correct": false,
+      "route_reason": "默认：无法确定简单程度，委托 Agent",
+      "hard_checks": {},
+      "hard_capture_rate": null
+    },
+    {
+      "id": "g071",
+      "query": "你们的保修政策是怎样的",
+      "tags": [
+        "objection",
+        "warranty"
+      ],
+      "expected_slots": {},
+      "predicted_slots": {},
+      "retrieval_query": "你们的保修政策是怎样的",
+      "language": "zh",
+      "profile_completeness": 0.0,
+      "profile_missing": [
+        "display_type",
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {},
+      "expected_route": "fast",
+      "predicted_route": "fast",
+      "route_correct": true,
+      "route_reason": "纯参数查询，提取约束: 无额外约束",
+      "hard_checks": {},
+      "hard_capture_rate": null
+    },
+    {
+      "id": "g072",
+      "query": "你好",
+      "tags": [
+        "greeting"
+      ],
+      "expected_slots": {},
+      "predicted_slots": {},
+      "retrieval_query": "你好",
+      "language": "zh",
+      "profile_completeness": 0.0,
+      "profile_missing": [
+        "display_type",
+        "environment",
+        "purpose",
+        "installation",
+        "viewing_distance_m",
+        "target_size",
+        "budget_level"
+      ],
+      "profile_sufficient": false,
+      "slot_match_rate": 1.0,
+      "slot_details": {},
+      "expected_route": "fast",
+      "predicted_route": "fast",
+      "route_correct": true,
+      "route_reason": "寒暄/问候，模板回复",
+      "hard_checks": {},
+      "hard_capture_rate": null
+    }
+  ]
+}

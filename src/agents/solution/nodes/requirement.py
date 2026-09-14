@@ -10,84 +10,6 @@ from ....utils.ifp_intent import has_ifp_intent
 
 logger = logging.getLogger(__name__)
 
-# 中文数字转换表
-_CHINESE_DIGITS = {
-    "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
-    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
-    "百": 100, "千": 1000,
-}
-
-
-def _chinese_to_number(text: str) -> int:
-    """将中文数字转换为整数"""
-    if not text:
-        return 0
-    result = 0
-    temp = 0
-    for char in text:
-        if char in _CHINESE_DIGITS:
-            val = _CHINESE_DIGITS[char]
-            if val >= 100:
-                result = (result or 1) * val
-                temp = 0
-            else:
-                temp = temp * 10 + val
-    result += temp
-    return result
-
-
-def _parse_capacity_people(text: str) -> int:
-    """从文本中解析容纳人数"""
-    patterns = [
-        r'(?:大约|大概|约|差不多)?\s*能容纳\s*([零一二两三四五六七八九十百千\d]+)\s*个人?',
-        r'([零一二两三四五六七八九十百千\d]+)\s*个人?\s*(?:的|左右|上下)',
-        r'([零一二两三四五六七八九十百千]+)\s*人\s*(?:左右|上下)?',
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            # Try Arabic digits first
-            digit_match = re.search(r'(\d+)', match.group(1))
-            if digit_match:
-                return int(digit_match.group(1))
-            # Then try Chinese numerals
-            return _chinese_to_number(match.group(1))
-    return 0
-
-
-def _infer_size_from_capacity(text: str, requirement: Dict[str, Any]) -> Dict[str, Any]:
-    """从容纳人数推断尺寸和视距"""
-    # Treat both None and empty string as "missing" for inference
-    size_val = requirement.get("size") or ""
-    distance_val = requirement.get("distance") or ""
-    if size_val and distance_val:
-        return requirement
-    
-    inferred = dict(requirement)
-    people = _parse_capacity_people(text)
-    
-    if people > 0:
-        # 会议室/教室按每人1.5平米估算，加上走道余量
-        area = people * 1.5 + 5
-        if not inferred.get("size"):
-            inferred["size"] = f"约{area:.0f}平米"
-            logger.info(f"Inferred size '{inferred['size']}' from capacity: {people}人")
-        
-        # 观看距离推断
-        if not inferred.get("distance"):
-            if people <= 10:
-                inferred["distance"] = "2-4米"
-            elif people <= 20:
-                inferred["distance"] = "3-5米"
-            elif people <= 50:
-                inferred["distance"] = "4-7米"
-            else:
-                inferred["distance"] = "5-8米"
-            logger.info(f"Inferred distance '{inferred['distance']}' from capacity: {people}人")
-    
-    return inferred
-
-
 def infer_display_type(requirement: Dict[str, Any], messages: List) -> Optional[str]:
     """Infer display type (LED/IFP) from requirement and conversation context.
     
@@ -266,11 +188,9 @@ def understand_node(state: SolutionState) -> SolutionState:
                         if key not in new_req:
                             new_req[key] = value
 
-        # 规则推理补充：从容纳人数等推断尺寸和视距
+        # 【不再从容纳人数反推视距】这类"根据场景推测参数"是导致过早推荐/选错点间距的根因。
+        # 视距、固装租赁等工程参数只能来自客户原话的确定性解析；没有就由 Gate 询问。
         all_text = " ".join([m.get("content", "") for m in messages])
-        new_req = _infer_size_from_capacity(all_text, new_req)
-
-        logger.info(f"Understand: after _infer_size_from_capacity, new_req={new_req}")
 
         # Update state
         updates = {
@@ -291,97 +211,33 @@ def understand_node(state: SolutionState) -> SolutionState:
 
 
 def infer_parameters_node(state: SolutionState) -> SolutionState:
-    """Infer technical parameters from natural language requirements."""
-    requirement = state.get("requirement", {})
+    """Phase 5：技术参数推断统一委托给 ``parameter_inference`` 的权威规则表。
 
-    # Normalize indoor/outdoor to string values for consistent vector store matching
-    # (The vector store stores these as strings "True"/"False")
-    indoor = requirement.get("indoor")
-    outdoor = requirement.get("outdoor")
-    if indoor is True or indoor == "True":
-        requirement = {**requirement, "indoor": "True", "outdoor": "False"}
-    elif outdoor is True or outdoor == "True":
-        requirement = {**requirement, "indoor": "False", "outdoor": "True"}
-    else:
-        requirement = {**requirement, "indoor": "False", "outdoor": "False"}
-    
-    # Phase 11: Fix - use proper boolean check (strings "True"/"False" are truthy!)
-    def _bool(val):
-        return str(val).lower() == "true"
+    旧实现里这里还有一份独立的点间距/亮度/租赁规则（与
+    ``parameter_inference`` 的规则冲突），现已删除 —— 工程推断只有一个入口。
+    """
+    from ....rag.parameter_inference import parameter_inference_node
 
-    # Brightness inference
-    brightness_min = None
-    brightness_max = None
-    
-    if _bool(requirement.get("outdoor")) and not _bool(requirement.get("indoor")):
-        brightness_min = 4500  # Outdoor requires high brightness
-    elif _bool(requirement.get("indoor")) and not _bool(requirement.get("outdoor")):
-        brightness_max = 800  # Indoor should not be too bright
-    
-    # Pixel pitch and screen size inference based on viewing distance
-    pitch_min = None
-    pitch_max = None
-    inferred_screen_size = None
-    
-    distance_text = requirement.get("distance", "")
-    if distance_text:
-        # Extract numbers from distance text (handle "4m", "4米", "4米视距" etc.)
-        numbers = re.findall(r'\d+\.?\d*', distance_text)
-        logger.info(f"Infer parameters: distance_text={distance_text}, numbers={numbers}")
-        if numbers:
-            # Get the first meaningful number (distance in meters)
-            dist = float(numbers[0])
-            # If number is > 100, assume it's in mm, convert to meters
-            if dist > 100:
-                dist = dist / 1000
-            logger.info(f"Infer parameters: dist={dist}m")
-            
-            # Rough inference: pixel pitch should be ~1/1000 of viewing distance
-            if dist < 3:
-                pitch_max = 2.0  # Very close viewing needs fine pitch
-            elif dist < 10:
-                pitch_max = 4.0
-            elif dist < 30:
-                pitch_max = 10.0
-            else:
-                pitch_max = 16.0
-            
-            # Infer screen size based on viewing distance
-            # Formula: optimal viewing distance ≈ 2-3x screen diagonal
-            # For 4m distance: screen diagonal ≈ 1.3m - 2m (50" - 80")
-            # Common LCD sizes: 55", 65", 75", 86", 98", 110"
-            # For 4m: recommended 75" or 86"
-            # For 3m: recommended 65" or 75"
-            # For 5m+: recommended 86" or larger
-            if dist <= 3:
-                inferred_screen_size = "65-75英寸"  # 65-75 inch
-            elif dist <= 4:
-                inferred_screen_size = "75-86英寸"  # 75-86 inch
-            elif dist <= 6:
-                inferred_screen_size = "86-98英寸"  # 86-98 inch
-            else:
-                inferred_screen_size = "98英寸以上"  # 98+ inch
-            logger.info(f"Infer parameters: inferred_screen_size={inferred_screen_size}")
-    
-    # Rental inference
-    purpose = requirement.get("purpose", "")
-    is_rental = None
-    if any(kw in purpose for kw in ["租赁", "租用", "临时", "活动", "演出", "演唱会"]):
-        is_rental = True
-
-    return {
-        **state,
-        "inferred_brightness_min_nit": brightness_min,
-        "inferred_brightness_max_nit": brightness_max,
-        "inferred_pixel_pitch_min_mm": pitch_min,
-        "inferred_pixel_pitch_max_mm": pitch_max,
-        "inferred_screen_size": inferred_screen_size,
-        "inferred_is_rental": is_rental,
-    }
+    return parameter_inference_node(state)
 
 
 def clarify_node(state: SolutionState) -> SolutionState:
     """Ask the user to clarify missing requirements."""
+    # ── v2.0 Phase 4：Recommendation Ready Gate 已给出明确追问 → 直接使用 ──
+    # 旧启发式（按面积/人数反推视距等）保留在下面，但 Gate 判定为"未就绪"时
+    # 以 Gate 的问题为准，避免两套逻辑互相覆盖。
+    gate = state.get("recommendation_gate") or {}
+    gate_question = state.get("pending_question")
+    if gate.get("ready") is False and gate_question:
+        logger.info("Clarify: 使用 Recommendation Ready Gate 的追问: %s", gate_question)
+        return {
+            **state,
+            "pending_question": gate_question,
+            "recommendation": gate_question,
+            "next_action": "end",
+            "waiting_for_clarification": True,
+        }
+
     missing = state.get("missing_info", [])
     requirement = state.get("requirement", {})
     purpose = requirement.get("purpose", "")
@@ -620,37 +476,89 @@ def product_question_node(state: SolutionState) -> SolutionState:
     return others_node(state)
 
 
+def recommendation_gate_node(state: SolutionState) -> SolutionState:
+    """v2.0 Phase 4：Recommendation Ready Gate。
+
+    把"进入 Solution Agent"与"允许执行产品推荐"分开：
+      - ready → next_action="retrieve"，继续走检索 / 选型 / 计算 / 表达
+      - 未 ready → next_action="clarify"，本轮只问一个关键问题
+    """
+    from ....models.requirement import RequirementProfile
+    from ....rag.readiness import check_recommendation_ready
+
+    profile = state.get("requirement_profile")
+    if not isinstance(profile, RequirementProfile):
+        # 【关键】只信任"客户原话"的确定性解析结果。
+        # 旧实现直接 `from_legacy(state["requirement"])`，会把 Solution Agent
+        # 的 LLM 自行补出的 indoor/outdoor/distance 当成客户确认的事实，
+        # 导致"只知道室内外 + 场景"也能打开 Gate。现在：
+        #   - 确定性解析用户消息 → confirmed
+        #   - LLM 提取的 purpose（场景原话）→ 作为 confirmed 补进来
+        #   - LLM 提取的其它工程参数 → 一律忽略
+        from ....rag.query_understanding import extract_slots, merge_slots
+
+        confirmed_slots: Dict[str, Any] = {}
+        for msg in state.get("messages", []) or []:
+            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "type", "")
+            if role in ("user", "human"):
+                content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")
+                if content:
+                    confirmed_slots = merge_slots(
+                        confirmed_slots, extract_slots(str(content))
+                    )
+
+        profile = RequirementProfile.from_slots(
+            confirmed_slots, explicit_keys=set(confirmed_slots)
+        )
+        logger.debug("\n%s", profile.describe())
+
+        legacy = RequirementProfile.from_legacy(state.get("requirement") or {})
+        if legacy.purpose and not profile.purpose:
+            # 场景(purpose)是客户自由描述的客观事实，允许来自 LLM 提取；
+            # 但其它工程参数一概不采用。
+            profile.purpose = legacy.purpose
+            profile.sources["purpose"] = "confirmed"
+
+    decision = check_recommendation_ready(
+        profile, variant_seed=len(state.get("messages", []) or [])
+    )
+    logger.info(
+        "RecommendationGate: ready=%s missing=%s reason=%s",
+        decision.ready, decision.missing, decision.reason,
+    )
+
+    updates: Dict[str, Any] = {
+        "requirement_profile": profile,
+        "recommendation_gate": decision.to_dict(),
+    }
+    if decision.ready:
+        updates["next_action"] = "retrieve"
+        updates["pending_question"] = ""
+    else:
+        updates["next_action"] = "clarify"
+        updates["pending_question"] = decision.next_question or ""
+        # 兼容旧 clarify 启发式使用的 missing_info 结构
+        updates["missing_info"] = [
+            {
+                "environment": "whether it is indoors or outdoors",
+                "purpose": "the application scenario",
+                "installation_or_distance": "fixed installation or rental, and viewing distance",
+                "display_type": "the display type",
+                "width": "the screen width",
+                "height": "the screen height",
+            }.get(slot, slot)
+            for slot in decision.missing
+        ]
+        updates["waiting_for_clarification"] = True
+    return {**state, **updates}
+
+
 def detect_intent(message: str, state: SolutionState = None) -> str:
     """Detect the user's intent based on the message content.
-    
-    Returns intent type:
-    - "recommendation": user is describing needs or asking for product recommendations
-    - "product_question": user is asking about specific product features/specs
-    - "conversation": casual conversation
-    - "others": other questions outside the standard flow
+
+    Phase 5：统一入口 —— 规则优先，规则判不出时再交给 LLM。
+    返回 "recommendation" / "product_question" / "conversation" / "others"。
     """
-    from src.core.llm import get_llm
-    
-    intent_prompt = f"""Analyze the user message and return the intent type:
-- recommendation: user is describing needs or asking for product recommendations ("I need a meeting room display", "help me pick one", "need a rental screen")
-- product_question: user is asking about specific product specs, features, capabilities, model differences
-- conversation: greetings, casual chat, etc.
-- others: company info, business hours, warranty policy, business process questions, etc.
+    from ....rag.parameter_inference import detect_intent as _detect_intent
 
-User message: {message}
-
-Return the intent type only, nothing else."""
-    
-    try:
-        llm = get_llm(temperature=0)
-        response = llm.invoke(intent_prompt)
-        intent = response.content.strip().lower()
-        
-        # Validate intent
-        valid_intents = ["recommendation", "product_question", "conversation", "others"]
-        if intent not in valid_intents:
-            return "others"
-        return intent
-    except Exception as e:
-        logger.warning(f"detect_intent error: {e}")
-        return "others"
+    return _detect_intent(message, use_llm=True)
