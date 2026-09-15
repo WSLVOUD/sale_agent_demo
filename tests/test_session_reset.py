@@ -205,8 +205,15 @@ class TestMemoryRecommendationState:
 class _StubGraph:
     """返回固定结果的假 graph，用于单测 runner 的重置 / 持久化行为。"""
 
-    def __init__(self, response="Will the screen be indoors or outdoors?"):
+    def __init__(
+        self,
+        response="Will the screen be indoors or outdoors?",
+        next_action="ask",
+        solutions=None,
+    ):
         self.response = response
+        self.next_action = next_action
+        self.solutions = list(solutions or [])
         self.seen_state = None
 
     def invoke(self, state):
@@ -215,8 +222,8 @@ class _StubGraph:
             **state,
             "response": self.response,
             "requirements": dict(state.get("requirements") or {}),
-            "solutions": [],
-            "next_action": "ask",
+            "solutions": list(self.solutions),
+            "next_action": self.next_action,
         }
 
 
@@ -271,6 +278,35 @@ class TestRunnerClearsRequirements:
             assert graph.seen_state["requirements"] == CHURCH_REQUIREMENTS
             assert graph.seen_state["requirements_reset"] is False
             assert result["response"] == "Could you tell me the target screen size?"
+        finally:
+            memory.clear(session_id)
+
+    def test_empty_trigger_does_not_mark_recommendation(self):
+        """回归：next_action=trigger_solution 但没给出产品时，不能标记"已推荐"。
+
+        （实测日志里出现过 products=0 却 Marked recommendation delivered，
+        会让下一轮客户说"换个产品"时被误判成"看完推荐要换"。）
+        """
+        from src.memory.store import memory
+
+        session_id = "reset-empty-trigger-test"
+        memory.clear(session_id)
+        try:
+            runner = self._runner(
+                _StubGraph(response="Sure, let me find the right products for you...",
+                           next_action="trigger_solution", solutions=[])
+            )
+            runner.run(session_id, "I need a screen")
+            assert not memory.has_recommendation(session_id)
+
+            # 真的给出了产品才算
+            runner2 = self._runner(
+                _StubGraph(response="TW11-3216-P2.5 is our recommendation.",
+                           next_action="trigger_solution",
+                           solutions=[{"model": "TW11-3216-P2.5"}])
+            )
+            runner2.run(session_id, "indoor conference room, 5m, fixed")
+            assert memory.has_recommendation(session_id)
         finally:
             memory.clear(session_id)
 

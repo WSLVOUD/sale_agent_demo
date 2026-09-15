@@ -19,6 +19,8 @@ from src.rag.reply_composer import (  # noqa: E402
     acknowledge,
     availability_answer,
     compose_requirement_reply,
+    is_price_question,
+    price_policy_answer,
     requirement_echo,
 )
 from src.rag.readiness import question_for  # noqa: E402
@@ -136,6 +138,51 @@ class TestLlmAcknowledgement:
         )
         assert text.startswith("Happy to help with your smart classroom project.")
         assert text.endswith("Is the installation going to be indoors or outdoors?")
+
+
+class TestPriceQuestion:
+    """需求还没问清时客户问价格：先说"要确认产品才能报价"，紧接着继续问需求。"""
+
+    @pytest.mark.parametrize("message", [
+        "What is the price of smd screen wedth 2.5 feet",
+        "how much does it cost?",
+        "can you send me a quotation",
+        "这个多少钱",
+        "价格能便宜点吗",
+    ])
+    def test_price_question_detected(self, message):
+        assert is_price_question(message), message
+
+    @pytest.mark.parametrize("message", [
+        "indoor conference room",
+        "do you have P1.2 COB LED",
+        "fixed installation",
+    ])
+    def test_non_price_message(self, message):
+        assert not is_price_question(message), message
+
+    def test_policy_answer_varies_and_mentions_product_first(self):
+        texts = {price_policy_answer("en", seed) for seed in range(8)}
+        assert len(texts) >= 3
+        assert all("quot" in t.lower() or "price" in t.lower() for t in texts)
+
+    def test_price_policy_plus_next_question(self):
+        question = question_for("installation", "en", 0)
+        text = compose_requirement_reply(
+            answer=price_policy_answer("en", 0),
+            question=question,
+            slot="installation",
+            message="What is the price of smd screen wedth 2.5 feet",
+            language="en",
+            seed=0,
+        )
+        # 先回答价格问题，再继续问需求，且只问一个问题
+        assert "quot" in text.lower()
+        assert text.count("?") == 1
+        assert text.rstrip().endswith("?")
+
+    def test_chinese_policy(self):
+        assert "报价" in price_policy_answer("zh", 0)
 
 
 class TestNoSelfContradiction:
@@ -409,12 +456,16 @@ class TestSalesGraphAcksThenAsks:
 
         result = build_sales_graph().invoke(self._state(message))
 
-        # 场景识别正确（不是 restaurant）
-        assert result["requirements"].get("usage") == "smart class room"
+        # 场景识别正确（不是 restaurant）。
+        # M1 之后 requirements 是 RequirementProfile 的投影，usage 用的是规范化 token
+        assert result["requirements"].get("usage") == "classroom"
+        assert result["requirement_profile"].purpose == "classroom"
         assert result["intent"] == "need_query"
         # 先回应客户这句话，再追问；而不是只有一句追问
         assert result["response"].startswith(ack)
-        assert result["response"].endswith(result["pending_question"])
+        # 回应后可能带过渡语（客户同时问了报价），问句本体来自 Gate
+        tail = result["pending_question"].rsplit("—", 1)[-1].strip().lower()
+        assert result["response"].lower().rstrip().endswith(tail)
         assert "restaurant" not in result["response"].lower()
         assert result["should_generate_solution"] is False
 

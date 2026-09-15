@@ -402,3 +402,153 @@ class TestScenarioAnswerIsNotOthers:
 
         assert extract_slots("church").get("purpose") == "church"
         assert detect_intent("church") == "recommendation"
+
+
+class TestObviousSceneSettlesEnvironment:
+    """实测反馈：客户说了 "It for church"，系统还在追问"室内还是室外"。
+
+    规则：会议室 / 教室 / 教堂 / 展厅 / 机场… = 室内，户外广告 / 体育场 = 室外，
+    这类"一眼就能定"的场景直接落定环境；舞台 / 演唱会 / 租赁仍然要问。
+    """
+
+    def _fake_llm(self, monkeypatch, usage: str):
+        import src.agents.sales.nodes.requirement as sales_req
+
+        class _Response:
+            content = '{"usage": "%s", "additional_requirements": [], "ack": ""}' % usage
+
+        class _FakeChat:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def invoke(self, *args, **kwargs):
+                return _Response()
+
+        monkeypatch.setattr(sales_req, "ChatOpenAI", _FakeChat)
+        return sales_req
+
+    def _turn(self, sales_req, message, requirements=None):
+        state = {
+            "messages": [
+                {"role": "user", "content": "i need a led display"},
+                {"role": "assistant", "content": "Which display type do you need?"},
+                {"role": "user", "content": message},
+            ],
+            "current_message": message,
+            "session_id": "obvious-scene-session",
+            "requirements": dict(requirements or {}),
+            "additional_requirements": [],
+            "intent": "industry",
+            "next_action": "ask",
+            "should_generate_solution": False,
+            "response": "",
+        }
+        return sales_req.requirement_mining(state)
+
+    def test_church_fills_indoor_and_moves_on(self, monkeypatch):
+        sales_req = self._fake_llm(monkeypatch, "church")
+        result = self._turn(
+            sales_req, "It for church", {"display_type": "LED", "size": "10米x5米"}
+        )
+
+        profile = result["requirement_profile"]
+        assert profile.environment == "indoor"
+        assert profile.sources.get("environment") == "explicit"
+        # 不再问室内外，改问下一个关键项（安装方式）
+        assert result["pending_slot"] == "installation"
+        assert "indoor" not in result["pending_question"].lower()
+        assert result["should_generate_solution"] is False
+
+    def test_outdoor_advertising_fills_outdoor(self, monkeypatch):
+        sales_req = self._fake_llm(monkeypatch, "outdoor advertising")
+        result = self._turn(sales_req, "outdoor advertising screen", {"display_type": "LED"})
+
+        profile = result["requirement_profile"]
+        assert profile.environment == "outdoor"
+        assert result["pending_slot"] != "environment"
+
+    def test_stage_still_asks_environment(self, monkeypatch):
+        """舞台 / 演唱会室内外都可能 → 必须继续问。"""
+        sales_req = self._fake_llm(monkeypatch, "stage performance")
+        result = self._turn(sales_req, "stage performance screen", {"display_type": "LED"})
+
+        assert result["pending_slot"] == "environment"
+        assert result["requirement_profile"].environment is None
+
+
+class TestPriceQuestionWhileCollecting:
+    """实测日志：客户问价格（intent=objection），系统回了 "Sure, let me find the right
+    products for you..."，既没回答价格、又被旧判定拖去推荐（0 个产品）。
+
+    正确行为：说明"需要先确认产品才能报价"，紧接着继续问需求，且绝不触发推荐。
+    """
+
+    MESSAGE = "What is the price of smd screen wedth 2.5 feet and 1.2m"
+
+    def _state(self, message=None, **overrides):
+        state = {
+            "messages": [{"role": "user", "content": message or self.MESSAGE}],
+            "current_message": message or self.MESSAGE,
+            "session_id": "price-session",
+            "intent": "objection",
+            "next_action": "ask",
+            "requirements": {
+                "usage": "showroom",
+                "location_type": "室内",
+                "indoor": True,
+                "display_type": "LED",
+                "size": "1.2192米宽",
+            },
+            "additional_requirements": [],
+            "should_generate_solution": False,
+            "response": "",
+            "pending_question": "Should I quote this as a fixed install or as a rental solution?",
+            "pending_slot": "installation",
+            "suppress_greeting": False,
+        }
+        state.update(overrides)
+        return state
+
+    def test_price_question_answers_policy_then_keeps_collecting(self):
+        from src.agents.sales.nodes.script_generator import script_generator
+
+        result = script_generator(self._state())
+
+        assert result["next_action"] == "ask"
+        assert result["should_generate_solution"] is False
+        # 先说明"要确认产品才能报价"
+        assert "quot" in result["response"].lower()
+        # 紧接着继续问需求（同一个待问项；引导语后面的问句首字母会被小写化）
+        assert result["response"].rstrip().lower().endswith(
+            result["pending_question"].lower()
+        )
+
+    def test_price_question_does_not_trigger_solution_on_usage(self):
+        """回归：旧版这里会因为 requirements 里有 usage 就直接 trigger_solution。"""
+        from src.agents.sales.nodes.script_generator import script_generator
+
+        result = script_generator(self._state())
+        assert result["next_action"] != "trigger_solution"
+        assert result["response"] != "Sure, let me find the right products for you..."
+
+    def test_price_question_still_triggers_when_gate_ready(self):
+        from src.agents.sales.nodes.script_generator import script_generator
+
+        result = script_generator(self._state(should_generate_solution=True))
+        assert result["next_action"] == "trigger_solution"
+
+    def test_need_query_does_not_trigger_on_usage_alone(self):
+        """回归：Gate 未就绪时，仅凭 usage 不得触发推荐。"""
+        from src.agents.sales.nodes.script_generator import script_generator
+
+        result = script_generator(
+            self._state(
+                message="we need a screen for the showroom",
+                intent="need_query",
+                pending_question="",
+                pending_slot="",
+            )
+        )
+        assert result["next_action"] == "ask"
+        assert result["should_generate_solution"] is False
+        assert result["response"]

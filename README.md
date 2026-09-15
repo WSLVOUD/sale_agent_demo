@@ -68,6 +68,8 @@ LLM 最终销售话术（全程仅 1 次）
 
 系统只认"客户说过的事实"（`confirmed`）打开 Gate；规则估算、场景默认、LLM 自行补全的字段一律标记为 `inferred`，只能用于打分提示，不能作为推荐依据。
 
+环境的唯一例外：**会议室 / 教室 / 教堂 / 展厅 / 机场… 这类场景本身就等于室内，户外广告 / 体育场等于室外**，系统直接落定环境、不再追问"室内还是室外"；舞台 / 演唱会 / 租赁这类室内外都可能，仍然要问。
+
 ### 职责边界（v2.0 核心原则）
 
 | 角色 | 允许做 | 不允许做 |
@@ -91,6 +93,8 @@ LLM 最终销售话术（全程仅 1 次）
 | `src/agents/sales/question_planner.py` | 需求采集顺序（一次只问一个高价值问题） |
 | `src/rag/session_switch.py` | 会话内需求重置检测（换产品 / 换项目 / 改需求） |
 | `src/rag/reply_composer.py` | "先回应客户 + 再追问需求"的组合回复（不增加 LLM 调用） |
+| `src/models/legacy_adapter.py` | RequirementProfile → 旧字段的**只读**兼容层（单向投影） |
+| `src/rag/company_info.py` | 公司 / 办事处 / 地址类提问的照实回答（读 `company_profile.txt`） |
 
 ### 行为变化（相对旧版）
 
@@ -110,6 +114,14 @@ LLM 最终销售话术（全程仅 1 次）
 - **回复绝不自相矛盾**：拼装回复时，如果"先回应"的内容已经确认了接下来要追问的那一项，就换成中性回应（复述也会跳开这一项），保证不会出现"刚确认完又问同一件事"。
 - **回应语言跟策略一致**：需求抽取那一次调用会带上语言要求（默认策略下要求纯英文），并且中文回应在英文策略下会被直接丢弃 —— 之前出现过 `Sello 你好，很高兴认识你。Will it be an indoor or outdoor setup?` 这种中英混排。
 - **短期记忆上限 20 → 50**：每会话保留的对话消息从最近 20 条提升到最近 50 条（`src/memory/store.py::MAX_MEMORY_SIZE`、`src/memory/enhanced.py::MAX_SHORT_TERM_MESSAGES`），多轮选型对话不会过早丢掉前文；各节点的 LLM 提示仍只取最近 3~6 条，不会因为窗口变大而增加 token 开销。
+- **一眼室内/室外的场景直接落定环境**：会议室 / 教室 / 门店 / 展厅 / 博物馆 / 大厅 / 指挥中心 / 办公室 / 医院 / 银行 / 酒店 / 餐厅 / 机场 / 展会 / 教堂 → 室内，户外广告 / 体育场馆 → 室外，不再追问"室内还是室外"；舞台 / 演唱会 / 租赁这类室内外都可能，仍会问。
+- **需求没问清时问价格 → 先说明报价规则，紧接着继续问需求**：客户在需求采集阶段问 `What is the price...` / `多少钱` 时，回复是"价格要按具体型号和箱体配置来算，确认好产品后马上报价" + 当前那个待问项（一次只问一个），不再答非所问或直接去推荐。
+- **公司 / 办事处 / 经销商 / 地址类提问 → 严格按 `data/company_profile.txt` 照实回答**：这类问题会回答"我们公司是 iSEMC，位于 Shenzhen, China，这是唯一的所在地"（+ 继续问需求），不会凭空说"有当地代表"；也不会再被"有没有某规格"的核实逻辑抢答。
+- **追问话术更口语化、连续多轮不重复**：安装方式的问法扩到英文 8 句 / 中文 6 句（"Quick one — fixed install or rental?"、"Just so I quote the right setup…"），轮换步长按"客户说过第几句话"推进，连续 8 轮不会出现同一句；**回答完客户的问题（公司 / 价格 / 规格核实）之后再追问会带自然过渡**（"Meanwhile —"、"By the way —"、"On that note —"），不再像书面条款那样硬接问句。
+- **三套需求状态统一为一套（Profile 是唯一真相）**：`RequirementProfile` 成为唯一主状态 —— 每轮只做"加载已持久化的 Profile + merge 本轮消息"，旧 `requirements` 由 `src/models/legacy_adapter.py` **单向投影**生成（不再反向重建、不会漂移、线索字段也不会"复活"）；Solution 直接消费 Sales 传下来的 Profile，不再自己解析对话重建需求。
+- **来源四态**：`confirmed`（客户明说）/ `scenario_derived`（会议室、教堂、户外广告、体育场等由客户原话场景直接判定）/ `default`（系统默认，如场景默认固装）/ `inferred`（算法估算）。前三者可用于打开 Ready Gate，`default` 只参与打分，`inferred` 永远不能当客户确认。
+- **推荐只有一道闸门**：全项目里 `should_generate_solution` 只能由 Ready Gate 置为 `True`；Gate 抛异常时显式安全降级（不推荐）；`required_met` / `required_missing` 降级为 Gate 结果的投影，旧的 `should_trigger_solution()` / `REQUIRED_KEYS` 判定已删除。
+- **室外点间距边界 P6 及以上，默认首选 P6**：室外场景推断出的点间距下限抬到 6.0mm（上限取目录最粗档 P10），P2.5~P5 的细间距只用于室内 / 近距离；推荐打分对室外改成"越接近下限（P6）越高分"，所以不管视距 5m 还是 50m，**首选都是 P6 档**（如 `TW11-OD-P6`），P8 / P10 作为备选。客户自己点名了点间距（P8、甚至 P2.5）时一律按客户的要求走，不受这条边界影响。确定性校验里也加了 `outdoor_pitch_boundary` 这一项。
 - **客户只报一个长度时会先确认方向**：客户回 `129,2cm` / `1292 mm` / `51 inch` 这类裸尺寸时，系统记为"尺寸线索"并追问"这是宽度、高度还是对角线？"（把客户给的数字填进问题里）；客户回"宽度/高度"即落成对应尺寸，"对角线"则回到问宽高 —— 全程不替客户猜。
 - **一句里给出两个尺寸也能同时接住**：支持"数字 + 单位 + 方向词"的两种语序（`45cm is the width` / `width is 45cm` / `长1.29米，宽0.45米`），并把客户口中的"长/长边(length)"理解为水平方向的"宽"——当一句话里同时出现"长 + 宽"时，长边落成宽、另一条边落成高（`129,2cm us the length and 45xm is width` → 129.2 cm 宽 × 45 cm 高）。`45xm` 这类把 `cm` 打成 `xm` 的笔误也会纠正。
 - **报需求的话不会被当成"闲聊问题"**：客户回答室内外 / 安装方式 / 视距 / 尺寸（如 `129,2cm`、`about 100 feet`）时，一律留在需求采集流程；之前会被判成 `others` 走自由问答，在 Gate 未通过时就把 indoor/outdoor 各系列型号一股脑倒出来。
@@ -131,6 +143,11 @@ LLM 最终销售话术（全程仅 1 次）
 - 客户回答裸尺寸 `129,2cm` 时：既没解析出尺寸，又被 `classify` 判成 `others` → 绕到自由问答，Gate 未通过就把 `TW31-COB-P0.9H / TW31-HOD-P5.7E …` 等型号全列了出来。现在裸尺寸会变成"尺寸线索 + 方向确认追问"，报需求的句子也不会再走自由问答。
 - 客户答 `129,2cm us the length and 45xm is width`（一句里两个尺寸）时：两个数字一个都没解析到，系统把刚问过的方向问题又问了一遍，回复还自相矛盾（先复述尺寸、再问这个尺寸是什么）。现在两个尺寸会分别落成宽 129.2 cm / 高 45 cm，且 `size_axis` 也纳入"不让回应与追问打架"的护栏。
 - 尺寸被误判成观看距离：`宽度 1.29m` 曾解析出"视距 1.29 m"，而十进制视距还会被从小数点后面重新匹配（`1.29米 → 29 米`）。两处都已修正。
+- 客户说了 `It for church` 这种"一眼室内"的场景，系统仍在追问"室内还是室外"；现在这类场景直接落定环境，只对真正有歧义的场景（舞台 / 演唱会 / 租赁）发问。
+- 客户在采集需求阶段问价格时，`script_generator` 的异议分支还留着旧判定 `should_trigger or requirements.get("usage")` —— 只要需求里已有场景就直接 `trigger_solution`，于是客户听到 "Sure, let me find the right products for you..."（实际 0 个产品），价格没答、需求也没继续问。现在推荐只由 Ready Gate 决定，该分支改为"报价规则 + 继续问需求"；同时删掉了 `_infer_from_message()` 那套"人数 → 面积 → 视距"的估算代码（过早推荐的老根因，已无调用方）。
+- `trigger_solution` 但产品数为 0 时也会被标记成"已推荐"，会让下一轮"换个产品"被误判；现在只有真的给出产品才标记。
+- 客户问 "Do you have a representative in western India" 时，`availability_answer` 只凭句子里有 LED 就回了 `Yes — we do carry an LED.`：既答非所问、又凭空说 Yes。现在公司类问题一律交给 `src/rag/company_info.py` 按公司信息照实回答；"有没有某规格"也必须**带具体规格**（点间距 / COB / HDR / 防水 / 型号）才回答，泛问不再乱说 Yes。
+- 公司信息此前完全没被问答链路使用（连 `company_profile.txt` 里的 `Location: Shenzhen, China` 都没解析）——现在 `CompanyProfile` 增加 `location`、兼容 `Company description` 键，并新增公司信息问答模块。
 
 ---
 
@@ -581,7 +598,7 @@ RESPONSE_LANGUAGE_POLICY=en          # en=始终英语（默认）；auto=跟随
 | Phase 10 | Memory 分层（requirements / history 分离） | ✅ 完成 |
 | Phase 11 | 性能优化（Embedding/向量库缓存） | ✅ 完成 |
 | Phase 12 | 可观测性（PerfTracker + 可选 Langfuse） | ✅ 完成 |
-| Phase 13 | 测试套件 | ✅ 完成（463 条通过，0 条跳过） |
+| Phase 13 | 测试套件 | ✅ 完成（531 条通过，0 条跳过） |
 | Phase 14 | Memory 持久化（SQLite） | 🚧 规划中 |
 | Phase 15 | 首次客户固定工作流（First Contact） | ✅ 完成 |
 

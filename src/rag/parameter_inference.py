@@ -41,6 +41,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PITCH_TOLERANCE = 0.5
 
+# 室外屏点间距区间：室外 LED 点间距 P6 及以上（业务规则）。
+# 细间距（P2.5~P5）只用于室内 / 近距离，室外场景不再推荐；
+# 上限取目录里室外系列的最粗档（P10）。
+OUTDOOR_MIN_PITCH_MM = 6.0
+OUTDOOR_MAX_PITCH_MM = 10.0
+
 
 # ── 唯一权威规则表 ──────────────────────────────────────────────────────────
 # 观看距离 → 推荐点间距区间（计划文档示例：5m → 2.5~3.0mm）
@@ -86,6 +92,28 @@ def pitch_range_for_distance(distance_m: Optional[float]) -> Tuple[Optional[floa
         if (value <= limit) if index == 0 else (value < limit):
             return pitch_min, pitch_max
     return 6.0, 10.0
+
+
+def clamp_pitch_for_environment(
+    environment: Optional[str],
+    pitch_min: Optional[float],
+    pitch_max: Optional[float],
+) -> Tuple[Optional[float], Optional[float]]:
+    """按使用环境收窄点间距区间：室外屏下限抬到 P6（室内不变）。
+
+    例：室外 + 5m 视距，距离表给的是 1.5~3.0mm（那是室内口径），
+    这里会改成 6.0~10.0mm（P6 / P8 / P10 都合适）。
+    """
+    if str(environment or "").strip().lower() != "outdoor":
+        return pitch_min, pitch_max
+    floor = OUTDOOR_MIN_PITCH_MM
+    ceiling = OUTDOOR_MAX_PITCH_MM
+    new_min = floor if pitch_min is None else max(float(pitch_min), floor)
+    new_max = ceiling if pitch_max is None else max(float(pitch_max), floor)
+    if new_max <= new_min:
+        # 距离档位给的上限比室外下限还细（例如 5m → 1.5~3.0）→ 用室外上限
+        new_max = ceiling
+    return new_min, min(new_max, ceiling)
 
 
 def brightness_range_for_environment(
@@ -183,8 +211,30 @@ def infer_technical_parameters(facts: Dict[str, Any]) -> Dict[str, Any]:
         pitch_min = float(explicit_pitch) - tolerance
         pitch_max = float(explicit_pitch) + tolerance
         source["pixel_pitch"] = "explicit"
-    elif pitch_min is not None:
-        source["pixel_pitch"] = "inferred_from_distance"
+        if (
+            str(environment or "").strip().lower() == "outdoor"
+            and float(explicit_pitch) < OUTDOOR_MIN_PITCH_MM
+        ):
+            # 客户点名了比室外下限更细的点间距：尊重客户（可能是半户外/近距离），
+            # 但记一条日志，方便复盘
+            logger.warning(
+                "客户指定室外点间距 P%s 低于室外下限 P%s（按客户要求保留）",
+                explicit_pitch, OUTDOOR_MIN_PITCH_MM,
+            )
+    else:
+        # 推断区间按环境收窄：室外屏 P6 及以上
+        clamped_min, clamped_max = clamp_pitch_for_environment(
+            environment, pitch_min, pitch_max
+        )
+        if (clamped_min, clamped_max) != (pitch_min, pitch_max):
+            source["pixel_pitch"] = "inferred_outdoor_min_p6"
+            logger.info(
+                "室外点间距边界生效：%s~%smm → %s~%smm",
+                pitch_min, pitch_max, clamped_min, clamped_max,
+            )
+        elif pitch_min is not None:
+            source["pixel_pitch"] = "inferred_from_distance"
+        pitch_min, pitch_max = clamped_min, clamped_max
 
     # 客户显式指定亮度下限 → 覆盖推断值
     explicit_brightness = facts.get("brightness_min")
@@ -251,13 +301,36 @@ FACT_EXTRACTION_PROMPT = """你是一名需求事实提取器。请从客户消�
 3. 只输出 JSON。"""
 
 
-def extract_requirements(message: str, existing: Dict = None) -> Dict[str, Any]:
-    """LLM 事实提取（只提取事实，不做工程推断）。
+def _rule_slots_from_message(message: str) -> Dict[str, Any]:
+    """纯规则提取槽位（不调用 LLM）。"""
+    from src.rag.query_understanding import extract_slots
 
-    返回 ``{"requirement": {...}}``，键与 Requirement Profile 对齐。
-    失败时返回空字典，调用方应回退到规则提取（``extract_slots``）。
+    slots = extract_slots(message or "")
+    return {
+        key: value
+        for key, value in (slots or {}).items()
+        if not str(key).startswith("_") and value not in (None, "", [], {})
+    }
+
+
+def _requirement_from_slots(slots: Dict[str, Any]) -> Dict[str, Any]:
+    """槽位 → Sales 可读的 legacy requirements。"""
+    from src.models.legacy_adapter import profile_to_legacy
+    from src.models.requirement import RequirementProfile
+
+    profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+    return profile_to_legacy(profile)
+
+
+def extract_requirements(message: str, existing: Dict = None) -> Dict[str, Any]:
+    """提取客户事实：规则槽位为主，LLM 只补充规则没拿到的字段。
+
+    返回 ``{"requirement": {...}}``。即使 LLM 成功但返回全 null，
+    仍保留 extract_slots 解析出的 LED / 尺寸 / 室内外等事实。
     """
     existing = existing or {}
+    rule_slots = _rule_slots_from_message(message)
+    facts: Dict[str, Any] = dict(rule_slots)
     try:
         prompt = FACT_EXTRACTION_PROMPT.format(
             message=message,
@@ -270,11 +343,16 @@ def extract_requirements(message: str, existing: Dict = None) -> Dict[str, Any]:
         elif "```" in content:
             content = content.split("```", 1)[1].split("```", 1)[0]
         parsed = json.loads(content.strip())
-        facts = {k: v for k, v in parsed.items() if v not in (None, "", [], {})}
-        return {"requirement": facts}
+        llm_facts = {k: v for k, v in parsed.items() if v not in (None, "", [], {})}
+        for key, value in llm_facts.items():
+            facts.setdefault(key, value)
     except Exception as exc:
-        logger.warning("extract_requirements LLM failed, fallback to rules: %s", exc)
-        return {"requirement": {}}
+        logger.warning("extract_requirements LLM failed, keep rule slots: %s", exc)
+
+    requirement = _requirement_from_slots(facts) if facts else {}
+    for key, value in facts.items():
+        requirement.setdefault(key, value)
+    return {"requirement": requirement}
 
 
 # ── 兼容层：旧 API（保持既有调用方与测试可用）──────────────────────────────

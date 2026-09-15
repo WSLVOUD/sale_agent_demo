@@ -134,6 +134,23 @@ def validate_recommendation(
         if not checks["module_data_real"]:
             errors.append(f"{primary.model} 缺少模组数据")
 
+    # 5b. 室外点间距下限：室内外没点明点间距时，室外必须 P6 及以上
+    if (
+        primary is not None
+        and profile is not None
+        and profile.pixel_pitch_mm is None
+        and profile.environment in ("outdoor", "semi_outdoor")
+    ):
+        from src.rag.parameter_inference import OUTDOOR_MIN_PITCH_MM
+
+        ok = primary.pixel_pitch_mm >= OUTDOOR_MIN_PITCH_MM - 1e-6
+        checks["outdoor_pitch_boundary"] = bool(ok)
+        if not ok:
+            errors.append(
+                f"室外点间距低于 P{OUTDOOR_MIN_PITCH_MM:g}: "
+                f"{primary.model} = {primary.pixel_pitch_mm}mm"
+            )
+
     # 8/9. Cabinet / Module 数量是否正确（用 canonical 尺寸重算一遍）
     if calculation and primary is not None:
         expected_columns = -(-int(calculation["target_width_mm"]) // int(primary.cabinet_width_mm)) if primary.cabinet_width_mm else None

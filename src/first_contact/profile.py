@@ -24,6 +24,7 @@ class CompanyProfile:
     sales_name: str = ""
     position: str = ""
     company: str = ""
+    location: str = ""
     company_introduction: str = ""
     main_products: list[str] = field(default_factory=list)
     main_markets: list[str] = field(default_factory=list)
@@ -65,7 +66,9 @@ def _parse_profile_txt(text: str) -> CompanyProfile:
     profile.sales_name = extract("Sales Name")
     profile.position = extract("Position")
     profile.company = extract("Company")
-    profile.company_introduction = extract("Company Introduction")
+    profile.location = extract("Location")
+    # 兼容两种写法：Company Introduction / Company description
+    profile.company_introduction = extract("Company Introduction") or extract("Company description")
     profile.main_products = extract_lines("Main Products")
     profile.main_markets = extract_lines("Main Markets")
     profile.company_advantages = extract_lines("Company Advantages")

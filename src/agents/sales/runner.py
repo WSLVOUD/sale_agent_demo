@@ -131,7 +131,18 @@ class SalesAgentRunner:
         recommended_before = False
         if self.memory_store:
             if hasattr(self.memory_store, "get_requirement_profile"):
-                existing_profile = self.memory_store.get_requirement_profile(session_id)
+                profile_data = self.memory_store.get_requirement_profile(session_id)
+                # memory 返回的是 dict，需要转换成 RequirementProfile 对象
+                if profile_data:
+                    from ...models.requirement import RequirementProfile
+                    if isinstance(profile_data, dict):
+                        try:
+                            existing_profile = RequirementProfile.model_validate(profile_data)
+                        except Exception as e:
+                            logger.warning("[%s] Failed to load profile from memory: %s", session_id, e)
+                            existing_profile = None
+                    else:
+                        existing_profile = profile_data
             if hasattr(self.memory_store, "has_recommendation"):
                 recommended_before = self.memory_store.has_recommendation(session_id)
 
@@ -246,8 +257,10 @@ class SalesAgentRunner:
 
                 # 记录"本轮已经给过推荐"：下一轮客户说"想换个产品"时，
                 # 系统据此判断需要在同一会话里清空旧需求、重新采集。
+                # 注意：只有真的给出产品才算（空触发的 trigger_solution 不算，
+                # 否则会在客户还没看到任何产品时就被标记成"已推荐"）。
                 products = result.get("solutions") or []
-                if (products or result.get("next_action") == "trigger_solution") and hasattr(
+                if products and hasattr(
                     self.memory_store, "mark_recommendation_done"
                 ):
                     self.memory_store.mark_recommendation_done(session_id, products)

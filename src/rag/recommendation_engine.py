@@ -379,6 +379,10 @@ class RecommendationEngine:
         high = technical.get("pixel_pitch_max_mm")
         if low is None or high is None:
             return None
+        # 室外屏：默认首选落在下限（P6），只有客户点名了点间距才按客户的来
+        # （业务规则：室外点间距 P6 及以上，且优先给最细的 P6）
+        if str(getattr(profile, "environment", "") or "") == "outdoor":
+            return _graded_pitch_fit(model.pixel_pitch_mm, low, high, target_ratio=0.0)
         # 区间内按"性价比最优点"（区间 75% 位置）渐变打分：
         # 越靠近该点越高分，贴着区间边缘次之，越界快速衰减。
         return _graded_pitch_fit(model.pixel_pitch_mm, low, high)

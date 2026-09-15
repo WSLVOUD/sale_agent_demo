@@ -92,18 +92,22 @@ QUESTION_VARIANTS: Dict[str, Dict[str, tuple[str, ...]]] = {
     },
     "installation": {
         "en": (
-            "Is it a fixed installation, or do you need it for rental or events?",
-            "Will the screen be permanently installed, or used for rental/events?",
-            "Fixed install or rental — which one is it?",
-            "Is this a permanent installation or a rental setup?",
-            "Is this going to stay fixed on site, or is it for rental use?",
-            "Should I quote this as a fixed install or as a rental solution?",
+            "Is it a permanent install, or is it for rental/events?",
+            "Will the screen stay fixed on site, or is it a rental?",
+            "Just so I quote the right setup — is this a fixed install or a rental?",
+            "Fixed installation or rental — which one is it for you?",
+            "Is this a long-term installation, or do you need it for rental/events?",
+            "Should I plan this as a permanent install or a rental?",
+            "Quick one — fixed install or rental?",
+            "Permanent install or rental — which one fits your project?",
         ),
         "zh": (
             "是固定安装，还是租赁/活动用？",
             "这块屏是固装还是租赁？",
             "安装方式是长期固定，还是临时租赁？",
             "这块屏是固定在现场，还是要租用/活动用的？",
+            "简单确认下——固定安装还是租赁？",
+            "这个是长期固定的项目，还是租赁/活动用的？",
         ),
     },
     "viewing_distance": {
@@ -281,9 +285,39 @@ def _is_confirmed(profile: Any, field_name: str) -> bool:
     v2.0 Phase 4 的核心防呆：Gate 只能被"客户说过的事实"打开，
     不能被"系统猜出来的事实"打开 —— 否则会出现
     "只知道室内外 + 场景就直接推荐"以及"用估算视距选错点间距"。
+
+    M2 四态口径：explicit / confirmed / scenario_derived 都算"客户侧"；
+    default（系统默认）与 inferred（算法估算）不算。
     """
+    from src.models.requirement import CONFIRMED_SOURCES
+
     source = (getattr(profile, "sources", None) or {}).get(field_name)
-    return source in ("explicit", "confirmed")
+    return source in CONFIRMED_SOURCES
+
+
+def _environment_settled(profile: Any) -> bool:
+    """使用环境是否已经"确定"，不必再问客户。
+
+      - 客户明说过室内/室外            → 确定
+      - 场景本身就决定室内外（会议室 / 教室 / 教堂 / 户外广告 / 体育场…）→ 确定
+        （客户反馈：说了 church 还问"室内还是室外"很傻）
+      - 舞台 / 演唱会 / 租赁这类室内外都可能 → 不确定，继续问
+
+    注意：用来推断环境的那个场景本身也必须是**客户说过的**（confirmed）；
+    整套参数都是系统猜出来的时不在此列。
+    """
+    if not getattr(profile, "environment", None):
+        return False
+    if _is_confirmed(profile, "environment"):
+        return True
+    if not _is_confirmed(profile, "purpose"):
+        return False
+    try:
+        from src.rag.query_understanding import environment_from_purpose
+
+        return environment_from_purpose(getattr(profile, "purpose", None)) is not None
+    except Exception:  # pragma: no cover - 防御式
+        return False
 
 
 def check_recommendation_ready(
@@ -337,8 +371,9 @@ def check_recommendation_ready(
         missing.append("size_axis")
     if not getattr(profile, "environment", None):
         missing.append("environment")
-    elif not _is_confirmed(profile, "environment"):
-        # 环境必须由客户明确说出（室内/室外），不能只靠场景推断
+    elif not _environment_settled(profile):
+        # 环境要么客户明说，要么场景本身就能确定（会议室/教堂/户外广告…）；
+        # 舞台 / 演唱会 / 租赁这类室内外都可能，仍需追问
         missing.append("environment")
     if not getattr(profile, "purpose", None):
         missing.append("purpose")

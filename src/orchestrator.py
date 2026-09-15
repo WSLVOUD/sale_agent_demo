@@ -154,6 +154,38 @@ class DualAgentOrchestrator:
                 language=fc_language,
             )
 
+            # ── 记住触发首次接待的那句话里的需求 ──────────────────────────
+            # 首次接待仍然完整执行（不跳过、不进入 Sales Agent）。
+            # 用规则槽位固化客户已经说过的事实（LED / 8x6 feet / shop …），
+            # 下一轮追问时不再把这些当成没说过。
+            initial_requirements: Dict[str, Any] = {}
+            try:
+                from .models.requirement import RequirementProfile
+                from .rag.query_understanding import extract_slots
+
+                first_slots = {
+                    key: value
+                    for key, value in (extract_slots(message) or {}).items()
+                    if not str(key).startswith("_") and value not in (None, "", [], {})
+                }
+                if first_slots:
+                    profile = RequirementProfile.from_slots(
+                        first_slots, explicit_keys=set(first_slots)
+                    )
+                    if hasattr(self.memory_store, "set_requirement_profile"):
+                        self.memory_store.set_requirement_profile(session_id, profile)
+                    from .models.legacy_adapter import profile_to_legacy
+
+                    initial_requirements = profile_to_legacy(profile)
+                    self.memory_store.set_requirements(session_id, initial_requirements)
+                    logger.info(
+                        "[%s] Remembered first-contact requirements: %s",
+                        session_id, initial_requirements,
+                    )
+            except Exception as exc:
+                logger.warning("[%s] Failed to remember first-contact requirements: %s", session_id, exc)
+                initial_requirements = {}
+
             # 记录客户的首条消息 + 首次接待生成的消息到 memory
             # （否则后续轮次的历史里会缺失客户的第一句话）
             self.memory_store.add(session_id, "user", message)
@@ -186,7 +218,7 @@ class DualAgentOrchestrator:
                 "agent": "first_contact",
                 "route": "first_contact",
                 "complexity": "fixed_flow",
-                "requirements": {},
+                "requirements": initial_requirements,
                 "products": [],
                 "next_action": "first_contact_done",
             }

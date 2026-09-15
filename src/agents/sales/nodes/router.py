@@ -62,7 +62,10 @@ def router(state: SalesState) -> SalesState:
             message=customer_message,
             history=history,
             requirements=req,
-            additional_requirements=additional_reqs
+            additional_requirements=additional_reqs,
+            # 【M7】把 Sales 的 RequirementProfile 直接交给 Solution，
+            # 让它消费同一份需求，而不是自己再从对话重建一遍
+            profile=state.get("requirement_profile"),
         )
 
         # Extract products from result

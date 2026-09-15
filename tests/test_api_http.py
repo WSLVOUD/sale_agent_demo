@@ -110,25 +110,43 @@ class TestChatFirstContact:
         assert "user" in roles, "客户的首条消息必须写入记忆"
         assert roles.count("assistant") >= 2, "自我介绍与素材消息都应写入记忆"
 
+        # v2.0 Phase 优化：客户在首条消息中描述的需求必须被提取并存入记忆
+        # 这样第二轮 Sales Agent 不会重复询问已经说过的需求
+        requirements = history.get("requirements", {})
+        assert requirements, "客户首条消息中的需求必须被提取（即使 LLM 提取可能为空，但不能抛异常）"
+
         client.post("/memory/clear", json={"session_id": session_id}, headers=AUTH)
 
-    def test_second_turn_degrades_gracefully_without_llm(self, client):
-        """第二轮进入 Sales Agent；本环境无 LLM → 必须给出可用回复而不是 500"""
-        session_id = f"http-turn2-{int(time.time())}"
-        client.post(
+    def test_first_contact_extracts_requirements_for_second_turn(self, client):
+        """首次联系时客户描述的需求必须被提取，这样第二轮不会重复询问"""
+        session_id = f"http-req-{int(time.time())}"
+
+        # 第一轮：客户发送包含需求的消息
+        r1 = client.post(
             "/chat",
-            json={"session_id": session_id, "question": "Hi"},
+            json={"session_id": session_id, "question": "I need an LED screen for a meeting room with 15 people"},
             headers=AUTH,
         )
-        response = client.post(
+        assert r1.status_code == 200
+        assert r1.json()["route"] == "first_contact"
+
+        # 验证需求被提取并保存
+        mem = client.get(f"/memory/{session_id}", headers=AUTH).json()
+        requirements = mem.get("requirements", {})
+        assert requirements, "客户在首条消息中描述的需求必须被提取"
+        # 至少应该提取到 display_type=LED 和 purpose 相关的信息
+        assert requirements.get("display_type") == "LED" or requirements.get("purpose"), \
+            f"应提取到 LED 类型或用途信息，实际: {requirements}"
+
+        # 第二轮：客户继续对话
+        r2 = client.post(
             "/chat",
-            json={"session_id": session_id, "question": "I need an LED screen for a meeting room"},
+            json={"session_id": session_id, "question": "What's the brightness level?"},
             headers=AUTH,
         )
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["answer"], "即使 LLM 不可用也必须返回可用话术"
-        assert payload["route"] in ("fallback", "circuit_breaker", "human_handover", "ask", "others", "product_question")
+        assert r2.status_code == 200
+        # 第二轮进入 Sales Agent 或 Solution Agent，路由不应是 first_contact
+        assert r2.json()["route"] != "first_contact", "第二轮不应再触发 first_contact"
 
         client.post("/memory/clear", json={"session_id": session_id}, headers=AUTH)
 

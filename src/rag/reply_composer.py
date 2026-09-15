@@ -137,6 +137,25 @@ _CONNECTORS = {
 }
 
 # 实在没有可回应内容时的中性兜底（避免出现"只丢一个问题"的回复）
+# 刚"回答完客户的问题"（公司/价格/规格核实）之后再抛需求问题时的过渡语，
+# 直接硬接问句会很生硬（实测反馈："…from there. Is this a permanent installation…?"）
+_BRIDGES = {
+    "en": (
+        "Meanwhile —",
+        "By the way —",
+        "On that note —",
+        "While we're at it —",
+        "So I can point you to the right model —",
+    ),
+    "zh": (
+        "另外，",
+        "顺便问一下，",
+        "说到这个，",
+        "同时，",
+    ),
+}
+
+
 _ACK_GENERIC = {
     "en": (
         "Understood.",
@@ -438,6 +457,14 @@ def availability_answer(
     if not text or not any(re.search(p, text, re.IGNORECASE) for p in _AVAILABILITY_PATTERNS):
         return None
 
+    # 公司 / 办事处 / 地址类问题不是"有没有某规格"，交给 company_info 照实回答
+    # （实测 bug：客户问"western region 有没有你们的人"，这里回了一句
+    #  "Yes — we do carry an LED."）
+    from src.rag.company_info import is_company_question
+
+    if is_company_question(text):
+        return None
+
     slots = _slot_tokens(text)
     lang = _lang(language or reply_language(text))
     models = _catalog_models(str(data_dir or _default_data_dir()))
@@ -454,10 +481,22 @@ def availability_answer(
         return templates["unsure"]
 
     # 2) 客户问的是规格（点间距 / COB / HDR / 防水）
+    #    必须"有具体规格"才算可用性提问：只问"有没有 LED 屏"这种泛问，
+    #    回一句 "Yes — we do carry an LED." 没有信息量（实测 bug）
+    pitch = _asked_pitch(slots, text)
+    has_specific_spec = bool(
+        pitch
+        or slots.get("cob")
+        or slots.get("hdr")
+        or slots.get("waterproof")
+        or slots.get("brightness_min")
+    )
+    if not has_specific_spec:
+        return None
+
     spec = _spec_text(slots, lang, text)
     if not spec:
         return None
-    pitch = _asked_pitch(slots, text)
     matched = False
     for model in models:
         if pitch and not _pitch_matches(getattr(model, "pixel_pitch_mm", None), pitch):
@@ -477,6 +516,40 @@ def availability_answer(
     if pitch or slots.get("cob") or slots.get("hdr") or slots.get("waterproof"):
         return templates["unsure"]
     return None
+
+
+# ── 价格 / 报价类提问：需求没问清之前，先说"要确认产品和配置才能报价" ────────
+_PRICE_QUESTION_RE = re.compile(
+    r"(?<![a-z])(?:price|prices|pricing|cost|costs|quote|quotation|"
+    r"how much|discount|cheaper|expensive|budget)\b|"
+    r"价格|报价|多少钱|价钱|优惠|折扣|便宜|贵",
+    re.IGNORECASE,
+)
+
+_PRICE_POLICY_ANSWERS = {
+    "en": (
+        "Pricing depends on the exact model and cabinet configuration, so I need to confirm the product first — then I'll put together a quotation for you.",
+        "I can quote you properly once the model and cabinet layout are confirmed — let me pin those down first.",
+        "Prices are per configuration, so I'll confirm the right model first and follow up with the quotation.",
+        "The quotation depends on which model and configuration we land on — I'll confirm those details first, then price it up.",
+    ),
+    "zh": (
+        "价格要按具体型号和箱体配置来算，确认好产品之后我马上给您报价。",
+        "不同型号和配置价格差别比较大，我先把型号确认下来，随后给您准确报价。",
+        "报价需要先确定型号和箱体排布，我们先把需求确认清楚。",
+    ),
+}
+
+
+def is_price_question(message: str) -> bool:
+    """客户这句话是不是在问价格 / 报价。"""
+    return bool(_PRICE_QUESTION_RE.search(str(message or "")))
+
+
+def price_policy_answer(language: str = "en", seed: int = 0) -> str:
+    """"要先确认产品才能报价"的标准应答（多种说法轮换）。"""
+    variants = _PRICE_POLICY_ANSWERS.get(_lang(language)) or _PRICE_POLICY_ANSWERS["en"]
+    return variants[seed % len(variants)]
 
 
 def acknowledge(
@@ -505,6 +578,12 @@ def acknowledge(
     availability = availability_answer(message, language=lang, data_dir=data_dir)
     if availability:
         candidates.append(availability)
+    # 公司 / 办事处 / 地址类问题：按 data/company_profile.txt 照实回答
+    from src.rag.company_info import company_answer
+
+    company = company_answer(message, language=lang, seed=seed)
+    if company:
+        candidates.append(company)
     llm_cleaned = _clean_llm_ack(llm_ack, lang)
     if llm_cleaned:
         candidates.append(llm_cleaned)
@@ -559,6 +638,27 @@ def _lower_first_word(text: str) -> str:
     return text[0].lower() + text[1:]
 
 
+def _ack_is_customer_answer(message: str, data_dir: Optional[str] = None) -> bool:
+    """这一轮的"回应"是不是在**回答客户提出的问题**（公司 / 价格 / 规格核实）。
+
+    这类回应之后再抛需求问题需要过渡语；而"复述客户刚说的需求"（Got it — a
+    church.）直接接问句是自然的。
+    """
+    text = str(message or "")
+    if not text:
+        return False
+    if is_price_question(text):
+        return True
+    try:
+        from src.rag.company_info import is_company_question
+
+        if is_company_question(text):
+            return True
+    except Exception:  # pragma: no cover - 防御式
+        pass
+    return bool(availability_answer(text, data_dir=data_dir))
+
+
 def compose_requirement_reply(
     *,
     answer: str = "",
@@ -606,7 +706,16 @@ def compose_requirement_reply(
         if lang == "en":
             tail = _lower_first_word(tail)
         return f"{answer} {connectors[seed % len(connectors)]} {tail}".strip()
-    return f"{ack} {question}".strip() if ack else question
+    if ack:
+        # 回应是"回答客户的问题"时，加一句自然过渡再接需求问题，避免生硬
+        if _ack_is_customer_answer(message, data_dir):
+            bridges = _BRIDGES[lang]
+            tail = _tail_question(question)
+            if lang == "en":
+                tail = _lower_first_word(tail)
+            return f"{ack} {bridges[seed % len(bridges)]} {tail}".strip()
+        return f"{ack} {question}".strip()
+    return question
 
 
 __all__ = [
@@ -614,6 +723,8 @@ __all__ = [
     "acknowledge",
     "availability_answer",
     "compose_requirement_reply",
+    "is_price_question",
+    "price_policy_answer",
     "reply_language",
     "requirement_echo",
 ]

@@ -397,12 +397,14 @@ async def clear_memory(request: ClearMemoryRequest, api_key: str = Depends(_veri
 
 @app.get("/memory/{session_id}")
 async def get_memory(session_id: str, api_key: str = Depends(_verify_api_key)):
-    """获取指定会话的聊天历史。"""
+    """获取指定会话的聊天历史和需求。"""
     messages = memory.get_history(session_id)
+    requirements = memory.get_requirements(session_id)
     return {
         "session_id": session_id,
         "count": len(messages),
-        "messages": messages
+        "messages": messages,
+        "requirements": requirements,
     }
 
 

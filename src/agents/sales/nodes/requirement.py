@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..state import SalesState
 from ....config import config
+from ....models.legacy_adapter import rebuild_legacy_view
 from ....utils.ifp_intent import has_ifp_intent, user_messages_text
 
 logger = logging.getLogger(__name__)
@@ -50,17 +51,21 @@ def _parse_number(text: str) -> int:
     return 0
 
 
-REQUIRED_KEYS = ["usage"]  # 最少只需要知道使用场景
-OPTIONAL_KEYS = ["location_type", "viewing_distance", "size", "brightness", "resolution"]
-
 ADDITIONAL_CONTEXT_KEYS = ["pixel_pitch", "rental", "quick_install", "indoor", "outdoor"]
 
 # 场景分类 - 用于检测上下文是否发生重大变化
+# 注意：M1 之后 requirements 是 RequirementProfile 的投影，usage 可能是规范化 token
+# （conference / church / advertising …），所以这里两套写法都要认。
 SCENE_CATEGORIES = {
-    "meeting": ["会议室", "会议", "教室", "培训", "教学", "学校", "课堂"],
-    "church": ["教堂", "礼拜", "宗教", "礼拜堂"],
-    "stage": ["舞台", "演唱会", "演出", "表演", "剧场"],
-    "outdoor": ["室外", "户外", "露天", "外墙", "广场", "体育场"],
+    "meeting": [
+        "会议室", "会议", "教室", "培训", "教学", "学校", "课堂",
+        "conference", "classroom", "office", "control_room", "hotel",
+        "restaurant", "airport", "exhibition", "showroom", "museum", "hall",
+        "retail", "hospital", "bank",
+    ],
+    "church": ["教堂", "礼拜", "宗教", "礼拜堂", "church"],
+    "stage": ["舞台", "演唱会", "演出", "表演", "剧场", "stage", "concert"],
+    "outdoor": ["室外", "户外", "露天", "外墙", "广场", "体育场", "advertising", "stadium"],
 }
 
 # 上下文相关字段 - 场景变化时应清除
@@ -158,13 +163,8 @@ def _rule_based_inference(message: str, requirements: dict) -> dict:
     return inferred
 
 
-def _missing_requirements(requirements: dict) -> list:
-    """Return a priority-ordered list of unmet requirement keys."""
-    missing = [k for k in REQUIRED_KEYS if not requirements.get(k)]
-    if len(missing) >= 2:
-        return missing
-    missing += [k for k in OPTIONAL_KEYS if not requirements.get(k)]
-    return missing
+# ── M1：Profile ↔ 旧 requirements 的适配层（实现在 src/models/legacy_adapter.py）──
+# 规则：旧字段只允许由 Profile 生成，绝不允许反过来修改 Profile。
 
 
 # 客户在"问问题"的标志（问号 / 疑问词 / 业务咨询词）
@@ -189,6 +189,16 @@ _ANSWER_VALUE_SLOTS = (
 )
 
 
+def _message_role_content(msg) -> tuple[str, str]:
+    if isinstance(msg, dict):
+        role = str(msg.get("role") or msg.get("type") or "")
+        content = str(msg.get("content") or "")
+        return role, content
+    return str(getattr(msg, "type", "") or getattr(msg, "role", "")), str(
+        getattr(msg, "content", "") or ""
+    )
+
+
 def _looks_like_requirement_answer(message: str, slots: dict) -> bool:
     """客户这句话是不是在"报需求"，而不是在"问问题"。
 
@@ -200,12 +210,6 @@ def _looks_like_requirement_answer(message: str, slots: dict) -> bool:
     if not text or _INTERROGATIVE_RE.search(text):
         return False
     return any(slots.get(key) for key in _ANSWER_VALUE_SLOTS)
-
-
-def should_trigger_solution(requirements: dict) -> bool:
-    """Trigger Solution Agent when all REQUIRED_KEYS are filled."""
-    has_all_required = all(requirements.get(k) for k in REQUIRED_KEYS)
-    return has_all_required
 
 
 def requirement_mining(state: SalesState) -> SalesState:
@@ -225,10 +229,14 @@ def requirement_mining(state: SalesState) -> SalesState:
     if state.get("requirements_reset"):
         conversation = f"user: {state.get('current_message', '')}"
     else:
-        conversation = "\n".join([
-            f"{getattr(msg, 'type', 'unknown')}: {getattr(msg, 'content', str(msg))}"
-            for msg in state["messages"][-3:]
-        ])
+        parts = []
+        for msg in state["messages"][-6:]:
+            role, content = _message_role_content(msg)
+            if not content:
+                continue
+            label = "user" if role in ("user", "human") else "assistant"
+            parts.append(f"{label}: {content}")
+        conversation = "\n".join(parts[-6:])
     
     # 回应语言必须跟系统策略一致：默认策略是"永远英文"，但下面的提示词是中文写的，
     # 模型很容易顺手用中文回一句（实测出现过
@@ -351,6 +359,7 @@ ack 的写法（很重要，销售不能只会追问）：
             state["intent"] = "need_query"
 
     # 上下文变化检测：当 usage 从一种场景类别变为另一种时，清除上下文相关字段
+    cleared_legacy_fields: list = []
     old_usage = pre_merge_requirements.get("usage", "")
     old_category = _get_scene_category(old_usage)
     new_usage = state["requirements"].get("usage", "")
@@ -368,8 +377,8 @@ ack 的写法（很重要，销售不能只会追问）：
             if field in state["requirements"]:
                 logger.info(f"Clearing stale field '{field}' from previous context ({old_category})")
                 state["requirements"].pop(field)
-        # 重新检查触发条件
-        state["should_generate_solution"] = should_trigger_solution(state["requirements"])
+                cleared_legacy_fields.append(field)
+        # 注意：这里**不再**重新计算是否推荐 —— 是否推荐只由下面的 Ready Gate 决定
 
     # IFP safety: only keep IFP in meeting room context
     # Context-aware: check current usage, not just message keywords
@@ -392,10 +401,10 @@ ack 的写法（很重要，销售不能只会追问）：
             logger.info(f"Removed IFP: current_category={current_category}, has_ifp_word={has_ifp_word}")
             state["requirements"].pop("display_type", None)
 
-    # Check trigger condition
-    state["should_generate_solution"] = should_trigger_solution(state["requirements"])
-
-    # ── v2.0 Phase 4：Recommendation Ready Gate 门控推荐 ────────────────────
+    # ── v2.0 Phase 4：Recommendation Ready Gate 门控推荐（唯一推荐闸门）──────
+    # 【M5/M11】是否推荐**只**由下面的 Gate 写入 should_generate_solution：
+    # 旧版这里还有一行 `should_trigger_solution(state["requirements"])`（只看 usage），
+    # 一旦 Gate 抛异常就会留下 True，从异常分支绕过闸门去推荐 —— 已删除。
     # 旧逻辑只要拿到 usage 就立刻推荐；现在由 Gate 决定：
     #   未就绪 → 不触发推荐，一次只问一个高价值问题
     #   已就绪 → 触发推荐（即使旧 usage 规则尚未满足，例如英文场景表达）
@@ -405,13 +414,66 @@ ack 的写法（很重要，销售不能只会追问）：
         from ....rag.readiness import check_recommendation_ready, first_missing_slot
         from ..question_planner import plan_next_question, should_ask_before_recommend
 
-        profile = RequirementProfile.from_legacy(state["requirements"])
+        # ── M1：RequirementProfile 是唯一主状态 ──────────────────────────────
+        # 优先加载 runner 从 memory 取出来的 Profile（上一轮的完整状态），
+        # 只有"老会话还没有 Profile"时才退回 from_legacy 构建一次。
+        # 旧实现每轮都 from_legacy 重建 → Profile 与 legacy requirements 之间
+        # 形成 Profile→legacy→Profile 的往返搬运（本次改造要消除的双向同步）。
+        loaded_profile = state.get("requirement_profile")
+        if isinstance(loaded_profile, RequirementProfile):
+            profile = loaded_profile
+        elif isinstance(loaded_profile, dict) and loaded_profile:
+            try:
+                profile = RequirementProfile.model_validate(loaded_profile)
+            except Exception:  # pragma: no cover - 防御式
+                profile = RequirementProfile.from_legacy(state["requirements"])
+        else:
+            profile = RequirementProfile.from_legacy(state["requirements"])
+
         # 本轮消息里解析出的字段是**客户刚说过的**，必须标记为 explicit，
         # 否则会被误判成"推断值"而挡住推荐（例如客户明说"固定安装"却被当成没说过）。
+        from ....rag.query_understanding import merge_slots
+
+        if state.get("requirements_reset"):
+            history_slots = {}
+        else:
+            history_slots = {}
+            for msg in state.get("messages") or []:
+                role, content = _message_role_content(msg)
+                if role in ("user", "human") and content:
+                    history_slots = merge_slots(history_slots, extract_slots(content))
         message_slots = extract_slots(current_msg_text)
+        combined_slots = merge_slots(history_slots, message_slots)
+        if combined_slots:
+            profile = profile.merge(
+                RequirementProfile.from_slots(
+                    combined_slots, explicit_keys=set(combined_slots)
+                )
+            )
         profile = profile.merge(
             RequirementProfile.from_slots(message_slots, explicit_keys=set(message_slots))
         )
+
+        # ── M1：旧字段的清理必须同步到 Profile ───────────────────────────────
+        # 场景切换时上面清掉了 legacy 的 display_type / size / brightness；
+        # 如果不同步到 Profile，下面的 adapter 又会把它们写回来（旧字段"复活"）。
+        _LEGACY_TO_PROFILE_FIELDS: dict = {
+            "display_type": ("display_type",),
+            "size": ("target_width_m", "target_height_m", "screen_size_hint_mm"),
+            "brightness": ("brightness_min_nit", "brightness_max_nit"),
+        }
+        for legacy_field in cleared_legacy_fields:
+            for profile_field in _LEGACY_TO_PROFILE_FIELDS.get(legacy_field, ()):
+                if getattr(profile, profile_field, None) is not None:
+                    logger.info("Clearing stale profile field '%s' (scene changed)", profile_field)
+                    setattr(profile, profile_field, None)
+                    profile.sources.pop(profile_field, None)
+
+        # IFP 安全规则同理：legacy 侧既然已经把 display_type 去掉了，Profile 也要去掉
+        if state["requirements"].get("display_type") in (None, "") and profile.display_type == "IFP":
+            logger.info("Clearing IFP display_type from profile (kept only in meeting-room context)")
+            profile.display_type = None
+            profile.sources.pop("display_type", None)
 
         # 客户只报了一个长度（"129,2cm"）时，等他指认这是宽 / 高 / 对角线：
         #   - 说"宽度" → 记成宽度；说"高度" → 记成高度
@@ -440,67 +502,11 @@ ack 的写法（很重要，销售不能只会追问）：
         state["requirement_profile"] = profile
         logger.debug("\n%s", profile.describe())
 
-        # 把本轮从消息里解析出的结构化事实回写到 requirements，
-        # 供下一轮 / 方案 Agent 复用（不覆盖 LLM 或客户已明确的既有值）。
-        # 没有这一步时，多轮对话每轮都会从零开始，LLM 不可用时会反复追问同一问题。
-        #
-        # 【关键防呆】只有"客户明确确认"的字段才允许持久化，
-        # 否则"能容纳15个人"估算出的视距会在下一轮被误当成客户说过的话。
-        facts = profile.to_facts()
-        confirmed = profile.sources
-
-        def _confirmed(field: str) -> bool:
-            return confirmed.get(field) in ("explicit", "confirmed")
-
-        writeback: dict = {}
-        environment = facts.get("environment")
-        if environment:
-            writeback["location_type"] = "室外" if environment in ("outdoor", "semi_outdoor") else "室内"
-            writeback["indoor"] = environment == "indoor"
-            writeback["outdoor"] = environment in ("outdoor", "semi_outdoor")
-        if facts.get("installation") and _confirmed("installation"):
-            writeback["is_rental"] = facts["installation"] == "rental"
-        if profile.purpose:
-            writeback["usage"] = profile.purpose
-        if profile.viewing_distance_m is not None and _confirmed("viewing_distance_m"):
-            writeback["distance"] = f"{profile.viewing_distance_m:g}米"
-        if profile.display_type and _confirmed("display_type"):
-            writeback["display_type"] = profile.display_type
-        if profile.pixel_pitch_mm is not None and _confirmed("pixel_pitch_mm"):
-            writeback["pixel_pitch"] = profile.pixel_pitch_mm
-        if profile.brightness_min_nit is not None and _confirmed("brightness_min_nit"):
-            writeback["brightness_min"] = profile.brightness_min_nit
-        if profile.has_target_size and (
-            _confirmed("target_width_m") or _confirmed("target_height_m")
-        ):
-            # 只写客户真正给过的那一维：缺高度时不能补成 "x0米"
-            # （实测日志里出现过 size='9.144米x0米' 这种被"补 0"的脏数据）
-            width, height = profile.target_width_m, profile.target_height_m
-            if width and height:
-                writeback["size"] = f"{width:g}米x{height:g}米"
-            elif width:
-                writeback["size"] = f"{width:g}米宽"
-            elif height:
-                writeback["size"] = f"{height:g}米高"
-        # 只报了一个长度、还没指认方向的线索，必须接着传下去，
-        # 否则下一轮客户回"是宽度"，系统已经忘了那个数字
-        if (
-            profile.screen_size_hint_mm is not None
-            and _confirmed("screen_size_hint_mm")
-        ):
-            writeback["screen_size_hint_mm"] = profile.screen_size_hint_mm
-        if profile.size_axis:
-            writeback["size_axis"] = profile.size_axis
-        for key, value in writeback.items():
-            if value not in (None, "", []):
-                state["requirements"].setdefault(key, value)
-
-        # 尺寸线索以本轮档案为准：线索已消费（指认成宽/高，或改给宽高）时
-        # 必须从 requirements 里删掉，否则 setdefault 会让它在下一轮"复活"
-        if profile.screen_size_hint_mm is None:
-            state["requirements"].pop("screen_size_hint_mm", None)
-        if not profile.size_axis:
-            state["requirements"].pop("size_axis", None)
+        # ── M1：旧字段由 Profile 单向投影出来（Legacy Adapter）────────────────
+        # 旧写法是 `setdefault`（Profile → legacy 只补不删 + legacy → Profile 重建），
+        # 属于双向同步：旧值会漂移、线索字段还会"复活"。
+        # 现在改为"按 Profile 重建这份视图"：旧模块读到的永远是 Profile 当前值。
+        rebuild_legacy_view(state["requirements"], profile)
 
         # 提问话术轮换：同一槽位有多种自然说法，按"会话 + 轮次"稳定地换一句，
         # 保证问的内容完全一致、措辞不重复。
@@ -551,11 +557,22 @@ ack 的写法（很重要，销售不能只会追问）：
     except Exception as exc:  # pragma: no cover - 防御式
         logger.warning("Requirement profile planning failed: %s", exc)
         state["pending_question"] = state.get("pending_question", "")
+        # 【M11】Gate 异常时必须安全降级：绝不推荐（旧代码会留下 legacy 的 True）
+        state["should_generate_solution"] = False
+        state["recommendation_gate"] = {
+            "ready": False,
+            "gate": "recommendation",
+            "missing": [],
+            "reason": f"gate_error: {exc}",
+            "next_question": None,
+        }
 
-    # Compute missing requirements
-    missing = _missing_requirements(state["requirements"])
-    state["required_met"] = len(missing) == 0 or len([k for k in REQUIRED_KEYS if state["requirements"].get(k)]) == len(REQUIRED_KEYS)
-    state["required_missing"] = missing[:2]
+    # ── M3：旧字段降级为"Gate 结果的投影"（只读兼容，不再参与任何判断）────────
+    # 旧写法用 REQUIRED_KEYS（只看 usage）自己算一遍，与 Gate 是两套标准；
+    # 现在 required_met / required_missing 只是 Gate 的镜像。
+    _gate = state.get("recommendation_gate") or {}
+    state["required_met"] = bool(_gate.get("ready", False))
+    state["required_missing"] = list(_gate.get("missing") or [])[:2]
 
     logger.info(f"requirement_mining: usage={state['requirements'].get('usage')}, should_generate_solution={state['should_generate_solution']}, requirements={state['requirements']}")
 

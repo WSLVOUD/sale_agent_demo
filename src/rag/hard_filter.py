@@ -284,6 +284,16 @@ def build_hard_constraints(
     if pitch_max is not None:
         pitch_max = float(pitch_max)
 
+    # ── 室外点间距边界：室外屏 P6 及以上 ──
+    # 客户没点明点间距时，室外场景直接把下限抬到 P6，
+    # 避免把 P2.5~P5 的细间距（室内/近距离口径）推荐给室外项目。
+    if exact_pitch is None and environment == "outdoor":
+        from src.rag.parameter_inference import clamp_pitch_for_environment
+
+        pitch_min, pitch_max = clamp_pitch_for_environment(
+            environment, pitch_min, pitch_max
+        )
+
     # ── brightness ──
     brightness_min = _first_not_none(req.get("brightness_min"), req.get("brightness_min_nit"))
     brightness_max = _first_not_none(req.get("brightness_max"), req.get("brightness_max_nit"))

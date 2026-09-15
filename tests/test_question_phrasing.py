@@ -97,6 +97,33 @@ class TestGateQuestionVaries:
         assert missing == {("installation", "viewing_distance")}
 
 
+class TestInstallationQuestionIsNaturalAndRotates:
+    """实测反馈：追问安装方式的话术偏僵硬、而且感觉每次都一样。"""
+
+    def test_variants_are_plentiful(self):
+        texts = {question_for("installation", "en", seed) for seed in range(12)}
+        assert len(texts) >= 6, texts
+
+    def test_all_variants_ask_fixed_or_rental(self):
+        for seed in range(12):
+            text = (question_for("installation", "en", seed) or "").lower()
+            assert "fixed" in text or "rental" in text, (seed, text)
+
+    def test_consecutive_turns_never_repeat(self):
+        """轮换步长为 1 → 连续 N 轮（N = 变体数）不重复同一句。"""
+        variants = QUESTION_VARIANTS["installation"]["en"]
+        texts = [question_for("installation", "en", seed) for seed in range(len(variants))]
+        assert len(set(texts)) == len(texts), texts
+
+    def test_variants_are_conversational(self):
+        """不能每条都像书面条款（抽查：至少有带口语过渡的问法）。"""
+        texts = [question_for("installation", "en", seed) or "" for seed in range(12)]
+        assert any(
+            text.startswith(("Just so", "Quick", "Should I"))
+            for text in texts
+        ), texts
+
+
 class TestMultiTurnWordingChanges:
     """同一会话连续追问时，措辞应随轮次变化（内容不变）"""
 

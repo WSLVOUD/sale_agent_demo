@@ -141,6 +141,7 @@ _DISPLAY_TYPE_KEYWORDS: Dict[str, tuple[str, ...]] = {
 _PURPOSE_KEYWORDS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("concert", ("演唱会", "音乐会", "concert", "konzert", "концерт", "コンサート"), "concert live event"),
     ("stage", ("舞台", "演出", "表演", "剧场", "stage", "performance", "bühne", "сцена"), "stage performance"),
+    ("wedding", ("婚礼", "婚宴", "婚庆", "结婚", "wedding", "marriage", "hochzeit", "свадьба", "結婚式"), "wedding event marriage"),
     ("control_room", ("指挥中心", "监控中心", "控制室", "中控室", "command center", "control room"), "control room command center"),
     ("classroom", ("教室", "培训室", "培训", "教学", "学校", "课堂", "classroom", "class room", "smart classroom", "training room", "school"), "classroom education training"),
     ("conference", ("会议室", "会议", "meeting room", "conference", "boardroom", "会議室"), "conference room meeting room"),
@@ -182,6 +183,8 @@ _INDOOR_FIXED_PURPOSES = frozenset({
     "conference", "classroom", "retail", "showroom", "museum", "hall",
     "control_room", "office", "hospital", "bank", "hotel", "restaurant", "airport",
     "exhibition",
+    # 教堂（church）几乎都是室内，客户反馈"说了 church 还问室内室外"很傻
+    "church",
 })
 
 # 仅在无显式室内/室外关键词时用于环境推断的场景
@@ -190,6 +193,28 @@ _OUTDOOR_PURPOSES = frozenset({"advertising", "stadium"})
 
 # 默认固装的场景（含户外广告 / 场馆；租赁必须显式说明）
 _FIXED_PURPOSES = _INDOOR_FIXED_PURPOSES | _OUTDOOR_PURPOSES
+
+# 室内外都可能、必须问客户的场景：
+#   stage / concert（舞台、演唱会，室内体育馆也可能）、rental（租赁流动场景）、wedding（室内外都可能）
+_AMBIGUOUS_ENVIRONMENT_PURPOSES = frozenset({"stage", "concert", "rental", "wedding"})
+
+
+def environment_from_purpose(purpose: Optional[str]) -> Optional[str]:
+    """场景 → 使用环境（只在"一眼就能定"时给值，否则返回 None 让系统去问）。
+
+    室内：会议室 / 教室 / 门店 / 展厅 / 博物馆 / 大厅 / 指挥中心 / 办公室 /
+          医院 / 银行 / 酒店 / 餐厅 / 机场 / 展会 / 教堂
+    室外：户外广告 / 体育场馆
+    其余（舞台、演唱会、租赁等）室内外都可能 → 返回 None，仍然要问客户。
+    """
+    name = str(purpose or "").strip().lower()
+    if not name or name in _AMBIGUOUS_ENVIRONMENT_PURPOSES:
+        return None
+    if name in _OUTDOOR_PURPOSES:
+        return "outdoor"
+    if name in _INDOOR_FIXED_PURPOSES:
+        return "indoor"
+    return None
 _DISTANCE_UNITS = (
     r"米|m\b|meters?|metres?|meter|metros?|mètres?|metern|метр(?:ов|а)?|メートル|メーター"
     # 英制单位：客户常用 "100 feet" / "30ft away" / "40 inches"
@@ -707,14 +732,23 @@ def extract_slots(message: str) -> Dict[str, Any]:
     purpose = _detect_purpose(lowered)
     if purpose:
         slots["purpose"] = purpose
+    
+    # 3b) 识别"play video"、"play music"这类应用描述为舞台/演出场景
+    if not purpose:
+        if any(kw in lowered for kw in ("play video", "play music", "display video", "show video")):
+            slots["purpose"] = "stage"
+            purpose = "stage"
 
     if "environment" not in slots:
-        if purpose in _OUTDOOR_PURPOSES:
-            slots["environment"] = "outdoor"
-            slots.setdefault("_inferred_slots", []).append("environment")
-        elif purpose in _INDOOR_FIXED_PURPOSES:
-            slots["environment"] = "indoor"
-            slots.setdefault("_inferred_slots", []).append("environment")
+        # 会议室 / 教室 / 教堂 / 展厅 / 机场 → 室内；户外广告 / 体育场 → 室外。
+        # 这类场景"一眼就能定"，客户反馈不该再追问室内外。
+        # 【M2】来源记为 scenario_derived（客户原话场景直接判定），
+        # 既不是"算法估算"，也不是"系统默认"，可以用于放行环境判定。
+        # 舞台 / 演唱会 / 租赁等室内外都可能 → 返回 None，继续问。
+        derived_environment = environment_from_purpose(purpose)
+        if derived_environment:
+            slots["environment"] = derived_environment
+            slots.setdefault("_scenario_derived", []).append("environment")
 
     # 4) 固装 / 租赁
     # 注意：这里的英文关键词必须整词匹配 —— "different" 里含 "rent"，
@@ -725,14 +759,13 @@ def extract_slots(message: str) -> Dict[str, Any]:
         slots["installation"] = "fixed"
     elif purpose in _FIXED_PURPOSES:
         # 会议室 / 教室 / 展厅 … 这类场景默认固装（租赁必须由客户显式说明）
-        # 注意：这是"系统默认"，不是客户确认 —— 记入 _inferred_slots，
-        # 供 Recommendation Ready Gate 判断时排除（否则会被当成客户已确认安装方式）。
+        # 【M2】来源记为 default（系统业务默认值）：可以参与打分，但不能单独放行 Gate。
         slots["installation"] = "fixed"
-        slots.setdefault("_inferred_slots", []).append("installation")
+        slots.setdefault("_default_slots", []).append("installation")
     elif slots.get("environment") in ("indoor", "outdoor"):
         # 已经确定使用环境但没有租赁信号 → 固装（租赁必须显式说明）
         slots["installation"] = "fixed"
-        slots.setdefault("_inferred_slots", []).append("installation")
+        slots.setdefault("_default_slots", []).append("installation")
 
     # 5) 观看距离 / 目标尺寸
     distance = _extract_viewing_distance(text)
@@ -802,31 +835,43 @@ def extract_slots(message: str) -> Dict[str, Any]:
 
 
 def merge_slots(base: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
-    """合并两轮槽位，并正确维护 ``_inferred_slots`` 的溯源。
+    """合并两轮槽位，并正确维护来源标记（M2 四态）。
 
-    关键：当**后面某一轮客户明确说出**某个字段时，该字段必须从历史
-    ``_inferred_slots`` 中移除 —— 否则前一轮"场景默认固装"这类推断值会一直
-    污染后续判定，出现"客户已经明说固装，系统仍当成没说过"的错误。
+    来源标记：
+      - ``_inferred_slots``    ：算法估算（不能放行 Gate）
+      - ``_scenario_derived``  ：客户原话场景直接判定（可以放行对应字段）
+      - ``_default_slots``     ：系统业务默认值（参与打分，不单独放行）
+
+    关键：当**后面某一轮客户明确说出**某个字段时，该字段必须从历史标记中移除
+    —— 否则前一轮"场景默认固装"这类值会一直污染后续判定，出现
+    "客户已经明说固装，系统仍当成没说过"的错误。
     """
+    markers = ("_inferred_slots", "_scenario_derived", "_default_slots")
     merged = dict(base or {})
-    incoming_inferred = {str(x) for x in (incoming.get("_inferred_slots") or [])}
+    incoming_marker: Dict[str, str] = {}
+    for marker in markers:
+        for key in incoming.get(marker) or []:
+            incoming_marker[str(key)] = marker
 
     for key, value in incoming.items():
-        if key == "_inferred_slots":
+        if key in markers:
             continue
         merged[key] = value
-        inferred_list = merged.get("_inferred_slots")
-        if key in incoming_inferred:
-            if inferred_list is None:
-                merged["_inferred_slots"] = [key]
-            elif key not in inferred_list:
-                inferred_list.append(key)
-        elif inferred_list and key in inferred_list:
-            # incoming 里这个字段是客户明说的 → 撤销历史的 inferred 标记
-            inferred_list.remove(key)
+        source_marker = incoming_marker.get(key)
+        for marker in markers:
+            current = merged.get(marker)
+            if marker == source_marker:
+                if current is None:
+                    merged[marker] = [key]
+                elif key not in current:
+                    current.append(key)
+            elif current and key in current:
+                # incoming 里这个字段是客户明说的 → 撤销历史标记
+                current.remove(key)
 
-    if not merged.get("_inferred_slots"):
-        merged.pop("_inferred_slots", None)
+    for marker in markers:
+        if not merged.get(marker):
+            merged.pop(marker, None)
     return merged
 
 

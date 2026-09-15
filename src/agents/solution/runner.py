@@ -131,6 +131,7 @@ class SolutionAgentRunner:
         history: List[Dict[str, Any]],
         requirements: Dict[str, Any] = None,
         additional_requirements: List[str] = None,
+        profile: Any = None,
     ) -> SolutionState:
         """Build the initial state for the agent."""
         # Normalize history
@@ -141,8 +142,19 @@ class SolutionAgentRunner:
                 and normalized_history[-1].get("content") == message):
             normalized_history = normalized_history[:-1]
 
-        # Process requirements
-        if requirements:
+        # ── M7：优先使用 Sales 传下来的 RequirementProfile ─────────────────────
+        # Solution 不再自己从对话重建需求；旧 requirement 字典只是 Profile 的投影。
+        from ...models.legacy_adapter import profile_to_solution_requirement
+
+        if profile is not None:
+            merged_requirement = profile_to_solution_requirement(profile)
+            if not merged_requirement and requirements:
+                merged_requirement = dict(requirements)
+            logger.info(
+                "Solution: 使用 Sales 的 RequirementProfile（%s 个字段），不再重建需求",
+                len(merged_requirement),
+            )
+        elif requirements:
             location = requirements.get("location_type", "")
             is_indoor = location in ("室内", "户内", "室内使用")
             is_outdoor = location in ("户外", "室外", "外面", "露天", "全户外", "半户外", "户外使用", "室外使用")
@@ -187,6 +199,9 @@ class SolutionAgentRunner:
         return {
             "messages": history + [{"role": "user", "content": message}],
             "requirement": merged_requirement,
+            # 【M7】Sales 的 RequirementProfile 直接进入 Solution state，
+            # recommendation_gate_node 会优先使用它（不再自己重建）
+            "requirement_profile": profile,
             "intent": current_intent,
             "current_message": message,
             "info_sufficient": False,
@@ -226,6 +241,7 @@ class SolutionAgentRunner:
         history: List[Dict[str, Any]] = None,
         requirements: Dict[str, Any] = None,
         additional_requirements: List[str] = None,
+        profile: Any = None,
     ) -> Dict[str, Any]:
         """Run the agent with a user message.
 
@@ -238,6 +254,7 @@ class SolutionAgentRunner:
             history: Conversation history
             requirements: Pre-extracted requirements from Sales Agent (optional)
             additional_requirements: Extra requirements for specialized analysis (optional)
+            profile: Sales Agent 的 RequirementProfile（M7：唯一需求来源）
 
         Returns:
             Dict with answer and metadata
@@ -277,7 +294,7 @@ class SolutionAgentRunner:
 
         # ── Step 2b: Agent Path ────────────────────────────────────────
         initial_state = self._build_initial_state(
-            message, history, requirements, additional_requirements
+            message, history, requirements, additional_requirements, profile
         )
 
         # 将路由层提取的约束注入 agent state（避免 LLM 重复推理）
@@ -364,6 +381,7 @@ class SolutionAgentRunner:
         self,
         message: str,
         history: List[Dict[str, Any]] = None,
+        profile: Any = None,
     ):
         """Stream the agent response.
         
@@ -375,7 +393,7 @@ class SolutionAgentRunner:
             Response chunks
         """
         history = history or []
-        initial_state = self._build_initial_state(message, history)
+        initial_state = self._build_initial_state(message, history, profile=profile)
 
         for event in self.graph.stream(initial_state):
             for node_name, node_result in event.items():

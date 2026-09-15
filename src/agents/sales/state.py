@@ -29,16 +29,18 @@ class SalesState(TypedDict):
     #   "resolution": str | None,
     # }
 
-    # Mining progress
-    required_met: List[str]        # 已确认的关键项
-    required_missing: List[str]   # 还差的关键项（按优先级排序）
+    # Mining progress（M3：这两个字段已降级为"Ready Gate 结果的投影"，
+    # 只用于旧调用方兼容，不再参与任何判断）
+    required_met: List[str]        # = Gate ready
+    required_missing: List[str]   # = Gate missing
     turn_count: int
 
     # Additional/custom requirements not in the predefined list
     # These will be passed to AI for analysis (pixel pitch, brightness, rental, etc.)
     additional_requirements: List[str]
 
-    # Trigger flag
+    # Trigger flag（M5：唯一写入方是 Recommendation Ready Gate；
+    # 其它模块只能读取，不得再自己判断是否推荐）
     should_generate_solution: bool
 
     # Sales script RAG

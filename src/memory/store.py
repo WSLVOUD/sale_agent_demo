@@ -121,13 +121,17 @@ class MemoryStore:
         return list(self._sessions[session_id].get("messages", []))
 
     def get_requirements(self, session_id: str) -> Dict[str, Any]:
-        """取累计需求。"""
+        """取累计需求（M10：旧字段，是 RequirementProfile 的**只读投影**）。
+
+        需求的主状态是 ``requirement_profile``；这里的 requirements 只在
+        "老会话还没有 Profile"时作为兜底输入使用，不再作为第二份真相。
+        """
         if session_id not in self._sessions:
             return {}
         return dict(self._sessions[session_id].get("requirements", {}))
 
     def set_requirements(self, session_id: str, requirements: Dict[str, Any]) -> None:
-        """覆盖写入累计需求。"""
+        """覆盖写入累计需求（M10：写入的是 Profile 的投影，见 legacy_adapter）。"""
         self._ensure(session_id)
         self._sessions[session_id]["requirements"] = dict(requirements or {})
 

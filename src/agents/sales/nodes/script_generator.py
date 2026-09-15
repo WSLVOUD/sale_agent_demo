@@ -7,45 +7,21 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..state import SalesState
 from ....core.llm import get_llm
+from ....rag.reply_composer import (
+    compose_requirement_reply,
+    is_price_question,
+    price_policy_answer,
+    reply_language,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# 中文数字转换表
-_CHINESE_DIGITS = {
-    "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
-    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
-    "百": 100, "千": 1000,
-}
+def _is_company_question(message: str) -> bool:
+    """公司 / 办事处 / 地址类提问（必须按 company_profile.txt 照实回答）。"""
+    from ....rag.company_info import is_company_question
 
-
-def _chinese_to_number(text: str) -> int:
-    """将中文数字转换为整数"""
-    if not text:
-        return 0
-    result = 0
-    temp = 0
-    for char in text:
-        if char in _CHINESE_DIGITS:
-            val = _CHINESE_DIGITS[char]
-            if val >= 100:
-                result = (result or 1) * val
-                temp = 0
-            else:
-                temp = temp * 10 + val
-    result += temp
-    return result
-
-
-def _parse_number(text: str) -> int:
-    """解析字符串中的数字，支持中文和阿拉伯数字"""
-    digit_match = re.search(r'(\d+)', text)
-    if digit_match:
-        return int(digit_match.group(1))
-    cn_match = re.search(r'[一二两三四五六七八九十百千]+', text)
-    if cn_match:
-        return _chinese_to_number(cn_match.group())
-    return 0
+    return is_company_question(message)
 
 
 GREETING_PROMPT = """You are a sales advisor for LED and LCD display products, speaking with a customer face-to-face.
@@ -57,138 +33,6 @@ Requirements:
 4. Plain text only, no markdown
 
 Output the reply directly:"""
-
-
-# Requirement question generator — only asks about key missing fields
-REQUIREMENT_QUESTIONS = {
-    "usage": "What kind of scenario will this be used in? Meeting room, classroom, retail store, advertising, etc.?",
-    # Note: area, viewing distance, brightness, and resolution can be inferred — no need to ask the user
-}
-
-
-def _get_next_question(requirements: dict) -> str:
-    """Return the next most important question based on current requirements."""
-    # Priority order
-    priority = ["usage", "location_type", "size", "viewing_distance", "brightness", "resolution"]
-
-    # Infer missing fields from known info
-    inferred = {}
-    if requirements.get("location_type"):
-        loc = requirements.get("location_type", "")
-        if loc in ("indoor", "室内") and "brightness" not in requirements:
-            inferred["brightness"] = True
-        if loc in ("outdoor", "室外") and "brightness" not in requirements:
-            inferred["brightness"] = True
-
-    for key in priority:
-        if key not in requirements or not requirements.get(key):
-            return REQUIREMENT_QUESTIONS.get(key, "What else do you need for this scenario?")
-    
-    return "还有什么其他要求吗？"
-
-
-def _infer_from_message(message: str, requirements: dict) -> dict:
-    """从用户消息中推断并补充需求。"""
-    text = message.lower()
-    inferred = dict(requirements)
-    
-    # Infer indoor / outdoor
-    if "indoor" not in requirements and "outdoor" not in requirements:
-        indoor_keywords = ["indoor", "indoors", "office", "meeting room", "classroom", "retail", "store", "shop", "exhibition"]
-        outdoor_keywords = ["outdoor", "outdoors", "open air", "facade", "plaza", "square"]
-
-        for kw in indoor_keywords:
-            if kw in text:
-                inferred["indoor"] = True
-                inferred["location_type"] = "indoor"
-                break
-        for kw in outdoor_keywords:
-            if kw in text:
-                inferred["outdoor"] = True
-                inferred["location_type"] = "outdoor"
-                break
-
-    # Infer screen type
-    if not requirements.get("display_type"):
-        # IFP keywords
-        ifp_keywords = ["touch", "interactive", "whiteboard", "annotation", "IFP", "interactive"]
-        # LED keywords
-        led_keywords = ["stage", "concert", "sports", "curtain", "rental", "advertising"]
-        # LCD keywords
-        lcd_keywords = ["digital signage", "signage", "kiosk"]
-
-        if any(kw in text for kw in ifp_keywords):
-            inferred["display_type"] = "IFP"
-        elif any(kw in text for kw in led_keywords):
-            inferred["display_type"] = "LED"
-        elif any(kw in text for kw in lcd_keywords):
-            inferred["display_type"] = "LCD"
-
-    # Infer area / size
-    if "size" not in requirements or not requirements.get("size"):
-        import re
-        # Match "X sqm"
-        area_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:sqm|square meters?|平方米|平米)', text)
-        if area_match:
-            inferred["size"] = f"{area_match.group(1)} sqm"
-
-        # Match "3m x 4m"
-        size_match = re.search(r'(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*m', text)
-        if size_match:
-            inferred["size"] = f"{size_match.group(1)}m x {size_match.group(2)}m"
-
-        # Match viewing distance "about Xm"
-        dist_match = re.search(r'(?:about|approx|around)?\s*(\d+(?:\.\d+)?)\s*m', text)
-        if dist_match and "viewing_distance" not in requirements:
-            inferred["viewing_distance"] = f"{dist_match.group(1)}m"
-
-        # Infer area from occupancy (meeting room / classroom: ~2.5 sqm per person)
-        patterns = [
-            r'(?:about|approx|around)?\s*(?:holds?|accommodates?)\s*([零一二两三四五六七八九十百千\d]+)\s*(?:people|persons?|people)',
-            r'([零一二两三四五六七八九十百千\d]+)\s*(?:people|persons?|people)\s*(?:room|classroom|meeting)',
-            r'(?:holds?|accommodates?)\s*([零一二两三四五六七八九十百千\d]+)\s*(?:people|persons?)',
-        ]
-        people = 0
-        for pattern in patterns:
-            occupancy_match = re.search(pattern, text)
-            if occupancy_match:
-                people = _parse_number(occupancy_match.group(1))
-                if people > 0:
-                    break
-
-        if people > 0:
-            area = people * 2.5 + 5
-            inferred["size"] = f"approx {area:.0f} sqm"
-            if "viewing_distance" not in requirements:
-                if people <= 10:
-                    inferred["viewing_distance"] = "2-4m"
-                elif people <= 20:
-                    inferred["viewing_distance"] = "3-5m"
-                else:
-                    inferred["viewing_distance"] = "4-6m"
-
-    # Infer resolution from viewing distance
-    if "resolution" not in requirements or not requirements.get("resolution"):
-        dist_val = inferred.get("viewing_distance") or requirements.get("viewing_distance", "")
-        if dist_val:
-            import re
-            numbers = re.findall(r'\d+\.?\d*', dist_val)
-            if numbers:
-                dist = float(numbers[0])
-                if '-' in dist_val or '~' in dist_val:
-                    all_nums = re.findall(r'\d+\.?\d*', dist_val)
-                    if len(all_nums) >= 2:
-                        dist = (float(all_nums[0]) + float(all_nums[1])) / 2
-                if dist > 100:
-                    dist /= 1000
-                if dist <= 3:
-                    inferred["resolution"] = "1080P-2K (close-range high clarity)"
-                elif dist <= 5:
-                    inferred["resolution"] = "1080P (standard clarity)"
-                else:
-                    inferred["resolution"] = "720P-1080P (mid-to-far distance standard)"
-
-    return inferred
 
 
 def _strip_markdown(text: str) -> str:
@@ -212,6 +56,57 @@ def _turn_seed(state: SalesState) -> int:
         in ("user", "human")
     )
     return user_turns + (sum(ord(ch) for ch in session_id) % 7)
+
+
+def _answer_objection_like(state: SalesState, message: str) -> str:
+    """异议 / 行业类问题的答复（话术库检索 + LLM 生成，只回复不推荐）。"""
+    sales_search = state.get("sales_search")
+    if not sales_search:
+        return "Got it, let me learn more about your needs."
+    try:
+        docs = sales_search.similarity_search(message, k=2)
+        reference_content = "\n\n".join([d.page_content for d in docs[:1]])
+        prompt = SystemMessage(content=f"""You are a sales advisor for LED and LCD display products, speaking with a customer face-to-face.
+
+Reference talking points (for reference only):
+{reference_content}
+
+Customer says: {message}
+
+Requirements:
+1. Conversational and natural, like chatting with a friend
+2. Short, 1-2 sentences
+3. Plain text only, no markdown
+4. Never invent specifications, prices or model names
+
+Reply directly:""")
+        response = get_llm(temperature=0.3).invoke([prompt])
+        return response.content.strip()
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("Objection answer failed: %s", exc)
+        return "Got it, let me learn more about your needs."
+
+
+def _answer_company_question(state: SalesState) -> str:
+    """公司 / 办事处 / 地址类提问 → 按 company_profile.txt 照实回答 + 接回需求问题。"""
+    from ....rag.company_info import company_answer
+
+    current_message = str(state.get("current_message") or "")
+    answer = company_answer(
+        current_message,
+        language=reply_language(current_message),
+        seed=_turn_seed(state),
+    ) or ""
+    return _strip_markdown(
+        compose_requirement_reply(
+            answer=answer,
+            question=str(state.get("pending_question") or ""),
+            slot=str(state.get("pending_slot") or ""),
+            message=current_message,
+            seed=_turn_seed(state),
+            requirement=state.get("requirements") or {},
+        )
+    )
 
 
 def script_generator(state: SalesState) -> SalesState:
@@ -240,8 +135,6 @@ def script_generator(state: SalesState) -> SalesState:
         and not state.get("should_generate_solution")
         and not state.get("response")
     ):
-        from ....rag.reply_composer import compose_requirement_reply
-
         state["response"] = _strip_markdown(
             compose_requirement_reply(
                 question=pending_question,
@@ -280,115 +173,67 @@ def script_generator(state: SalesState) -> SalesState:
     
     # Need query
     elif intent == "need_query":
-        requirements = state.get("requirements", {})
-        
-        # ===== 提前推理：所有能从已有信息推断的字段 =====
-        # 先从当前消息中推断缺失的需求
-        current_msg = state.get("current_message", "")
-        requirements = _infer_from_message(current_msg, requirements)
-        
-        # Infer usage if LLM didn't extract it
-        if not requirements.get("usage"):
-            usage_keywords = {
-                "meeting": "meeting room",
-                "classroom": "classroom",
-                "training": "classroom",
-                "retail": "retail",
-                "store": "retail",
-                "exhibition": "exhibition",
-                "hospital": "healthcare",
-                "monitoring": "monitoring & control",
-                "stage": "stage performance",
-                "concert": "concert",
-                "sports": "sports venue",
-                "advertising": "advertising",
-                "curtain": "architectural curtain",
-                "rental": "rental events",
-            }
-            for kw, usage in usage_keywords.items():
-                if kw in current_msg:
-                    requirements["usage"] = usage
-                    break
-        
-        state["requirements"] = requirements  # 更新state中的requirements
-        
-        # ===== 关键判断：何时触发推荐 =====
-        # 只要有使用场景(usage)，就可以触发推荐
-        # 其他参数(面积/亮度/分辨率)AI可以自行推断
-        should_trigger = state.get("should_generate_solution", False) or bool(requirements.get("usage"))
-        
-        logger.info(f"need_query: should_trigger={should_trigger}, requirements={requirements}")
-        
-        if requirements.get("usage"):
-            # Infer location_type if missing
-            if not requirements.get("location_type"):
-                usage_text = requirements.get("usage", "").lower()
-                indoor_usage = ["meeting room", "classroom", "office", "exhibition", "retail", "store", "monitoring", "control"]
-                outdoor_usage = ["outdoor", "advertising", "curtain", "sports", "arena"]
-
-                if any(u in usage_text for u in indoor_usage):
-                    requirements["location_type"] = "indoor"
-                    requirements["indoor"] = True
-                elif any(u in usage_text for u in outdoor_usage):
-                    requirements["location_type"] = "outdoor"
-                    requirements["outdoor"] = True
-
-            # Infer size/viewing distance if missing (AI can infer from context, no need to ask user)
-            if not requirements.get("size") and not requirements.get("viewing_distance"):
-                usage = requirements.get("usage", "")
-                if "meeting" in usage:
-                    pass  # Already handled in _infer_from_message
-                elif "classroom" in usage or "training" in usage:
-                    if not requirements.get("size"):
-                        requirements["size"] = "approx 50 sqm (seats 20-30)"
-                    if not requirements.get("viewing_distance"):
-                        requirements["viewing_distance"] = "3-5m"
-
-            # Trigger recommendation — usage is sufficient
+        # 【重要】是否推荐**只由 Ready Gate 决定**。
+        # 旧版这里用 "有 usage 就推荐"，还会从人数/面积推算视距 —— 那正是
+        # "客户只说了场景就被推荐"以及"AI 自己猜参数"的根因，已删除。
+        # Gate 放行时由 graph 直接走 router，不会走到这里；
+        # 走到这里只可能是"Gate 未就绪 + 没有待问项"的兜底 → 只问基础场景，绝不推荐。
+        if state.get("should_generate_solution", False):
             state["next_action"] = "trigger_solution"
-            state["should_generate_solution"] = True
-            logger.info(f"Key requirements collected (usage={requirements.get('usage')}), triggering product recommendation")
+            logger.info("need_query: Ready Gate 已放行 → 触发推荐")
         else:
-            # No usage yet — ask for it
-            response_text = "What kind of scenario will this be used in? Meeting room, classroom, exhibition, advertising, etc.?"
+            response_text = (
+                "What kind of scenario will this display be used in? "
+                "Meeting room, classroom, exhibition, advertising, etc.?"
+            )
             state["next_action"] = "ask"
             state["response"] = _strip_markdown(response_text)
+            logger.info("need_query: Gate 未就绪且无待问项 → 追问基础场景（不推荐）")
 
     # Objection / Industry
     elif intent in ["objection", "industry"]:
-        should_trigger = state.get("should_generate_solution", False)
         requirements = state.get("requirements", {})
-        if should_trigger or requirements.get("usage"):
+        current_message = str(state.get("current_message") or "")
+
+        # 是否推荐只看 Ready Gate（旧版这里是 `or requirements.get("usage")`，
+        # 导致"客户只说了场景 + 问个价格"也会被拉去推荐，实测日志出现过）
+        if state.get("should_generate_solution", False):
             if not state.get("response"):
                 state["response"] = "Sure, let me find the right products for you..."
             state["next_action"] = "trigger_solution"
-            logger.info("Industry intent with sufficient requirements")
-        else:
-            sales_search = state.get("sales_search")
-            if sales_search:
-                query = state["current_message"]
-                docs = sales_search.similarity_search(query, k=2)
-                reference_content = "\n\n".join([d.page_content for d in docs[:1]])
-
-                prompt = SystemMessage(content=f"""You are a sales advisor for LED and LCD display products, speaking with a customer face-to-face.
-
-Reference talking points (for reference only):
-{reference_content}
-
-Customer says: {query}
-
-Requirements:
-1. Conversational and natural, like chatting with a friend
-2. Short, 1-2 sentences
-3. Plain text only, no markdown
-
-Reply directly:""")
-
-                response = get_llm(temperature=0.3).invoke([prompt])
-                response_text = response.content.strip()
-            else:
-                response_text = "Got it, let me learn more about your needs."
+            logger.info("Objection/industry: Ready Gate 已放行 → 触发推荐")
+        elif _is_company_question(current_message):
+            # 公司 / 办事处 / 地址类提问：按公司信息照实回答，再接回需求问题，
+            # 不走没有公司资料的自由问答（否则会答"我没有相关信息"或乱答 Yes）
+            state["response"] = _answer_company_question(state)
             state["next_action"] = "ask"
+            logger.info("Company question — answered from company profile: %s", state["response"])
+        else:
+            # 需求还没问清时问价格 → 先说明"要确认产品才能报价"，紧接着继续问需求
+            if is_price_question(current_message):
+                answer = price_policy_answer(
+                    language=reply_language(current_message), seed=_turn_seed(state)
+                )
+                logger.info(
+                    "Price question while collecting requirements — quote policy + next question"
+                )
+            else:
+                answer = _answer_objection_like(state, current_message)
+
+            pending_question = str(state.get("pending_question") or "")
+            state["response"] = _strip_markdown(
+                compose_requirement_reply(
+                    answer=answer,
+                    question=pending_question,
+                    slot=str(state.get("pending_slot") or ""),
+                    message=current_message,
+                    seed=_turn_seed(state),
+                    requirement=requirements,
+                    llm_ack=str(state.get("acknowledgement") or ""),
+                )
+            )
+            state["next_action"] = "ask"
+            logger.info("Objection/industry without ready gate — reply: %s", state["response"])
 
     # Product question
     elif intent == "product_question":
@@ -397,6 +242,10 @@ Reply directly:""")
             response_text = "Sure, let me find the right products for you..."
             state["next_action"] = "trigger_solution"
             logger.info("product_question with sufficient requirements, triggering solution")
+        elif _is_company_question(state.get("current_message", "")):
+            state["response"] = _answer_company_question(state)
+            state["next_action"] = "ask"
+            logger.info("Company question (product_question) — answered from company profile")
         else:
             response_text = "Sure."
             state["next_action"] = "product_question"
@@ -408,6 +257,10 @@ Reply directly:""")
             response_text = "Sure, let me find the right products for you..."
             state["next_action"] = "trigger_solution"
             logger.info("others with sufficient requirements, triggering solution")
+        elif _is_company_question(state.get("current_message", "")):
+            state["response"] = _answer_company_question(state)
+            state["next_action"] = "ask"
+            logger.info("Company question (others) — answered from company profile")
         else:
             response_text = "Sure."
             state["next_action"] = "others"

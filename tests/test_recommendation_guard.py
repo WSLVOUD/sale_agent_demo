@@ -90,16 +90,35 @@ class TestProvenanceNeverOpensGate:
         ))
         assert result["recommendation_status"] == "NEED_CLARIFICATION"
 
-    def test_scene_derived_environment_is_not_confirmed(self, service):
-        """客户只说"会议室"，系统推导 indoor → 不能算 confirmed"""
-        # extract_slots("会议室用") 会把 environment 标记为 inferred
+    def test_obvious_scene_settles_environment(self):
+        """客户说"会议室 / 教堂"这种一眼室内的场景 → 环境直接确定，不再追问室内外。
+
+        （客户反馈：说了 church 还问"室内还是室外"很傻。旧策略要求环境必须由
+        客户明说，现在只对"一眼能定"的场景放宽。）
+        """
         from src.rag.query_understanding import extract_slots
 
-        slots = extract_slots("会议室用")
-        assert slots.get("environment") == "indoor"
-        assert "environment" in slots.get("_inferred_slots", [])
-        profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
-        assert profile.sources.get("environment") == "inferred"
+        for message in ("会议室用", "church", "在展厅放一块屏", "户外广告牌"):
+            slots = extract_slots(message)
+            assert slots.get("environment") in ("indoor", "outdoor"), message
+            assert "environment" not in (slots.get("_inferred_slots") or []), message
+            profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+            # M2 四态：客户明说室内外 → explicit；场景直接判定 → scenario_derived
+            assert profile.sources.get("environment") in ("explicit", "scenario_derived"), message
+            assert profile.status["environment"] == "confirmed", message
+            # 场景默认固装属于 default：参与打分，但不单独放行 Gate
+            assert profile.sources.get("installation") == "default", message
+
+    def test_ambiguous_scene_still_asks_environment(self):
+        """舞台 / 演唱会 / 租赁室内外都可能 → 环境仍然必须问客户。"""
+        from src.rag.query_understanding import extract_slots
+        from src.rag.readiness import check_recommendation_ready
+
+        for message in ("舞台演出用", "concert", "rental event"):
+            slots = extract_slots(message)
+            assert not slots.get("environment"), message
+            profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+            assert "environment" in check_recommendation_ready(profile).missing, message
 
 
 class TestEngineSecondGuard:
