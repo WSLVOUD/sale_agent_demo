@@ -155,6 +155,35 @@ def understand_node(state: SolutionState) -> SolutionState:
             )),
         }
 
+    # 3) Phase 4/13：复用统一 RequirementExtractor 的同一轮语义结果
+    #    Sales Agent 已经把这条消息的语义理解缓存下来了 → 这里不再重复调 LLM。
+    try:
+        from ....core.requirement_extractor import get_requirement_extractor
+        from ....models.legacy_adapter import profile_to_solution_requirement
+        from ....rag.readiness import check_recommendation_ready
+
+        extractor = get_requirement_extractor()
+        if extractor._cached_semantic(state.get("current_message", "")) is not None:
+            profile = extractor.extract(state.get("current_message", ""), use_llm=False)
+            if profile.purpose or profile.environment or profile.display_type:
+                decision = check_recommendation_ready(profile)
+                logger.info(
+                    "understand: 复用统一 Extractor 的语义结果（不再调 LLM）missing=%s",
+                    decision.missing,
+                )
+                return {
+                    **state,
+                    "requirement": profile_to_solution_requirement(profile),
+                    "requirement_profile": profile,
+                    "info_sufficient": decision.ready,
+                    "missing_info": list(decision.missing),
+                    "search_keywords": _extract_keywords(
+                        " ".join(m.get("content", "") for m in messages)
+                    ),
+                }
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("understand: extractor reuse failed, fallback to LLM: %s", exc)
+
     # Build conversation context
     conversation_parts = []
     for msg in messages[-6:]:  # Last 6 messages

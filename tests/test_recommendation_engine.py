@@ -103,134 +103,107 @@ class TestRecommendationEngine:
         assert result["recommendations"][0]["price_tier"] == "low"
 
 
-class TestOutdoorPitchBoundary:
-    """室外屏点间距边界：P6 及以上（细间距 P2.5~P5 只用于室内/近距离）。"""
+class TestEnvironmentPitchRules:
+    """客户口径的点间距规则（2026-09-15）：
 
-    def test_inference_floor_for_outdoor(self):
-        from src.rag.parameter_inference import (
-            OUTDOOR_MIN_PITCH_MM,
-            infer_technical_parameters,
+    室外：4m→P4 / 5m→P4 或 P5 / 6~20m→P5 最合适 / >30m 一律 P10
+    室内：≤3m→P2.5 及以下（越近越细）/ >3m→P3 及以上
+    客户明确点名点间距 → 一律以客户为准。
+    """
+
+    def _top(self, engine, environment, distance, purpose=None, pitch=None):
+        purpose = purpose or ("advertising" if environment == "outdoor" else "conference")
+        slots = {
+            "environment": environment,
+            "purpose": purpose,
+            "installation": "fixed",
+            "viewing_distance_m": distance,
+        }
+        if pitch is not None:
+            slots["pixel_pitch_mm"] = pitch
+        result = engine.recommend(
+            profile=RequirementProfile.from_slots(slots, explicit_keys=set(slots))
         )
+        return result["recommendations"]
 
-        outdoor = infer_technical_parameters(
-            {"environment": "outdoor", "viewing_distance_m": 5}
-        )
-        assert outdoor["pixel_pitch_min_mm"] == OUTDOOR_MIN_PITCH_MM
-        assert outdoor["source"]["pixel_pitch"] == "inferred_outdoor_min_p6"
+    # ── 室外 ────────────────────────────────────────────────────────────
+    def test_outdoor_4m_recommends_p4(self, engine):
+        top = self._top(engine, "outdoor", 4)[0]
+        assert top["pixel_pitch_mm"] == pytest.approx(4.0, abs=0.2), top
 
-        # 室内不受影响：5m 视距仍按距离表给细间距
+    def test_outdoor_5m_recommends_p4_or_p5(self, engine):
+        top = self._top(engine, "outdoor", 5)[0]
+        pitch = top["pixel_pitch_mm"]
+        assert min(abs(pitch - 4.0), abs(pitch - 5.0)) <= 0.2, top
+
+    def test_outdoor_6_to_20m_prefers_p5(self, engine):
+        for distance in (6, 8, 12, 15, 20):
+            top = self._top(engine, "outdoor", distance)[0]
+            assert top["pixel_pitch_mm"] == pytest.approx(5.0, abs=0.2), (distance, top)
+
+    def test_outdoor_beyond_30m_is_p10(self, engine):
+        # "超过 30m 一律 P10"（30m 本身归上一档 P6.67）
+        for distance in (35, 40, 60):
+            top = self._top(engine, "outdoor", distance)[0]
+            assert top["pixel_pitch_mm"] == pytest.approx(10.0, abs=0.2), (distance, top)
+
+    def test_outdoor_20_to_25m_prefers_p6(self, engine):
+        for distance in (21, 25):
+            top = self._top(engine, "outdoor", distance)[0]
+            assert top["pixel_pitch_mm"] == pytest.approx(6.67, abs=0.2), (distance, top)
+
+    def test_outdoor_25_to_30m_is_p8(self, engine):
+        for distance in (26, 28, 30):
+            top = self._top(engine, "outdoor", distance)[0]
+            assert top["pixel_pitch_mm"] == pytest.approx(8.0, abs=0.2), (distance, top)
+
+    def test_outdoor_never_recommends_finer_than_the_band(self, engine):
+        """4m 场景不再推荐 P2.5/P3（细间距留给室内近距离）。"""
+        recs = self._top(engine, "outdoor", 4)
+        assert recs
+        assert all(rec["pixel_pitch_mm"] >= 3.9 - 1e-6 for rec in recs), recs
+
+    # ── 室内 ────────────────────────────────────────────────────────────
+    def test_indoor_within_3m_prefers_p25_or_finer(self, engine):
+        for distance in (1.5, 2, 3):
+            top = self._top(engine, "indoor", distance)[0]
+            assert top["pixel_pitch_mm"] <= 2.5 + 1e-6, (distance, top)
+
+    def test_indoor_over_3m_prefers_p3_or_coarser(self, engine):
+        for distance in (4, 5, 8, 15, 25):
+            top = self._top(engine, "indoor", distance)[0]
+            assert top["pixel_pitch_mm"] >= 3.0 - 1e-6, (distance, top)
+            assert top["model"].endswith("-P3.0"), (distance, top)
+
+    # ── 客户点名优先 ────────────────────────────────────────────────────
+    @pytest.mark.parametrize("environment,distance,pitch,suffix", [
+        ("indoor", 5, 2.0, "P2.0"),
+        ("indoor", 5, 1.86, "P1.8"),
+        ("indoor", 5, 4.0, "P4.0"),
+        ("outdoor", 8, 4.0, "P4"),
+        ("outdoor", 8, 5.0, "P5"),
+        ("outdoor", 8, 2.5, "P2.5"),
+        ("outdoor", 8, 10.0, "P10"),
+    ])
+    def test_customer_pitch_always_wins(self, engine, environment, distance, pitch, suffix):
+        top = self._top(engine, environment, distance, pitch=pitch)[0]
+        assert top["model"].endswith(suffix), (pitch, top)
+
+    def test_target_recorded_in_technical_parameters(self):
+        from src.rag.parameter_inference import infer_technical_parameters
+
         indoor = infer_technical_parameters(
             {"environment": "indoor", "viewing_distance_m": 5}
         )
-        assert indoor["pixel_pitch_min_mm"] < OUTDOOR_MIN_PITCH_MM
+        assert indoor["pitch_target_mm"] == pytest.approx(3.0)
+        assert indoor["pixel_pitch_min_mm"] == pytest.approx(3.0)
 
-    def test_outdoor_without_distance_still_has_floor(self):
-        from src.rag.parameter_inference import (
-            OUTDOOR_MIN_PITCH_MM,
-            infer_technical_parameters,
+        outdoor = infer_technical_parameters(
+            {"environment": "outdoor", "viewing_distance_m": 8}
         )
+        assert outdoor["pitch_target_mm"] == pytest.approx(5.0)
 
-        technical = infer_technical_parameters({"environment": "outdoor"})
-        assert technical["pixel_pitch_min_mm"] == OUTDOOR_MIN_PITCH_MM
-
-    def test_engine_never_recommends_fine_pitch_outdoor(self, engine):
-        from src.rag.parameter_inference import OUTDOOR_MIN_PITCH_MM
-
-        for distance in (5, 20, 30):
-            slots = {
-                "environment": "outdoor",
-                "purpose": "advertising",
-                "installation": "fixed",
-                "viewing_distance_m": distance,
-            }
-            result = engine.recommend(
-                profile=RequirementProfile.from_slots(slots, explicit_keys=set(slots))
-            )
-            assert result["recommendations"], distance
-            for rec in result["recommendations"]:
-                assert rec["pixel_pitch_mm"] >= OUTDOOR_MIN_PITCH_MM - 1e-6, (distance, rec)
-
-    def test_explicit_customer_pitch_is_still_respected(self, engine):
-        """客户自己点名了更细的点间距（半户外/近距离）→ 尊重客户，不强行抬到 P6。"""
-        slots = {
-            "environment": "outdoor",
-            "purpose": "advertising",
-            "installation": "fixed",
-            "pixel_pitch_mm": 3.076,
-        }
-        result = engine.recommend(
-            profile=RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+        far = infer_technical_parameters(
+            {"environment": "outdoor", "viewing_distance_m": 40}
         )
-        assert result["recommendations"]
-        assert all(rec["pixel_pitch_mm"] < 6.0 for rec in result["recommendations"])
-
-    def test_validation_flags_outdoor_fine_pitch(self):
-        from src.rag.recommendation_engine import RecommendationEngine
-        from src.rag.validation import validate_recommendation
-
-        # 直接构造"室外 + 细间距"的选型结果（模拟异常路径）
-        profile = RequirementProfile.from_slots(
-            {
-                "environment": "outdoor",
-                "purpose": "advertising",
-                "installation": "fixed",
-                "viewing_distance_m": 20,
-            },
-            explicit_keys={"environment", "purpose", "installation", "viewing_distance_m"},
-        )
-        selection = {
-            "recommendations": [{"model": "TW11-OD-P2.5"}],
-            "technical_parameters": {"pixel_pitch_min_mm": 6.0, "pixel_pitch_max_mm": 8.0},
-        }
-        report = validate_recommendation("Recommended.", [], profile, selection, None)
-        assert report["checks"]["outdoor_pitch_boundary"] is False
-        assert any("室外点间距" in err for err in report["errors"])
-
-    def test_outdoor_defaults_to_p6(self, engine):
-        """业务规则：室外默认首选 P6（合格档里最细的），不管视距多远。"""
-        for distance in (5, 10, 20, 30, 50):
-            slots = {
-                "environment": "outdoor",
-                "purpose": "advertising",
-                "installation": "fixed",
-                "viewing_distance_m": distance,
-            }
-            result = engine.recommend(
-                profile=RequirementProfile.from_slots(slots, explicit_keys=set(slots))
-            )
-            top = result["recommendations"][0]
-            assert top["model"].endswith("-P6"), (distance, top["model"])
-            # 首选就是所有候选里最细的合格档
-            assert top["pixel_pitch_mm"] == min(
-                rec["pixel_pitch_mm"] for rec in result["recommendations"]
-            ), distance
-
-    def test_customer_pitch_overrides_outdoor_default(self, engine):
-        """客户点名了点间距 → 按客户的来（P8 给 P8，P2.5 也给 P2.5）。"""
-        for pitch, suffix in ((8.0, "P8"), (2.5, "P2.5")):
-            slots = {
-                "environment": "outdoor",
-                "purpose": "advertising",
-                "installation": "fixed",
-                "viewing_distance_m": 20,
-                "pixel_pitch_mm": pitch,
-            }
-            result = engine.recommend(
-                profile=RequirementProfile.from_slots(slots, explicit_keys=set(slots))
-            )
-            assert result["recommendations"], pitch
-            assert result["recommendations"][0]["model"].endswith(suffix), (pitch, result["recommendations"])
-
-    def test_indoor_pitch_preference_unchanged(self, engine):
-        """室内仍然按"区间 75% 位置"的口径选，不受室外规则影响。"""
-        slots = {
-            "environment": "indoor",
-            "purpose": "conference",
-            "installation": "fixed",
-            "viewing_distance_m": 5,
-        }
-        result = engine.recommend(
-            profile=RequirementProfile.from_slots(slots, explicit_keys=set(slots))
-        )
-        top = result["recommendations"][0]
-        assert top["pixel_pitch_mm"] > 1.5, top
+        assert far["pitch_target_mm"] == pytest.approx(10.0)

@@ -341,6 +341,16 @@ def check_recommendation_ready(
             next_question=question_for(_first_missing(missing), language, variant_seed),
         )
 
+    # 0) 冲突（Phase 18）：客户明确说的与推断互相矛盾时不允许推荐
+    conflicts = list(getattr(profile, "conflicts", None) or [])
+    if conflicts:
+        missing = ["environment", "purpose", "installation", "viewing_distance"]
+        return GateDecision(
+            ready=False, gate="recommendation", missing=missing,
+            reason="需求存在冲突，需要澄清：" + ", ".join(conflicts),
+            next_question=question_for("purpose", language, variant_seed),
+        )
+
     # 1) 客户直接点名型号 / 系列
     if getattr(profile, "model", None) or getattr(profile, "series_id", None):
         return GateDecision(

@@ -35,7 +35,8 @@ Requirements:
 - Do not repeat or restate what the customer already stated (e.g. if they've already said outdoor, stage, or indoor, don't repeat those words)
 - Only mention positive reasons — never say "not suitable", "not recommended", "doesn't match", or any negative phrasing
 - Always answer based on the product data — do not make up content not in the data
-- 【Hard environment rule】Do not repeat the customer's stated environment (outdoor, indoor, stage, etc.) in your reply. Output the model and core selling points directly. If the product data genuinely has no matching product for the customer's environment, say "No matching products found in the database" — do not substitute indoor products for outdoor needs or vice versa.
+- 【Hard environment rule】Do not repeat the customer's stated environment (outdoor, indoor, stage, etc.) in your reply. Output the model and core selling points directly. Never substitute indoor products for outdoor needs or vice versa.
+- 【No-product rule】Never tell the customer that nothing matches, that you can't find a product, or that the database has no matching item. If no product fits exactly, invite them to relax one requirement instead (e.g. "if the pixel pitch or screen size can be a little flexible, I can match a model for you") — never state that no product exists.
 
 Output the recommendation directly (2-3 sentences max):"""
 
@@ -407,16 +408,20 @@ def recommend_node(state: SolutionState) -> SolutionState:
 
     if not recommendations:
         constraints = selection.get("hard_constraints") or {}
-        has_hard = any(value for key, value in constraints.items() if key != "sources")
+        hard_fields = [key for key, value in constraints.items() if key != "sources" and value]
+        has_hard = bool(hard_fields)
         logger.warning("Recommend: no matching model (hard_constraints=%s)", constraints)
-        message = (
-            "I couldn't find a model in our catalog that matches those requirements "
-            "(environment / installation / brightness / pixel pitch). "
-            "Let me know if any of those can be relaxed and I'll match a model for you."
-            if has_hard
-            else "Could you tell me the scenario and whether it is indoors or outdoors? "
-                 "That will let me match the right model for you."
-        )
+        if has_hard:
+            # 【客户口径】不说"目录里没有匹配的产品"，而是邀请客户放宽某个条件，
+            # 并点出最可能卡住的那几项（环境/安装方式/亮度/点间距）。
+            from ....rag.reply_composer import relaxation_answer
+
+            message = relaxation_answer()
+        else:
+            message = (
+                "Could you tell me the scenario and whether it is indoors or outdoors? "
+                "That will let me match the right model for you."
+            )
         return {
             "recommendation": message,
             "products": [],

@@ -148,7 +148,10 @@ def _find_models(constraints: dict, data_dir: str, top_k: int = 3) -> list[dict]
 def _build_product_summary(products: list[dict]) -> str:
     """把匹配到的 **Model** 列表格式化成话术（含点间距/亮度/箱体）。"""
     if not products:
-        return "No matching products found."
+        # 【客户口径】不说"没有匹配的产品"，改成邀请客户放宽某个条件
+        from src.rag.reply_composer import relaxation_answer
+
+        return relaxation_answer()
 
     parts = [
         f"{item['model']} ({item['pixel_pitch_mm']}mm, {item['brightness_nit']}nit, "

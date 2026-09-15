@@ -41,11 +41,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PITCH_TOLERANCE = 0.5
 
-# 室外屏点间距区间：室外 LED 点间距 P6 及以上（业务规则）。
-# 细间距（P2.5~P5）只用于室内 / 近距离，室外场景不再推荐；
-# 上限取目录里室外系列的最粗档（P10）。
-OUTDOOR_MIN_PITCH_MM = 6.0
-OUTDOOR_MAX_PITCH_MM = 10.0
+# 点间距业务规则见下方 _INDOOR_PITCH_TABLE / _OUTDOOR_PITCH_TABLE
+# （客户口径：室内 ≤3m→P2.5 及以下、>3m→P3 及以上；
+#   室外 4m→P4、5m→P4/P5、6~20m→P5、>30m→P10）
 
 
 # ── 唯一权威规则表 ──────────────────────────────────────────────────────────
@@ -58,6 +56,66 @@ VIEWING_DISTANCE_PITCH_TABLE: Tuple[Tuple[float, float, float], ...] = (
     (30.0, 4.0, 8.0),     # 15–30m
     (float("inf"), 6.0, 10.0),  # ≥30m
 )
+
+# ── 环境 + 距离 → 点间距（业务规则，优先于上面的通用距离表）────────────────
+# 室内：
+#   ≤3m  → P2.5 及以下（越近越细，首选 2.5）
+#   >3m  → P3 及以上（首选 P3）
+# 室外：
+#   ≤4m  → P4（客户 4m 就给 P4）
+#   4–6m → P4/P5（首选 4.5 附近）
+#   6–20m→ P5 最合适（首选 5.0）
+#   20–30m → P6.67 左右
+#   >30m → 一律 P10
+_INDOOR_PITCH_TABLE: Tuple[Tuple[float, float, float, float], ...] = (
+    # (距离上限, 下限, 上限, 首选)
+    (3.0, 0.6, 2.5, 2.5),
+    (float("inf"), 3.0, 10.0, 3.0),
+)
+_OUTDOOR_PITCH_TABLE: Tuple[Tuple[float, float, float, float], ...] = (
+    (4.0, 3.9, 5.0, 4.0),        # ≤4m  → P4
+    (5.0, 3.9, 5.5, 4.5),        # 4–5m → P4 / P5
+    (20.0, 4.5, 6.7, 5.0),       # 6–20m → P5（客户说这个区间 P5 最合适）
+    (25.0, 5.0, 8.0, 6.7),       # 20–25m → P6.67
+    (30.0, 8.0, 10.0, 8.0),      # 25–30m → P8
+    (float("inf"), 8.0, 10.0, 10.0),  # >30m → 一律 P10
+)
+
+
+def preferred_pitch_for_environment(
+    environment: Optional[str],
+    distance_m: Optional[float],
+) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """按"环境 + 观看距离"给出 (点间距下限, 上限, 首选值)，单位 mm。
+
+    这是客户口径的业务规则，比通用距离表优先；客户自己点名点间距时不使用。
+    """
+    env = str(environment or "").strip().lower()
+    if distance_m is None:
+        return None, None, None
+    try:
+        value = float(distance_m)
+    except (TypeError, ValueError):
+        return None, None, None
+    if value <= 0:
+        return None, None, None
+
+    # semi_outdoor（半户外）按室外口径处理（客户口径里"室外"包含门头/半户外）
+    table = (
+        _INDOOR_PITCH_TABLE
+        if env == "indoor"
+        else _OUTDOOR_PITCH_TABLE
+        if env in ("outdoor", "semi_outdoor")
+        else None
+    )
+    if not table:
+        return None, None, None
+    # 业务口径按"以内"理解（例如"6~20m 以内 P5 都合适"→ 20m 也归 P5 档）
+    for limit, low, high, target in table:
+        if value <= limit:
+            return low, high, target
+    last = table[-1]
+    return last[1], last[2], last[3]
 
 # 使用环境 → 亮度区间（最低亮度取自目录中该类产品的最低规格）
 BRIGHTNESS_BY_ENVIRONMENT: Dict[str, Tuple[Optional[int], Optional[int]]] = {
@@ -92,28 +150,6 @@ def pitch_range_for_distance(distance_m: Optional[float]) -> Tuple[Optional[floa
         if (value <= limit) if index == 0 else (value < limit):
             return pitch_min, pitch_max
     return 6.0, 10.0
-
-
-def clamp_pitch_for_environment(
-    environment: Optional[str],
-    pitch_min: Optional[float],
-    pitch_max: Optional[float],
-) -> Tuple[Optional[float], Optional[float]]:
-    """按使用环境收窄点间距区间：室外屏下限抬到 P6（室内不变）。
-
-    例：室外 + 5m 视距，距离表给的是 1.5~3.0mm（那是室内口径），
-    这里会改成 6.0~10.0mm（P6 / P8 / P10 都合适）。
-    """
-    if str(environment or "").strip().lower() != "outdoor":
-        return pitch_min, pitch_max
-    floor = OUTDOOR_MIN_PITCH_MM
-    ceiling = OUTDOOR_MAX_PITCH_MM
-    new_min = floor if pitch_min is None else max(float(pitch_min), floor)
-    new_max = ceiling if pitch_max is None else max(float(pitch_max), floor)
-    if new_max <= new_min:
-        # 距离档位给的上限比室外下限还细（例如 5m → 1.5~3.0）→ 用室外上限
-        new_max = ceiling
-    return new_min, min(new_max, ceiling)
 
 
 def brightness_range_for_environment(
@@ -198,7 +234,18 @@ def infer_technical_parameters(facts: Dict[str, Any]) -> Dict[str, Any]:
     if distance_m is None:
         distance_m = parse_distance(facts.get("distance"))
 
-    pitch_min, pitch_max = pitch_range_for_distance(distance_m)
+    # 业务规则优先：环境 + 距离 → 点间距区间与首选值（室内 P2.5/P3，室外 P4/P5/P10）
+    pitch_min, pitch_max, pitch_target = preferred_pitch_for_environment(
+        environment, distance_m
+    )
+    if pitch_min is None:
+        # 环境/距离表不覆盖（例如半户外或没给距离）→ 退回通用距离表
+        pitch_min, pitch_max = pitch_range_for_distance(distance_m)
+        if distance_m is not None:
+            logger.info(
+                "点间距规则未命中（environment=%r / %sm）→ 用通用距离表 %s~%smm",
+                environment, distance_m, pitch_min, pitch_max,
+            )
     brightness_min, brightness_max = brightness_range_for_environment(environment)
     source: Dict[str, str] = {}
 
@@ -211,30 +258,17 @@ def infer_technical_parameters(facts: Dict[str, Any]) -> Dict[str, Any]:
         pitch_min = float(explicit_pitch) - tolerance
         pitch_max = float(explicit_pitch) + tolerance
         source["pixel_pitch"] = "explicit"
-        if (
-            str(environment or "").strip().lower() == "outdoor"
-            and float(explicit_pitch) < OUTDOOR_MIN_PITCH_MM
-        ):
-            # 客户点名了比室外下限更细的点间距：尊重客户（可能是半户外/近距离），
-            # 但记一条日志，方便复盘
-            logger.warning(
-                "客户指定室外点间距 P%s 低于室外下限 P%s（按客户要求保留）",
-                explicit_pitch, OUTDOOR_MIN_PITCH_MM,
-            )
+        # 客户点名了点间距 → 首选值就是客户的（场景/环境偏好不再参与）
+        pitch_target = float(explicit_pitch)
     else:
-        # 推断区间按环境收窄：室外屏 P6 及以上
-        clamped_min, clamped_max = clamp_pitch_for_environment(
-            environment, pitch_min, pitch_max
-        )
-        if (clamped_min, clamped_max) != (pitch_min, pitch_max):
-            source["pixel_pitch"] = "inferred_outdoor_min_p6"
+        if pitch_target is not None:
+            source["pixel_pitch"] = "inferred_from_environment_distance"
             logger.info(
-                "室外点间距边界生效：%s~%smm → %s~%smm",
-                pitch_min, pitch_max, clamped_min, clamped_max,
+                "点间距规则（%s / %sm）：%s~%smm，首选 P%s",
+                environment, distance_m, pitch_min, pitch_max, pitch_target,
             )
         elif pitch_min is not None:
             source["pixel_pitch"] = "inferred_from_distance"
-        pitch_min, pitch_max = clamped_min, clamped_max
 
     # 客户显式指定亮度下限 → 覆盖推断值
     explicit_brightness = facts.get("brightness_min")
@@ -266,6 +300,9 @@ def infer_technical_parameters(facts: Dict[str, Any]) -> Dict[str, Any]:
         "viewing_distance_m": distance_m,
         "pixel_pitch_min_mm": pitch_min,
         "pixel_pitch_max_mm": pitch_max,
+        # 首选点间距（mm）：室内 ≤3m→2.5 / >3m→3.0；室外 4m→4.0 / 5m→4.5 /
+        # 6~20m→5.0 / 20~30m→6.7 / >30m→10.0。客户端点名时 = 客户的值。
+        "pitch_target_mm": pitch_target,
         "brightness_min_nit": brightness_min,
         "brightness_max_nit": brightness_max,
         "is_rental": is_rental,

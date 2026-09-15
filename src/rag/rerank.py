@@ -204,6 +204,17 @@ def sanitize_customer_response(text: str, *, outdoor: bool = False) -> str:
     if not text:
         return text
 
+    # 【客户口径】不允许对客户说"找不到 / 没有匹配的产品"：
+    # 一旦出现这类话术，整段替换成"能不能放宽某个参数"的邀请（多种说法轮换）。
+    try:
+        from src.rag.reply_composer import has_no_product_phrase, relaxation_answer
+
+        if has_no_product_phrase(text):
+            logger.info("Rewriting 'no matching product' reply into a relaxation request")
+            return relaxation_answer()
+    except Exception:  # pragma: no cover - 防御式
+        pass
+
     kept_lines = []
     for line in str(text).splitlines():
         sentences = re.split(r"(?<=[。！？!?])", line)

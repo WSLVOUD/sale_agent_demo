@@ -150,6 +150,22 @@ def _has_scene_intent(query: str) -> bool:
     return any(kw in q for kw in _SCENE_KEYWORDS)
 
 
+def has_structured_requirement(requirements: dict | None) -> bool:
+    """结构化需求里是否已经带有"场景级"上下文（Phase 6）。
+
+    这是 Router 的第一判据：只要上游（RequirementExtractor / RequirementProfile）
+    已经识别出 purpose / environment / installation / usage，就说明这是"有场景的
+    推荐类查询"，不必再靠关键词表去猜 —— 关键词表降级为 fallback。
+    """
+    if not requirements:
+        return False
+    for key in ("purpose", "usage", "environment", "location_type", "installation"):
+        value = requirements.get(key)
+        if value not in (None, "", [], {}):
+            return True
+    return False
+
+
 def _has_strong_reasoning_intent(query: str) -> bool:
     """强推理词（场景词存在时仍触发 AGENT）。"""
     q_lower = query.lower().strip()
@@ -253,7 +269,9 @@ def classify_complexity(
     """
     q = query.strip()
     q_lower = q.lower()
-    has_scene = _has_scene_intent(q)
+    # Phase 6：优先用"结构化需求"判断是否有场景（关键词表只作 fallback）
+    has_structured_scene = has_structured_requirement(existing_requirements)
+    has_scene = _has_scene_intent(q) or has_structured_scene
     has_strong_reasoning = _has_strong_reasoning_intent(q)
     has_weak_reasoning = _has_weak_reasoning_intent(q)
 

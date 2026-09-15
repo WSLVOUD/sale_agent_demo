@@ -7,6 +7,50 @@
 
 ---
 
+# 执行进度（2026-09-15 更新）
+
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| Phase 1 | 唯一 RequirementProfile / canonical fields / confirmed-inferred / confidence / conflict | ✅ 已完成 |
+| Phase 2 | RequirementExtractor（LLM 语义 + 规则 + 数字解析 + **短语快速路径**） | ✅ 已完成 |
+| Phase 3 | Sales requirement 接入统一 Extractor，删除重复 environment 关键词 | ✅ 已完成 |
+| Phase 4 | Solution requirement 复用同一轮语义结果（不再重复调 LLM） | ✅ 已完成 |
+| Phase 5 | `query_understanding` 降级为确定性解析层（purpose 短语表成为 fast path） | ✅ 已完成 |
+| Phase 6 | Router 改用结构化需求判断（关键词表降为 fallback） | ✅ 已完成 |
+| Phase 7 | Script Generator 只读 RequirementProfile，不再自己判断场景 | ✅ 已完成 |
+| Phase 8 | Gate 改结构化字段判断 + 冲突阻断 | ✅ 已完成 |
+| Phase 9 | 113 条 Golden Cases + 6 类测试（关键词缺失 / 场景歧义 / 参数解析 / 多语言 / 推荐回归） | ✅ 已完成 |
+| Phase 10 | 删除重复关键词/场景分类 | ✅ 已完成（保留快速路径与兜底，见下方说明） |
+
+**验证**：全量测试 **660 passed / 4 skipped**（跳过的 4 条是"非中英文场景"用例，
+需要 LLM 语义层：`RUN_LLM_EXTRACTION_TESTS=1` 时才跑）。
+
+**实施过程中顺带修掉的真实 bug**：
+
+1. **语言识别把英文判成德语**：`_LANGUAGE_HINTS` 的德语提示里混进了英文单词
+   `display`，导致任何含 "display" 的英文句子被判成 `de`（影响回复语言策略与
+   多语言关键词表选择）。现在提示词只保留该语言特有词，并补了 ru。
+2. **英文词形变化不识别**：`permanent` 匹配不到 `permanently`、`bank` 匹配不到
+   `banking`、`wall mount` 匹配不到 `wall mounted`。英文关键词现在支持
+   `s/es/d/ed/ing/ly` 词尾。
+3. **中文视距"6 米远"解析不到**：裸数值兜底原本要求单位后是空白/标点，
+   现在也接受中文（"6 米远" → 6.0m）。
+4. **`open-air` 不在室外关键词里**：现在补上（"open-air advertising" → outdoor）。
+5. **零售场景环境缺失**：`EnvironmentResolver` 原本把 `retail` 当"室内外都可能"，
+   与 `query_understanding` 的"商场=室内"不一致 —— 已统一为 indoor
+   （商场外立面属于 advertising，不受影响）。
+6. **冲突检测过严**：原实现把"客户明确说 rental + 会议室场景"当成冲突并阻断推荐，
+   但租一块屏开一天会是正常业务。现在只有"同一轮出现两个互相矛盾的明确信号"
+   才算冲突，客户明确事实永远优先于场景默认值。
+
+**关于"删除重复关键词"（Phase 10）的口径**：
+按计划 6.1/6.2，关键词表**不是删除而是降级**：`query_understanding` 的关键词/正则
+只负责确定性事实（室内外、固装租赁、LED/LCD/IFP、COB/HDR/防水、P2.5、5m、5000nit…）
+与数字/单位解析；`Router` 的 `_SCENE_KEYWORDS` 变成 fallback（有结构化需求时不再看它）；
+场景理解改由 `RequirementExtractor`（短语快速路径 + LLM 语义）承担。
+
+---
+
 ## 1. 本次改造的核心结论
 
 当前项目**不是纯关键词系统**。
@@ -1238,72 +1282,72 @@ RequirementProfile
 
 ## Phase 1 — 建模
 
-- [ ] 确认唯一 `RequirementProfile`
-- [ ] 明确 canonical fields
-- [ ] 明确 confirmed/inferred
-- [ ] 明确 confidence
-- [ ] 明确 conflict
+- [x] 确认唯一 `RequirementProfile`
+- [x] 明确 canonical fields
+- [x] 明确 confirmed/inferred（实际是 explicit/confirmed/scenario_derived/default/inferred）
+- [x] 明确 confidence（`RequirementProfile.confidence`）
+- [x] 明确 conflict（`RequirementProfile.conflicts` + Gate 阻断）
 
 ## Phase 2 — 建 Extractor
 
-- [ ] 新建 `RequirementExtractor`
-- [ ] 接入 LLM semantic extraction
-- [ ] 接入现有数字/尺寸/视距解析
-- [ ] 接入现有 keyword fast path
+- [x] 新建 `RequirementExtractor`
+- [x] 接入 LLM semantic extraction（带"客户原话证据"校验，防幻觉）
+- [x] 接入现有数字/尺寸/视距解析
+- [x] 接入现有 keyword fast path + canonical phrase 快速路径
 
 ## Phase 3 — 接 Sales
 
-- [ ] Sales requirement 改调用统一 Extractor
-- [ ] 删除重复 environment keywords
-- [ ] 保留已有数字解析
+- [x] Sales requirement 改调用统一 Extractor
+- [x] 删除重复 environment keywords（改为由 Extractor 统一解析）
+- [x] 保留已有数字解析（`extract_slots` 仍负责尺寸/视距/点间距）
 
 ## Phase 4 — 接 Solution
 
-- [ ] Solution requirement 改调用统一 Extractor
-- [ ] 保留 skip-understand 优化
-- [ ] 避免重复 LLM extraction
+- [x] Solution requirement 改调用统一 Extractor
+- [x] 保留 skip-understand 优化
+- [x] 避免重复 LLM extraction（同一轮语义结果缓存复用）
 
 ## Phase 5 — 接 RAG
 
-- [ ] `query_understanding.py` 改为兼容层
-- [ ] `_detect_purpose()` 降级为 fallback
-- [ ] 统一 canonical purpose
-- [ ] 保留技术关键词 parser
+- [x] `query_understanding.py` 改为确定性解析层（不再承担整个需求理解）
+- [x] `_detect_purpose()` 降级为 fallback（canonical purpose 由 PurposeNormalizer 统一）
+- [x] 统一 canonical purpose（22 个 token）
+- [x] 保留技术关键词 parser
 
 ## Phase 6 — 接 Router
 
-- [ ] 删除 `_SCENE_KEYWORDS` 的主判断职责
-- [ ] 改用 RequirementProfile
+- [x] 删除 `_SCENE_KEYWORDS` 的主判断职责（有结构化需求时优先）
+- [x] 改用 RequirementProfile（`has_structured_requirement()`）
 
 ## Phase 7 — 接 Script Generator
 
-- [ ] 删除独立 environment 推断
-- [ ] 只读取 RequirementProfile
+- [x] 删除独立 environment 推断
+- [x] 只读取 RequirementProfile
 
 ## Phase 8 — Gate
 
-- [ ] 改为检查结构化字段
-- [ ] 禁止 inferred 字段无条件打开 Gate
-- [ ] 增加 conflict blocking
+- [x] 改为检查结构化字段
+- [x] 禁止 inferred 字段无条件打开 Gate
+- [x] 增加 conflict blocking
 
 ## Phase 9 — 测试
 
-- [ ] 100+ Golden Cases
-- [ ] 7语言测试
-- [ ] 关键词缺失测试
-- [ ] 场景歧义测试
-- [ ] 参数解析测试
-- [ ] 推荐回归测试
+- [x] 100+ Golden Cases（113 条，`tests/requirement_extraction/golden_cases.json`）
+- [x] 7 语言测试（中/英离线；de/fr/es/ru/ja 走 LLM 语义层，默认跳过）
+- [x] 关键词缺失测试（≥30% purpose 用例不含关键词表原始词）
+- [x] 场景歧义测试（concert/stage/wedding/rental 必须保持"继续问"）
+- [x] 参数解析测试（视距 12 例 / 尺寸 10 例，含英制与中文）
+- [x] 推荐回归测试（沿用既有 660 条全量回归）
 
 ## Phase 10 — 删除重复代码
 
 只有测试全部通过后：
 
-- [ ] 删除重复关键词表
-- [ ] 删除重复场景分类
-- [ ] 删除 Script Generator 自己的环境推断
-- [ ] 删除 Router 独立场景词判断
-- [ ] 保留必要 deterministic parser
+- [x] 删除重复关键词表（Sales 侧 environment 关键词已删，改由 Extractor 统一）
+- [x] 删除重复场景分类（场景切换清理改为在 Profile 上做）
+- [x] 删除 Script Generator 自己的环境推断
+- [x] 删除 Router 独立场景词判断（降为 fallback）
+- [x] 保留必要 deterministic parser（数字/单位/技术关键词）
 
 ---
 
@@ -1628,3 +1672,20 @@ Scoring
 > **关键词负责“确定”，LLM负责“理解”，Parser负责“数字”，Rule Engine负责“约束”，Recommendation Engine负责“选型”。**
 
 这套职责划分最适合当前 `sale_agent_demo`，不需要推翻现有多 Agent + RAG + Recommendation Gate 架构，只需要把现在分散在多个模块中的“需求理解逻辑”收敛成一个统一入口。
+
+---
+
+# 附录：本轮改动文件清单（2026-09-15）
+
+| 文件 | 改动 |
+|---|---|
+| `src/core/requirement_extractor.py` | 接入 Sales 语义结果（`semantic_override`）、同轮语义缓存、canonical phrase 快速路径、客户原话证据校验、冲突写回 Profile、规则字段来源修正为 explicit |
+| `src/core/purpose_normalizer.py` | 补齐计划 Phase 20/27 列出的同义表达（shopping center / commercial complex / football venue / brand experience center / short-term installation 等） |
+| `src/core/environment_installation_resolver.py` | retail 统一为 indoor；冲突检测改为"同一轮两个明确信号互相矛盾"才算冲突 |
+| `src/models/requirement.py` | 新增 `conflicts` 字段；来源优先级修正为 explicit > scenario_derived > default |
+| `src/rag/readiness.py` | Gate 遇冲突直接阻断推荐 |
+| `src/rag/query_understanding.py` | 语言提示词去混入英文（修 de/en 误判）、英文词形变化（s/es/d/ed/ing/ly）、`open-air`、中文视距（"6 米远"）、university/lecture hall/language lab 归 classroom |
+| `src/rag/router.py` | 新增 `has_structured_requirement()`，结构化需求优先于关键词表 |
+| `src/agents/sales/nodes/requirement.py` | 改调统一 Extractor（同轮 LLM 结果作语义输入）；删除历史槽位重复解析与 legacy 场景切换块；场景切换清理改在 Profile 上做 |
+| `src/agents/solution/nodes/requirement.py` | 复用统一 Extractor 的同轮语义结果，避免重复 LLM 调用 |
+| `tests/requirement_extraction/` | **新增**：golden_cases.json（113 条）+ conftest + 5 个测试模块 |

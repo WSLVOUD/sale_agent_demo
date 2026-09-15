@@ -502,11 +502,10 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
     response_text = sanitize_customer_response(result.get("response", ""), outdoor=is_outdoor)
 
     if not response_text:
-        response_text = (
-            "No suitable outdoor model found. Try adding screen size details to continue."
-            if is_outdoor
-            else "No suitable model found. Try adding more details like screen size to continue."
-        )
+        # 【客户口径】没有匹配结果时不说"找不到"，改成邀请客户放宽某个条件
+        from src.rag.reply_composer import relaxation_answer, reply_language
+
+        response_text = relaxation_answer(reply_language(request.question))
 
     logger.info("Response: %s...", response_text[:100])
     return ChatResponse(

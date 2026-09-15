@@ -367,7 +367,13 @@ class FirstContactHandler:
         except Exception as e:
             logger.error(f"[FirstContact] Business card message generation failed: {e}")
             # 降级方案
-            fallback = "Here's my business card. To get that moving, could you share your company website, a personal email and personal business card?"
+            # 客户要求：这句话后面补一句"方便我们录入系统，后期可以触发优惠机制"，
+            # 英文版只加这一句，其它任何话都不加。
+            fallback = (
+                "Here's my business card. To get that moving, could you share your company website, "
+                "a personal email and personal business card? "
+                "This helps us register you in our system, and you can unlock promotional offers later."
+            )
             return fallback, False
 
     def _send_business_card(self, session_id: str) -> tuple[str, bool]:

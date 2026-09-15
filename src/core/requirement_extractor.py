@@ -45,6 +45,8 @@ class RequirementExtractor:
         self,
         message: str,
         previous_profile: Optional[RequirementProfile] = None,
+        semantic_override: Optional[Dict[str, Any]] = None,
+        use_llm: bool = True,
     ) -> RequirementProfile:
         """
         从客户消息中提取需求。
@@ -52,6 +54,9 @@ class RequirementExtractor:
         Args:
             message: 客户的自然语言消息
             previous_profile: 前一轮的需求档案（用于继承和合并）
+            semantic_override: 上游（Sales Agent 的同一次 LLM 调用）已经产出的
+                语义结果；给了它就不再单独调 LLM（Phase 13：同一轮只理解一次）
+            use_llm: 是否允许调用 LLM 做语义补充
 
         Returns:
             RequirementProfile - 结构化需求档案
@@ -67,12 +72,32 @@ class RequirementExtractor:
         rule_slots = extract_slots(message)
         logger.debug(f"Rule extraction: {rule_slots}")
 
+        # Step 2b: canonical phrase fast path（计划 Phase 6.2 / 22）
+        # 关键词表没覆盖的说法（shopping center / commercial complex / football venue…）
+        # 也先在短语表里找一次 —— 命中就不需要 LLM，这就是"关键词表降级为快速路径"。
+        if not rule_slots.get("purpose"):
+            canonical, confidence = self.purpose_normalizer.normalize(message)
+            if canonical:
+                rule_slots["purpose"] = canonical.value
+                rule_slots.setdefault("_explicit_keys", set()).add("purpose")
+                logger.info(
+                    "Purpose fast path: %r → %s (confidence %.2f)",
+                    message[:60], canonical.value, confidence,
+                )
+
         # Step 3: LLM 语义理解（低确定性场景、歧义解析）
-        llm_result = self._llm_semantic_extract(message, rule_slots)
+        if semantic_override:
+            llm_result = {k: v for k, v in semantic_override.items() if v is not None}
+            self._cache_semantic(message, llm_result)
+            logger.info("RequirementExtractor: 复用上游语义结果（不再调用 LLM）")
+        elif not use_llm:
+            llm_result = self._cached_semantic(message) or {}
+        else:
+            llm_result = self._llm_semantic_extract(message, rule_slots)
         logger.debug(f"LLM extraction: {llm_result}")
 
         # Step 4: 合并结果（规则优先，LLM 作补充）
-        merged_slots = self._merge_extractions(rule_slots, llm_result)
+        merged_slots = self._merge_extractions(rule_slots, llm_result, message)
         logger.debug(f"Merged slots: {merged_slots}")
 
         # Step 5: Purpose 标准化
@@ -122,7 +147,14 @@ class RequirementExtractor:
                 merged_slots.setdefault("_default_slots", []).append("installation")
 
         # Step 8: 构建 RequirementProfile（确定来源标记）
-        explicit_keys = merged_slots.pop("_explicit_keys", set())
+        # 关键：规则解析器从**客户原话**里读出来的字段（尺寸/视距/点间距/明确关键词）
+        # 本身就是客户说过的，必须算 explicit；只有它自己标了 inferred/default/
+        # scenario_derived 的才算"系统推断"。
+        rule_explicit = {k for k in rule_slots if not str(k).startswith("_")}
+        for marker in ("_inferred_slots", "_default_slots", "_scenario_derived"):
+            rule_explicit -= {str(x) for x in (rule_slots.get(marker) or [])}
+        explicit_keys = set(merged_slots.pop("_explicit_keys", set())) | rule_explicit
+        semantic_conflicts = merged_slots.pop("_semantic_conflicts", [])
         profile = RequirementProfile.from_slots(
             merged_slots,
             explicit_keys=explicit_keys,
@@ -134,12 +166,34 @@ class RequirementExtractor:
             logger.info(f"Merged with previous profile")
 
         # Step 10: 冲突检测
-        conflicts = self._detect_conflicts(profile, purpose_enum)
+        conflicts = self._detect_conflicts(
+            profile, purpose_enum, semantic_conflicts=semantic_conflicts
+        )
         if conflicts:
             logger.warning(f"Conflicts detected: {conflicts}")
-            # TODO: 将冲突信息记录到 profile 中
+        # 冲突以「本轮重新检测」为准，消解后自动清空
+        profile.conflicts = conflicts
 
         return profile
+
+    # ── Phase 13：同一轮对话内语义结果缓存（避免 Sales/Solution 重复调 LLM）──
+    _semantic_cache: Dict[str, Dict[str, Any]] = {}
+    _SEMANTIC_CACHE_LIMIT = 32
+
+    @staticmethod
+    def _cache_key(message: str) -> str:
+        return " ".join(str(message or "").lower().split())
+
+    def _cache_semantic(self, message: str, semantic: Dict[str, Any]) -> None:
+        key = self._cache_key(message)
+        if not key:
+            return
+        self._semantic_cache[key] = dict(semantic or {})
+        while len(self._semantic_cache) > self._SEMANTIC_CACHE_LIMIT:
+            self._semantic_cache.pop(next(iter(self._semantic_cache)))
+
+    def _cached_semantic(self, message: str) -> Optional[Dict[str, Any]]:
+        return self._semantic_cache.get(self._cache_key(message))
 
     def _llm_semantic_extract(
         self,
@@ -160,6 +214,12 @@ class RequirementExtractor:
         if has_purpose and has_environment and has_display_type:
             logger.debug("Rule extraction complete, skipping LLM")
             return {}
+
+        # Phase 13：同一轮已经理解过这条消息 → 直接复用，不再调 LLM
+        cached = self._cached_semantic(message)
+        if cached is not None:
+            logger.debug("Semantic extraction cache hit, skipping LLM")
+            return dict(cached)
 
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
@@ -193,7 +253,9 @@ class RequirementExtractor:
             try:
                 result = json.loads(response.content.strip())
                 # 过滤 null 值
-                return {k: v for k, v in result.items() if v is not None}
+                semantic = {k: v for k, v in result.items() if v is not None}
+                self._cache_semantic(message, semantic)
+                return semantic
             except json.JSONDecodeError:
                 logger.warning(f"LLM response not valid JSON: {response.content}")
                 return {}
@@ -206,6 +268,7 @@ class RequirementExtractor:
         self,
         rule_slots: Dict[str, Any],
         llm_result: Dict[str, Any],
+        message: str = "",
     ) -> Dict[str, Any]:
         """
         合并规则提取和 LLM 提取的结果。
@@ -214,44 +277,65 @@ class RequirementExtractor:
         1. 规则高确定性字段（数字、单位、明确关键词）
         2. LLM 补充的字段
         3. 冲突时规则优先
+
+        【防幻觉】LLM 给出的 environment / installation 必须带"客户原话证据"，
+        证据必须是客户消息里真实存在的片段，否则丢弃 —— 避免 LLM 替客户猜参数。
         """
         merged = dict(rule_slots)
+        semantic_conflicts: List[str] = []
 
         for key, value in llm_result.items():
-            if key not in merged:
-                # LLM 提供的新字段
-                merged[key] = value
-            # 如果规则已提取该字段，保持规则结果（规则优先）
+            if key.endswith("_evidence"):
+                continue
+            if key in merged:
+                # 规则已提取 → 规则优先；但如果两边都明确且互相矛盾，记录冲突（Phase 18）
+                if (
+                    key in ("environment", "installation")
+                    and merged.get(key)
+                    and value
+                    and merged.get(key) != value
+                ):
+                    semantic_conflicts.append(
+                        f"{key}_conflict: rule={merged.get(key)} vs semantic={value}"
+                    )
+                    logger.warning("Semantic conflict on %s: %s vs %s", key, merged.get(key), value)
+                continue
+            if key in ("environment", "installation"):
+                evidence = llm_result.get(f"{key}_evidence")
+                if not self._evidence_ok(message, evidence):
+                    logger.info(
+                        "Dropping LLM %s=%r — 缺少客户原话证据", key, value
+                    )
+                    continue
+            merged[key] = value
+            if key in ("purpose", "environment", "installation", "display_type"):
+                merged.setdefault("_explicit_keys", set()).add(key)
 
+        if semantic_conflicts:
+            merged.setdefault("_semantic_conflicts", []).extend(semantic_conflicts)
         return merged
+
+    @staticmethod
+    def _evidence_ok(message: str, evidence: Any) -> bool:
+        """证据片段必须真实出现在客户消息里（大小写不敏感）。"""
+        text = str(message or "").lower()
+        fragment = str(evidence or "").strip().lower()
+        return bool(fragment) and fragment in text
 
     def _detect_conflicts(
         self,
         profile: RequirementProfile,
         purpose: Optional[CanonicalPurpose],
+        semantic_conflicts: Optional[List[str]] = None,
     ) -> List[str]:
         """
         检测需求中的冲突。
 
         例如：
-        - environment 同时为 indoor 和 outdoor
+        - 同一轮里规则解析与语义提取给出矛盾的 environment / installation
         - display_type 为 IFP 但 environment 为 outdoor
         """
-        conflicts = []
-
-        # 检查 environment 冲突
-        env_conflicts = ConflictDetector.detect_environment_conflicts(
-            explicit=profile.environment,
-            purpose=purpose,
-        )
-        conflicts.extend(env_conflicts)
-
-        # 检查 installation 冲突
-        inst_conflicts = ConflictDetector.detect_installation_conflicts(
-            explicit=profile.installation,
-            purpose=purpose,
-        )
-        conflicts.extend(inst_conflicts)
+        conflicts = list(semantic_conflicts or [])
 
         # 检查 IFP 与 outdoor 冲突
         if profile.display_type == "IFP" and profile.environment == "outdoor":

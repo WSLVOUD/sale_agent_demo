@@ -36,6 +36,9 @@ SCENE_DEFAULT_ENVIRONMENT: dict[CanonicalPurpose, Optional[Environment]] = {
     CanonicalPurpose.EXHIBITION: "indoor",
     CanonicalPurpose.CONTROL_ROOM: "indoor",
     CanonicalPurpose.HALL: "indoor",
+    # 商场 / 零售：门店内的屏按室内处理（同一批关键词在 query_understanding 里
+    # 也是"一眼室内"）。商场外立面属于 advertising，不走这条。
+    CanonicalPurpose.RETAIL: "indoor",
 
     # 明确室外
     CanonicalPurpose.ADVERTISING: "outdoor",
@@ -46,7 +49,6 @@ SCENE_DEFAULT_ENVIRONMENT: dict[CanonicalPurpose, Optional[Environment]] = {
     CanonicalPurpose.STAGE: None,
     CanonicalPurpose.WEDDING: None,
     CanonicalPurpose.RENTAL: None,
-    CanonicalPurpose.RETAIL: None,
     CanonicalPurpose.OTHER: None,
 }
 
@@ -231,25 +233,24 @@ class ConflictDetector:
         purpose: Optional[CanonicalPurpose] = None,
     ) -> list[str]:
         """
-        检测环境相关的冲突。
+        检测环境相关的**真正冲突**：同一轮里出现两个互相矛盾的明确信号。
 
         例如：
-        - 客户说"室内"但提到"幕墙"（应为室外）
-        - 说"IFP"但是"室外"（不合理）
+        - 规则解析说 indoor，同轮的语义提取却说 outdoor → 需要澄清
+
+        注意：**"客户明确说 outdoor，但该场景通常 indoor"不算冲突** ——
+        按优先级，客户明确事实优先，场景默认值让位（例如零售店门口的户外屏）。
         """
         conflicts = []
 
-        # 冲突 1: 明确场景与环境不符
-        if purpose and explicit:
-            purpose_default = SCENE_DEFAULT_ENVIRONMENT.get(purpose)
-            if purpose_default and purpose_default != explicit:
+        if explicit and inferred and explicit != inferred:
+            if explicit != inferred:
                 logger.warning(
-                    f"Environment conflict: purpose={purpose.value} "
-                    f"typically {purpose_default} but customer said {explicit}"
+                    "Environment conflict: explicit=%s vs semantic=%s (purpose=%s)",
+                    explicit, inferred, purpose.value if purpose else None,
                 )
                 conflicts.append(
-                    f"environment_scene_mismatch: "
-                    f"{purpose.value} typically {purpose_default} but customer said {explicit}"
+                    f"environment_conflict: {explicit} vs {inferred}"
                 )
 
         return conflicts
@@ -261,24 +262,20 @@ class ConflictDetector:
         purpose: Optional[CanonicalPurpose] = None,
     ) -> list[str]:
         """
-        检测安装方式相关的冲突。
+        检测安装方式相关的**真正冲突**：同一轮里两个明确信号互相矛盾。
 
-        例如：
-        - 客户说"租赁"但场景是"会议室"（通常固装）
+        注意："租赁屏用于会议室"是正常业务（例如租一块屏开一天会），不算冲突。
         """
         conflicts = []
 
-        # 冲突 1: 明确场景与安装方式不符
-        if purpose and explicit:
-            purpose_default = SCENE_DEFAULT_INSTALLATION.get(purpose)
-            if purpose_default and purpose_default != explicit:
+        if explicit and inferred and explicit != inferred:
+            if explicit != inferred:
                 logger.warning(
-                    f"Installation conflict: purpose={purpose.value} "
-                    f"typically {purpose_default} but customer said {explicit}"
+                    "Installation conflict: explicit=%s vs semantic=%s (purpose=%s)",
+                    explicit, inferred, purpose.value if purpose else None,
                 )
                 conflicts.append(
-                    f"installation_scene_mismatch: "
-                    f"{purpose.value} typically {purpose_default} but customer said {explicit}"
+                    f"installation_conflict: {explicit} vs {inferred}"
                 )
 
         return conflicts

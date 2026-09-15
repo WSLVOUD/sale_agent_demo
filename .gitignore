@@ -36,9 +36,11 @@ secrets/
 .secrets/
 
 # ── 向量库 & 模型权重（可重新生成/下载，占空间大）──
-vectorstore/
-vectorstore_rebuilt/
-models/
+# 注意：必须锚定到仓库根目录！写成 `models/` 会把 src/models/ 整个源包也忽略掉，
+# 导致新增的 src/models/*.py（如 legacy_adapter.py）永远提交不上去。
+/vectorstore/
+/vectorstore_rebuilt/
+/models/
 *.sqlite3
 *.db
 *.faiss

@@ -53,6 +53,13 @@ def _parse_number(text: str) -> int:
 
 ADDITIONAL_CONTEXT_KEYS = ["pixel_pitch", "rental", "quick_install", "indoor", "outdoor"]
 
+# 场景切换时需要清理的字段：legacy 字段名 → RequirementProfile 字段名
+_LEGACY_TO_PROFILE_FIELDS: dict = {
+    "display_type": ("display_type",),
+    "size": ("target_width_m", "target_height_m", "screen_size_hint_mm"),
+    "brightness": ("brightness_min_nit", "brightness_max_nit"),
+}
+
 # 场景分类 - 用于检测上下文是否发生重大变化
 # 注意：M1 之后 requirements 是 RequirementProfile 的投影，usage 可能是规范化 token
 # （conference / church / advertising …），所以这里两套写法都要认。
@@ -257,6 +264,11 @@ def requirement_mining(state: SalesState) -> SalesState:
 请从对话中提取信息，**并给出一句自然的口语回应**，返回 JSON：
 {
   "usage": "用户原话描述的使用场景，如'会议室'、'演唱会'、'展厅'；没有则 null",
+  "purpose": "使用场景的**标准 token**（只能从下面这张表里选，不能自造）：retail/advertising/conference/classroom/stadium/concert/stage/wedding/church/museum/showroom/airport/bank/hotel/restaurant/office/hospital/exhibition/hall/rental/control_room/other；没有则 null",
+  "environment": "indoor / outdoor / semi_outdoor —— **只有客户这句话里明确说了室内外才填**（比如 open-air、on the facade、露天、室内），否则必须 null",
+  "environment_evidence": "填 environment 时，必须给出客户原话里的**原样片段**（例如 'open-air advertising'）；没填 environment 时给空字符串",
+  "installation": "fixed / rental —— **只有客户明确说了安装方式才填**（permanent、fixed、rental、temporary、租赁），否则 null",
+  "installation_evidence": "填 installation 时给出客户原话里的原样片段（例如 'rental'）；没填时给空字符串",
   "additional_requirements": ["用户明确提出的、无法归入场景的特殊要求，如'租赁'、'防水'、'高刷新率'"],
   "ack": "一句话自然回应客户这句话本身；没有可回应的内容时返回空字符串"
 }
@@ -272,12 +284,17 @@ ack 的写法（很重要，销售不能只会追问）：
 6. 语言要求：""" + _ack_language_rule + """
 
 提取规则：
-1. **绝对不要**推断或补全以下任何工程参数：室内/室外、固装/租赁、观看距离、
-   屏幕尺寸、亮度、分辨率、点间距 —— 这些由系统的确定性解析器从用户原话提取，
-   如果用户没说，必须让系统继续询问，而不是由你猜测。
-2. usage 只写用户实际描述的场景原词，不要映射、不要扩展。
-3. 没有对应信息就返回 null 或 []，禁止编造。
-4. 只返回 JSON，不要任何解释。""")
+1. **purpose 是语义归一化**：客户用各种说法（shopping center / commercial complex /
+   football venue / corporate boardroom / 商场 / 教堂…）你都要映射到标准 token；
+   但**不要**因此推断客户没说的其它参数。
+2. **environment / installation 只能来自客户原话**，并且必须给出原样证据片段；
+   没有明确说就返回 null —— 绝对不要根据场景替客户猜（例如"会议室"不能推断 indoor，
+   除非客户自己说了 indoor）。
+3. **绝对不要**补全这些工程参数：观看距离、屏幕尺寸、亮度、分辨率、点间距 ——
+   它们由系统的确定性解析器从客户原话提取。
+4. usage 只写用户实际描述的场景原词，不要映射、不要扩展（映射由 purpose 负责）。
+5. 没有对应信息就返回 null 或 []，禁止编造。
+6. 只返回 JSON，不要任何解释。""")
     
     current_msg = HumanMessage(content=f"已有需求：{state['requirements']}\n\n当前对话：\n{conversation}")
     response = llm.invoke([prompt, current_msg])
@@ -287,6 +304,7 @@ ack 的写法（很重要，销售不能只会追问）：
     
     # Parse extracted requirements
     import json
+    semantic_payload: dict = {}
     try:
         extracted = json.loads(response.content.strip())
         # 只信任 LLM 的 usage 与 additional_requirements。
@@ -313,6 +331,16 @@ ack 的写法（很重要，销售不能只会追问）：
                 state["acknowledgement"] = ack
             elif k == "usage" and v:
                 state["requirements"][k] = v
+
+        # ── Phase 3/13：把这次 LLM 调用的语义结果交给统一 Extractor ─────────
+        # purpose（标准 token）+ 带原话证据的 environment / installation。
+        # 这样同一轮只做一次 LLM 语义理解，Sales 与 Solution 共用结果。
+        for key in ("purpose", "environment", "installation", "display_type"):
+            if extracted.get(key) not in (None, "", []):
+                semantic_payload[key] = extracted[key]
+        for key in ("environment_evidence", "installation_evidence"):
+            if extracted.get(key):
+                semantic_payload[key] = extracted[key]
     except json.JSONDecodeError:
         logger.warning("Failed to parse requirements JSON")
     
@@ -358,27 +386,8 @@ ack 的写法（很重要，销售不能只会追问）：
             )
             state["intent"] = "need_query"
 
-    # 上下文变化检测：当 usage 从一种场景类别变为另一种时，清除上下文相关字段
-    cleared_legacy_fields: list = []
-    old_usage = pre_merge_requirements.get("usage", "")
-    old_category = _get_scene_category(old_usage)
-    new_usage = state["requirements"].get("usage", "")
-    new_category = _get_scene_category(new_usage)
-    
-    if old_category != new_category and old_category != "unknown":
-        logger.info(f"Context change detected: {old_category} → {new_category}, checking fields to clear")
-        fields_to_clear = []
-        for old_scene, fields in CONTEXT_DEPENDENT_FIELDS.items():
-            if _should_clear_field_on_scene_change(old_category, new_category, fields[0] if fields else ""):
-                fields_to_clear.extend(fields)
-        # 去重
-        fields_to_clear = list(set(fields_to_clear))
-        for field in fields_to_clear:
-            if field in state["requirements"]:
-                logger.info(f"Clearing stale field '{field}' from previous context ({old_category})")
-                state["requirements"].pop(field)
-                cleared_legacy_fields.append(field)
-        # 注意：这里**不再**重新计算是否推荐 —— 是否推荐只由下面的 Ready Gate 决定
+    # 注：上下文变化检测（场景切换清理）已经移到 Profile 上做（见下方 Extractor 之后），
+    # 这里不再在 legacy 字典上重复一遍。
 
     # IFP safety: only keep IFP in meeting room context
     # Context-aware: check current usage, not just message keywords
@@ -430,44 +439,44 @@ ack 的写法（很重要，销售不能只会追问）：
         else:
             profile = RequirementProfile.from_legacy(state["requirements"])
 
-        # 本轮消息里解析出的字段是**客户刚说过的**，必须标记为 explicit，
-        # 否则会被误判成"推断值"而挡住推荐（例如客户明说"固定安装"却被当成没说过）。
-        from ....rag.query_understanding import merge_slots
+        # ── Phase 3：本轮需求理解统一走 RequirementExtractor ─────────────────
+        # 规则解析（数字/尺寸/单位/明确关键词）+ 语义结果（复用本轮 Sales 的那一次
+        # LLM 调用，semantic_override）+ purpose 标准化 + 环境/安装方式统一解析 +
+        # 冲突检测，全部由 Extractor 负责，这里不再自己拼关键词。
+        from ....core.requirement_extractor import get_requirement_extractor
 
-        if state.get("requirements_reset"):
-            history_slots = {}
-        else:
-            history_slots = {}
-            for msg in state.get("messages") or []:
-                role, content = _message_role_content(msg)
-                if role in ("user", "human") and content:
-                    history_slots = merge_slots(history_slots, extract_slots(content))
+        previous_purpose = profile.purpose
         message_slots = extract_slots(current_msg_text)
-        combined_slots = merge_slots(history_slots, message_slots)
-        if combined_slots:
-            profile = profile.merge(
-                RequirementProfile.from_slots(
-                    combined_slots, explicit_keys=set(combined_slots)
-                )
-            )
-        profile = profile.merge(
-            RequirementProfile.from_slots(message_slots, explicit_keys=set(message_slots))
+        profile = get_requirement_extractor().extract(
+            current_msg_text,
+            previous_profile=profile,
+            semantic_override=semantic_payload or None,
         )
 
-        # ── M1：旧字段的清理必须同步到 Profile ───────────────────────────────
-        # 场景切换时上面清掉了 legacy 的 display_type / size / brightness；
-        # 如果不同步到 Profile，下面的 adapter 又会把它们写回来（旧字段"复活"）。
-        _LEGACY_TO_PROFILE_FIELDS: dict = {
-            "display_type": ("display_type",),
-            "size": ("target_width_m", "target_height_m", "screen_size_hint_mm"),
-            "brightness": ("brightness_min_nit", "brightness_max_nit"),
-        }
-        for legacy_field in cleared_legacy_fields:
-            for profile_field in _LEGACY_TO_PROFILE_FIELDS.get(legacy_field, ()):
-                if getattr(profile, profile_field, None) is not None:
-                    logger.info("Clearing stale profile field '%s' (scene changed)", profile_field)
-                    setattr(profile, profile_field, None)
-                    profile.sources.pop(profile_field, None)
+        # ── 场景切换 → 清掉依赖上一个场景的字段（原来在 legacy 字典上做）──────
+        old_category = _get_scene_category(previous_purpose or "")
+        new_category = _get_scene_category(profile.purpose or "")
+        if (
+            previous_purpose
+            and profile.purpose
+            and old_category != new_category
+            and old_category != "unknown"
+        ):
+            fields_to_clear: list = []
+            for _old_scene, fields in CONTEXT_DEPENDENT_FIELDS.items():
+                if _should_clear_field_on_scene_change(
+                    old_category, new_category, fields[0] if fields else ""
+                ):
+                    fields_to_clear.extend(fields)
+            for legacy_field in set(fields_to_clear):
+                for profile_field in _LEGACY_TO_PROFILE_FIELDS.get(legacy_field, ()):
+                    if getattr(profile, profile_field, None) is not None:
+                        logger.info(
+                            "Clearing stale profile field '%s' (scene %s → %s)",
+                            profile_field, old_category, new_category,
+                        )
+                        setattr(profile, profile_field, None)
+                        profile.sources.pop(profile_field, None)
 
         # IFP 安全规则同理：legacy 侧既然已经把 display_type 去掉了，Profile 也要去掉
         if state["requirements"].get("display_type") in (None, "") and profile.display_type == "IFP":

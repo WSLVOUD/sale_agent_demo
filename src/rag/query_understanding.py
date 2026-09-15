@@ -34,11 +34,20 @@ _HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
 _ARABIC_RE = re.compile(r"[\u0600-\u06ff]")
 
 _LANGUAGE_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("es", ("necesito", "pantalla", "exterior", "distancia", "interior", "alquiler")),
-    ("fr", ("je cherche", "écran", "ecran", "extérieur", "exterieur", "distance", "salle")),
-    ("de", ("ich brauche", "display", "innenbereich", "abstand", "außenbereich", "mieten", "metern")),
-    ("pt", ("preciso", "painel", "interno", "externo", "distância", "distancia")),
-    ("it", ("cerco", "schermo", "esterno", "distanza", "interno")),
+    # 注意：提示词必须是该语言**特有**的，不能混入英文单词
+    # （曾经把英文 "display" 放进德语提示 → 任何含 display 的英文都被判成德语）
+    ("de", (
+        "ich brauche", "wir brauchen", "brauchen", "bildschirm", "leinwand",
+        "innenbereich", "außenbereich", "abstand", "mieten", "metern",
+    )),
+    ("fr", (
+        "je cherche", "nous avons besoin", "besoin d", "écran", "ecran",
+        "extérieur", "exterieur", "salle de",
+    )),
+    ("es", ("necesito", "pantalla", "centro comercial", "alquiler", "distancia de")),
+    ("pt", ("preciso", "painel", "distância", "aluguel")),
+    ("it", ("cerco", "schermo", "distanza", "esterno")),
+    ("ru", ("нам нужен", "нужен", "экран", "расстояние")),
 )
 
 
@@ -111,6 +120,7 @@ _INDOOR_KEYWORDS = (
 )
 _OUTDOOR_KEYWORDS = (
     "户外", "室外", "露天", "屋外", "外墙", "幕墙", "outside", "outdoor", "outdoors",
+    "open-air", "open air",
     "exterior", "extérieur", "exterieur", "außenbereich", "aussenbereich", "externo",
     "улиц", "наружн", "屋外",
 )
@@ -143,7 +153,7 @@ _PURPOSE_KEYWORDS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("stage", ("舞台", "演出", "表演", "剧场", "stage", "performance", "bühne", "сцена"), "stage performance"),
     ("wedding", ("婚礼", "婚宴", "婚庆", "结婚", "wedding", "marriage", "hochzeit", "свадьба", "結婚式"), "wedding event marriage"),
     ("control_room", ("指挥中心", "监控中心", "控制室", "中控室", "command center", "control room"), "control room command center"),
-    ("classroom", ("教室", "培训室", "培训", "教学", "学校", "课堂", "classroom", "class room", "smart classroom", "training room", "school"), "classroom education training"),
+    ("classroom", ("教室", "培训室", "培训", "教学", "学校", "课堂", "classroom", "class room", "smart classroom", "training room", "school", "university", "lecture hall", "language lab"), "classroom education training"),
     ("conference", ("会议室", "会议", "meeting room", "conference", "boardroom", "会議室"), "conference room meeting room"),
     ("church", ("教堂", "礼拜", "宗教", "礼拜堂", "教会", "church", "worship", "place of worship"), "church place of worship"),
     ("museum", ("博物馆", "museum", "gallery", "美术馆"), "museum exhibition display"),
@@ -266,7 +276,11 @@ def _keyword_pattern(token: str) -> Optional["re.Pattern[str]"]:
             # 注意：不能用 \b —— Python 的 \w 把中文也算作"单词字符"，
             # 于是 "会议室用LCD" 里的 lcd 前面就不是边界，关键词会匹配不到。
             # 这里用"前后不是英文字母/数字"来界定英文关键词。
-            pattern = re.compile(rf"(?<![a-z0-9]){words}s?(?![a-z0-9])", re.IGNORECASE)
+            # 词形变化也认：permanent→permanently / bank→banking / mount→mounted / store→stores
+            pattern = re.compile(
+                rf"(?<![a-z0-9]){words}(?:s|es|d|ed|ing|ly)?(?![a-z0-9])",
+                re.IGNORECASE,
+            )
             _ASCII_WORD_RE_CACHE[token] = pattern
         return pattern
     return None
@@ -340,7 +354,10 @@ def _extract_viewing_distance(text: str) -> Optional[float]:
             bare = re.compile(
                 # 注意排除前面的 "." / ","：否则 "长1.29米" 会被从 "29米" 开始匹配成 29 米
                 r"(?<![\w.,])(?:about|around|approx\.?|approximately|roughly|约|大概|大约|差不多)?\s*"
-                + _DISTANCE_VALUE + r"\s*(?:meters?|metres?|m|米|feet|foot|ft|英寸|英尺)(?=\s|$|[，。,.?？!])",
+                + _DISTANCE_VALUE
+                + r"\s*(?:meters?|metres?|m|米|feet|foot|ft|英寸|英尺)"
+                # 单位后面可以是空白/结尾/标点，也可以是中文（"6 米远"）
+                + r"(?=\s|$|[，。,.?？!]|[\u4e00-\u9fff])",
                 re.IGNORECASE,
             )
             match = bare.search(lowered)

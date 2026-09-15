@@ -95,6 +95,9 @@ LLM 最终销售话术（全程仅 1 次）
 | `src/rag/reply_composer.py` | "先回应客户 + 再追问需求"的组合回复（不增加 LLM 调用） |
 | `src/models/legacy_adapter.py` | RequirementProfile → 旧字段的**只读**兼容层（单向投影） |
 | `src/rag/company_info.py` | 公司 / 办事处 / 地址类提问的照实回答（读 `company_profile.txt`） |
+| `src/core/requirement_extractor.py` | 统一需求理解入口（规则 + 短语快速路径 + LLM 语义 + 证据校验 + 冲突） |
+| `src/core/purpose_normalizer.py` | 场景 → 22 个 canonical purpose token |
+| `src/core/environment_installation_resolver.py` | 环境/安装方式统一解析（优先级 + 冲突检测） |
 
 ### 行为变化（相对旧版）
 
@@ -121,7 +124,13 @@ LLM 最终销售话术（全程仅 1 次）
 - **三套需求状态统一为一套（Profile 是唯一真相）**：`RequirementProfile` 成为唯一主状态 —— 每轮只做"加载已持久化的 Profile + merge 本轮消息"，旧 `requirements` 由 `src/models/legacy_adapter.py` **单向投影**生成（不再反向重建、不会漂移、线索字段也不会"复活"）；Solution 直接消费 Sales 传下来的 Profile，不再自己解析对话重建需求。
 - **来源四态**：`confirmed`（客户明说）/ `scenario_derived`（会议室、教堂、户外广告、体育场等由客户原话场景直接判定）/ `default`（系统默认，如场景默认固装）/ `inferred`（算法估算）。前三者可用于打开 Ready Gate，`default` 只参与打分，`inferred` 永远不能当客户确认。
 - **推荐只有一道闸门**：全项目里 `should_generate_solution` 只能由 Ready Gate 置为 `True`；Gate 抛异常时显式安全降级（不推荐）；`required_met` / `required_missing` 降级为 Gate 结果的投影，旧的 `should_trigger_solution()` / `REQUIRED_KEYS` 判定已删除。
-- **室外点间距边界 P6 及以上，默认首选 P6**：室外场景推断出的点间距下限抬到 6.0mm（上限取目录最粗档 P10），P2.5~P5 的细间距只用于室内 / 近距离；推荐打分对室外改成"越接近下限（P6）越高分"，所以不管视距 5m 还是 50m，**首选都是 P6 档**（如 `TW11-OD-P6`），P8 / P10 作为备选。客户自己点名了点间距（P8、甚至 P2.5）时一律按客户的要求走，不受这条边界影响。确定性校验里也加了 `outdoor_pitch_boundary` 这一项。
+- **需求理解收敛到一个入口（关键词依赖优化）**：Sales / Solution 都改成调用 `RequirementExtractor` —— 规则解析负责确定性事实与数字，规范短语表（canonical phrase）作为快速路径，LLM 只补语义并**必须给出客户原话证据**（防止替客户猜参数）；同一轮只在 Sales 调一次 LLM，Solution 复用缓存结果。场景从"必须命中关键词"升级为"语义归一化到 22 个 canonical purpose"。
+- **冲突可检测、可阻断**：同一轮出现两个互相矛盾的明确信号（例如规则说室内、语义说室外）会记录到 `RequirementProfile.conflicts`，Ready Gate 直接阻断推荐并要求澄清；而"客户明确说租赁 + 会议室场景"这类正常业务不再被误判为冲突（客户明确事实优先）。
+- **点间距按"环境 + 观看距离"选（客户口径，2026-09-15）**：
+  - **室外**：≤4m → **P4**（客户 4m 就推 P4）｜4–5m → P4 或 P5｜**6–20m → P5**（这个区间 P5 最合适）｜20–25m → P6.67｜**25–30m → P8**｜**超过 30m → 一律 P10**；半户外按室外口径。
+  - **室内**：**≤3m → P2.5 及以下**（越近越细）｜**>3m → P3 及以上**（首选 P3，如 `TW11-3216-P3.0`）。
+  - 客户**明确点名点间距**时一律以客户为准（连场景偏好都不再参与打分）。
+  - 实现：`parameter_inference.preferred_pitch_for_environment()` 给出区间与首选值，`recommendation_engine` 在有业务首选值时把 pitch 权重提高 2.5 倍（保证规则压过场景/预算等软偏好），并在 `_violation` 里把该区间当硬约束执行。
 - **客户只报一个长度时会先确认方向**：客户回 `129,2cm` / `1292 mm` / `51 inch` 这类裸尺寸时，系统记为"尺寸线索"并追问"这是宽度、高度还是对角线？"（把客户给的数字填进问题里）；客户回"宽度/高度"即落成对应尺寸，"对角线"则回到问宽高 —— 全程不替客户猜。
 - **一句里给出两个尺寸也能同时接住**：支持"数字 + 单位 + 方向词"的两种语序（`45cm is the width` / `width is 45cm` / `长1.29米，宽0.45米`），并把客户口中的"长/长边(length)"理解为水平方向的"宽"——当一句话里同时出现"长 + 宽"时，长边落成宽、另一条边落成高（`129,2cm us the length and 45xm is width` → 129.2 cm 宽 × 45 cm 高）。`45xm` 这类把 `cm` 打成 `xm` 的笔误也会纠正。
 - **报需求的话不会被当成"闲聊问题"**：客户回答室内外 / 安装方式 / 视距 / 尺寸（如 `129,2cm`、`about 100 feet`）时，一律留在需求采集流程；之前会被判成 `others` 走自由问答，在 Gate 未通过时就把 indoor/outdoor 各系列型号一股脑倒出来。
@@ -148,6 +157,10 @@ LLM 最终销售话术（全程仅 1 次）
 - `trigger_solution` 但产品数为 0 时也会被标记成"已推荐"，会让下一轮"换个产品"被误判；现在只有真的给出产品才标记。
 - 客户问 "Do you have a representative in western India" 时，`availability_answer` 只凭句子里有 LED 就回了 `Yes — we do carry an LED.`：既答非所问、又凭空说 Yes。现在公司类问题一律交给 `src/rag/company_info.py` 按公司信息照实回答；"有没有某规格"也必须**带具体规格**（点间距 / COB / HDR / 防水 / 型号）才回答，泛问不再乱说 Yes。
 - 公司信息此前完全没被问答链路使用（连 `company_profile.txt` 里的 `Location: Shenzhen, China` 都没解析）——现在 `CompanyProfile` 增加 `location`、兼容 `Company description` 键，并新增公司信息问答模块。
+- **语言识别把英文判成德语**：`_LANGUAGE_HINTS` 的德语提示里混进了英文单词 `display`，任何含 "display" 的英文句子都被判成 `de`（影响回复语言策略与多语言关键词表）。现在提示词只保留该语言特有词。
+- **英文词形变化识别不到**：`permanently` / `banking` / `wall mounted` 都匹配不上关键词（当时只支持可选复数 s）。现在支持 `s/es/d/ed/ing/ly` 词尾。
+- 中文视距 `观众大概 6 米远` 解析不到（单位后要求空白/标点）；`open-air` 不在室外关键词里；`retail`（商场）在 EnvironmentResolver 里被当成"室内外都可能"，与 `query_understanding` 不一致。三处均已修正。
+- 换成"室内首选 P3.0"后暴露一个误报：型号名里的 `P3.0` 与数据里的实际点间距 `3.076mm` 对不上，被确定性校验判成"虚构参数"（扣 1.5 分）。现在厂商命名里的 P 值也算真实数据。
 
 ---
 
@@ -598,7 +611,7 @@ RESPONSE_LANGUAGE_POLICY=en          # en=始终英语（默认）；auto=跟随
 | Phase 10 | Memory 分层（requirements / history 分离） | ✅ 完成 |
 | Phase 11 | 性能优化（Embedding/向量库缓存） | ✅ 完成 |
 | Phase 12 | 可观测性（PerfTracker + 可选 Langfuse） | ✅ 完成 |
-| Phase 13 | 测试套件 | ✅ 完成（531 条通过，0 条跳过） |
+| Phase 13 | 测试套件 | ✅ 完成（660 条通过，4 条按需跳过：非中英文场景需 LLM） |
 | Phase 14 | Memory 持久化（SQLite） | 🚧 规划中 |
 | Phase 15 | 首次客户固定工作流（First Contact） | ✅ 完成 |
 

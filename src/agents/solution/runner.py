@@ -339,10 +339,10 @@ class SolutionAgentRunner:
             answer = sanitize_customer_response(answer, outdoor=bool(final_requirement.get("outdoor")))
 
             if not answer:
-                if final_requirement.get("outdoor"):
-                    answer = "No suitable outdoor model found. Try confirming the screen size to continue."
-                else:
-                    answer = "No suitable model found. Try adding more details like screen size to continue."
+                # 【客户口径】不说"找不到"，改成邀请客户放宽某个条件
+                from ...rag.reply_composer import relaxation_answer
+
+                answer = relaxation_answer()
 
             # Keep compact format
             answer = "\n".join(line.strip() for line in answer.splitlines() if line.strip())

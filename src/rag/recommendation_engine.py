@@ -40,26 +40,29 @@ WEIGHTS: Dict[str, float] = {
 }
 
 # 场景 → 偏好点间距区间（用于"场景契合"打分）
+# 业务规则：**室内默认首选 3~3.5mm**，所以室内场景的偏好区间统一在 3.0~3.5mm；
+# 远距离大屏（机场/户外广告/体育场）与演出类维持更粗的口径。
+# 客户明确点名点间距时不看这张表（走 explicit 分支）。
 SCENE_PITCH_PREFERENCE: Dict[str, Tuple[float, float]] = {
-    "conference": (1.8, 2.5),
-    "classroom": (2.0, 3.0),
-    "church": (2.0, 5.0),
-    "retail": (1.5, 2.5),
-    "showroom": (0.7, 1.5),
-    "museum": (0.7, 2.0),
-    "hall": (2.5, 4.0),
-    "control_room": (1.2, 2.0),
-    "office": (1.8, 2.5),
-    "hotel": (2.0, 3.0),
-    "bank": (1.8, 3.0),
-    "restaurant": (1.8, 2.5),
+    "conference": (3.0, 3.5),
+    "classroom": (3.0, 3.5),
+    "church": (3.0, 3.5),
+    "retail": (3.0, 3.5),
+    "showroom": (3.0, 3.5),
+    "museum": (3.0, 3.5),
+    "hall": (3.0, 4.0),
+    "control_room": (3.0, 3.5),
+    "office": (3.0, 3.5),
+    "hotel": (3.0, 3.5),
+    "bank": (3.0, 3.5),
+    "restaurant": (3.0, 3.5),
     "airport": (3.0, 5.0),
-    "hospital": (1.5, 2.5),
+    "hospital": (3.0, 3.5),
     "advertising": (4.0, 10.0),
     "stadium": (4.0, 10.0),
     "concert": (2.6, 4.8),
     "stage": (2.6, 4.8),
-    "exhibition": (2.0, 3.9),
+    "exhibition": (3.0, 3.9),
     "rental": (2.6, 4.8),
 }
 
@@ -311,6 +314,15 @@ class RecommendationEngine:
             return f"点间距 {pitch}mm 小于客户要求 {c.pixel_pitch_min}mm"
         if c.pixel_pitch_max is not None and pitch > c.pixel_pitch_max + 1e-6:
             return f"点间距 {pitch}mm 大于客户要求 {c.pixel_pitch_max}mm"
+        # 客户没点名点间距时，"环境 + 观看距离"的业务区间同样按硬约束处理
+        # （室外 4m → P4 就不再推 P2.5；室内 >3m → P3 及以上就不再推 P2.5）
+        if c.pixel_pitch_min is None and c.pixel_pitch_max is None:
+            band_min = technical.get("pixel_pitch_min_mm")
+            band_max = technical.get("pixel_pitch_max_mm")
+            if band_min is not None and pitch < float(band_min) - 1e-6:
+                return f"点间距 {pitch}mm 低于该距离/环境的推荐下限 {band_min}mm"
+            if band_max is not None and pitch > float(band_max) + 1e-6:
+                return f"点间距 {pitch}mm 高于该距离/环境的推荐上限 {band_max}mm"
         if c.brightness_min is not None and model.brightness_nit < c.brightness_min:
             return f"亮度 {model.brightness_nit}nit 低于客户要求 {c.brightness_min}nit"
         if c.brightness_max is not None and model.brightness_nit > c.brightness_max:
@@ -332,8 +344,17 @@ class RecommendationEngine:
             "quality": self._quality_score(model),
         }
         applicable = {k: v for k, v in breakdown.items() if v is not None}
-        total_weight = sum(WEIGHTS[k] for k in applicable) or 1.0
-        score = sum(WEIGHTS[k] * v for k, v in applicable.items()) / total_weight * 100
+        # 业务规则给的"首选点间距"（室内 ≤3m→P2.5 / >3m→P3；室外 4m→P4、5m→P4-P5、
+        # 6~20m→P5、>30m→P10）必须**稳定压过**场景/预算等软偏好，
+        # 否则出现"规则说 P5、却被场景偏好推到 P6"的情况 → 提高 pitch 权重。
+        weights = WEIGHTS
+        if (
+            technical.get("pitch_target_mm") is not None
+            and profile.pixel_pitch_mm is None
+        ):
+            weights = {**WEIGHTS, "pitch": WEIGHTS["pitch"] * 2.5}
+        total_weight = sum(weights[k] for k in applicable) or 1.0
+        score = sum(weights[k] * v for k, v in applicable.items()) / total_weight * 100
         reasons = self._reasons(model, profile, breakdown)
         return ScoredModel(model=model, score=score, breakdown=breakdown, reasons=reasons)
 
@@ -341,7 +362,13 @@ class RecommendationEngine:
         purpose = profile.purpose
         scores: List[float] = []
 
-        if purpose and purpose in SCENE_PITCH_PREFERENCE:
+        # 客户明确点名了点间距 → 场景偏好不再参与（一律听客户的），
+        # 否则"客户要 P2.0、场景偏好 P3"会互相打架，出现推荐 P2.5 的结果。
+        if (
+            purpose
+            and purpose in SCENE_PITCH_PREFERENCE
+            and profile.pixel_pitch_mm is None
+        ):
             low, high = SCENE_PITCH_PREFERENCE[purpose]
             scores.append(_band_fit(model.pixel_pitch_mm, low, high))
 
@@ -379,10 +406,13 @@ class RecommendationEngine:
         high = technical.get("pixel_pitch_max_mm")
         if low is None or high is None:
             return None
-        # 室外屏：默认首选落在下限（P6），只有客户点名了点间距才按客户的来
-        # （业务规则：室外点间距 P6 及以上，且优先给最细的 P6）
-        if str(getattr(profile, "environment", "") or "") == "outdoor":
-            return _graded_pitch_fit(model.pixel_pitch_mm, low, high, target_ratio=0.0)
+        # 业务规则给出的"首选点间距"（室内 ≤3m→2.5 / >3m→3.0；
+        # 室外 4m→4.0 / 5m→4.5 / 6~20m→5.0 / 20~30m→6.7 / >30m→10.0）
+        target = technical.get("pitch_target_mm")
+        if target is not None:
+            span = max(high - low, 0.1)
+            ratio = (min(max(float(target), low), high) - low) / span
+            return _graded_pitch_fit(model.pixel_pitch_mm, low, high, target_ratio=ratio)
         # 区间内按"性价比最优点"（区间 75% 位置）渐变打分：
         # 越靠近该点越高分，贴着区间边缘次之，越界快速衰减。
         return _graded_pitch_fit(model.pixel_pitch_mm, low, high)

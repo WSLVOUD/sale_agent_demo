@@ -55,6 +55,11 @@ PURPOSE_MAPPING: Dict[str, CanonicalPurpose] = {
     "store": CanonicalPurpose.RETAIL,
     "shop": CanonicalPurpose.RETAIL,
     "supermarket": CanonicalPurpose.RETAIL,
+    # 计划 Phase 20/27 列出的"同义表达"（canonical phrase fast path，不是旧关键词表）
+    "hypermarket": CanonicalPurpose.RETAIL,
+    "convenience store": CanonicalPurpose.RETAIL,
+    "brand experience center": CanonicalPurpose.RETAIL,
+    "experience center": CanonicalPurpose.RETAIL,
 
     "advertising": CanonicalPurpose.ADVERTISING,
     "billboard": CanonicalPurpose.ADVERTISING,
@@ -73,6 +78,9 @@ PURPOSE_MAPPING: Dict[str, CanonicalPurpose] = {
     "conference room": CanonicalPurpose.CONFERENCE,
     "corporate": CanonicalPurpose.CONFERENCE,
     "business meeting": CanonicalPurpose.CONFERENCE,
+    "meeting facility": CanonicalPurpose.CONFERENCE,
+    "conference center": CanonicalPurpose.CONFERENCE,
+    "executive meeting room": CanonicalPurpose.CONFERENCE,
 
     "classroom": CanonicalPurpose.CLASSROOM,
     "school": CanonicalPurpose.CLASSROOM,
@@ -84,6 +92,9 @@ PURPOSE_MAPPING: Dict[str, CanonicalPurpose] = {
     "stadium": CanonicalPurpose.STADIUM,
     "sports": CanonicalPurpose.STADIUM,
     "sports venue": CanonicalPurpose.STADIUM,
+    "football venue": CanonicalPurpose.STADIUM,
+    "basketball arena": CanonicalPurpose.STADIUM,
+    "baseball park": CanonicalPurpose.STADIUM,
     "sports complex": CanonicalPurpose.STADIUM,
     "arena": CanonicalPurpose.STADIUM,
     "football": CanonicalPurpose.STADIUM,
@@ -109,6 +120,7 @@ PURPOSE_MAPPING: Dict[str, CanonicalPurpose] = {
 
     "church": CanonicalPurpose.CHURCH,
     "worship": CanonicalPurpose.CHURCH,
+    "temple": CanonicalPurpose.CHURCH,
     "religious": CanonicalPurpose.CHURCH,
 
     "museum": CanonicalPurpose.MUSEUM,
@@ -150,6 +162,12 @@ PURPOSE_MAPPING: Dict[str, CanonicalPurpose] = {
 
     "rental": CanonicalPurpose.RENTAL,
     "temporary": CanonicalPurpose.RENTAL,
+    "short-term installation": CanonicalPurpose.RENTAL,
+    "portable event display": CanonicalPurpose.RENTAL,
+    "music festival": CanonicalPurpose.CONCERT,
+    "live music festival": CanonicalPurpose.CONCERT,
+    "transport hub": CanonicalPurpose.AIRPORT,
+    "concourse": CanonicalPurpose.HALL,
     "event": CanonicalPurpose.RENTAL,
 
     # 中文

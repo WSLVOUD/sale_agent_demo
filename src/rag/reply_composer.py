@@ -552,6 +552,52 @@ def price_policy_answer(language: str = "en", seed: int = 0) -> str:
     return variants[seed % len(variants)]
 
 
+# ── "没有匹配的产品" → 改成"能不能放宽某个参数"（客户口径）─────────────────
+# 禁止对客户说"找不到 / 没有匹配的产品"，一律改成邀请客户放宽条件。
+_NO_PRODUCT_RE = re.compile(
+    r"no matching products?|no suitable (?:outdoor |indoor )?model|"
+    r"(?:i )?(?:could ?n[o']t|cannot|can't|am unable to) find (?:a|any|the) "
+    r"(?:model|product|match)|couldn't find a model|"
+    r"no (?:models?|products?) (?:found|available|match)|"
+    r"没有匹配的?(?:产品|型号)|没有合适的?(?:产品|型号)|"
+    r"找不到(?:合适的?|匹配的?|适合的?)?(?:产品|型号|屏|大屏|方案)|"
+    r"(?:没有|未)找到(?:合适的?|匹配的?)?(?:产品|型号)|"
+    r"无匹配(?:产品|型号)|无法推荐|推荐不出来",
+    re.IGNORECASE,
+)
+
+_RELAXATION_ANSWERS = {
+    "en": (
+        "Let's take a slightly different angle — if one of the requirements can be relaxed "
+        "(for example the pixel pitch, the screen size, or the viewing distance), I can match "
+        "a model for you right away.",
+        "Happy to get you the closest fit — would you be open to adjusting one requirement, "
+        "say the pixel pitch or the screen size? Then I can put the right options in front of you.",
+        "One quick option: if any of the requirements is flexible — pitch, size, or installation — "
+        "I can match a suitable model immediately.",
+        "If you can give a little on one of the conditions (pitch, brightness or screen size), "
+        "I'll find you the best matching model straight away.",
+    ),
+    "zh": (
+        "我们换个角度：如果某个条件可以放宽一点（比如点间距、屏体尺寸或观看距离），"
+        "我马上就能帮您匹配到合适的型号。",
+        "方便的话，看看哪个条件能松一点（例如点间距、亮度或尺寸），我好帮您找到最合适的型号。",
+        "只要有一个条件可以灵活一点（点间距 / 尺寸 / 安装方式都行），我就能立刻帮您匹配合适的型号。",
+    ),
+}
+
+
+def has_no_product_phrase(text: str) -> bool:
+    """回复里是否出现了"找不到 / 没有匹配产品"这类话术。"""
+    return bool(_NO_PRODUCT_RE.search(str(text or "")))
+
+
+def relaxation_answer(language: Optional[str] = None, seed: int = 0) -> str:
+    """"能不能放宽某个参数"的应答（多种说法轮换）。"""
+    variants = _RELAXATION_ANSWERS.get(_lang(language)) or _RELAXATION_ANSWERS["en"]
+    return variants[seed % len(variants)]
+
+
 def acknowledge(
     message: str,
     *,
@@ -723,8 +769,10 @@ __all__ = [
     "acknowledge",
     "availability_answer",
     "compose_requirement_reply",
+    "has_no_product_phrase",
     "is_price_question",
     "price_policy_answer",
+    "relaxation_answer",
     "reply_language",
     "requirement_echo",
 ]

@@ -134,22 +134,23 @@ def validate_recommendation(
         if not checks["module_data_real"]:
             errors.append(f"{primary.model} 缺少模组数据")
 
-    # 5b. 室外点间距下限：室内外没点明点间距时，室外必须 P6 及以上
+    # 5b. 点间距区间校验：客户没点名点间距时，用"环境 + 观看距离"的业务区间
+    # （室内 ≤3m→P2.5 及以下 / >3m→P3 及以上；室外 4m→P4、5m→P4-P5、
+    #   6~20m→P5、>30m→P10）——区间已在第 5 项 pixel_pitch_match 里校验。
     if (
         primary is not None
         and profile is not None
         and profile.pixel_pitch_mm is None
-        and profile.environment in ("outdoor", "semi_outdoor")
     ):
-        from src.rag.parameter_inference import OUTDOOR_MIN_PITCH_MM
-
-        ok = primary.pixel_pitch_mm >= OUTDOOR_MIN_PITCH_MM - 1e-6
-        checks["outdoor_pitch_boundary"] = bool(ok)
-        if not ok:
-            errors.append(
-                f"室外点间距低于 P{OUTDOOR_MIN_PITCH_MM:g}: "
-                f"{primary.model} = {primary.pixel_pitch_mm}mm"
-            )
+        technical = (selection or {}).get("technical_parameters") or {}
+        low = technical.get("pixel_pitch_min_mm")
+        high = technical.get("pixel_pitch_max_mm")
+        ok = True
+        if low is not None:
+            ok = ok and primary.pixel_pitch_mm >= float(low) - 1e-6
+        if high is not None:
+            ok = ok and primary.pixel_pitch_mm <= float(high) + 1e-6
+        checks["pitch_band_match"] = bool(ok)
 
     # 8/9. Cabinet / Module 数量是否正确（用 canonical 尺寸重算一遍）
     if calculation and primary is not None:
@@ -185,6 +186,14 @@ def validate_recommendation(
     if canonical:
         allowed_models = {m.model.upper() for m in model_index.values()}
         allowed_pitches = {round(m.pixel_pitch_mm, 2) for m in canonical}
+        # 厂商命名里的 P 值也算"真实数据"：例如 TW11-3216-P3.0 的实际点间距是
+        # 3.076mm，型号名写 P3.0 —— 只写型号名不能被判成"虚构参数"。
+        for m in canonical:
+            for token in re.findall(r"[Pp](\d+(?:\.\d+)?)", m.model):
+                try:
+                    allowed_pitches.add(round(float(token), 2))
+                except ValueError:  # pragma: no cover - 防御式
+                    continue
         allowed_brightness = {m.brightness_nit for m in canonical}
 
         for found in _MODEL_RE.findall(recommendation):
