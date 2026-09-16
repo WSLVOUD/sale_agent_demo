@@ -71,18 +71,29 @@ SLOT_PRIORITY: Dict[str, str] = {
 }
 
 # 来源强度（M2 四态）：合并时强度高者胜，同强度时新值覆盖旧值。
-#   explicit/confirmed（客户明说） > scenario_derived（场景直接判定）
+#   explicit/confirmed（客户明说） > vision_explicit（图片明确可见）
+#   > scenario_derived（场景直接判定） > vision_inferred（图片推测）
 #   > inferred（算法估算） > default（系统默认）
 _EXPLICIT_STRENGTH = {
-    "explicit": 4,
-    "confirmed": 4,
-    "scenario_derived": 3,
+    "explicit": 7,
+    "confirmed": 7,
+    "vision_explicit": 5,
+    "scenario_derived": 4,
+    "vision_inferred": 3,
     "inferred": 2,
     "default": 1,
 }
 
 # 能算作"客户确认"的来源（可用于打开 Ready Gate）
 CONFIRMED_SOURCES: frozenset[str] = frozenset({"explicit", "confirmed", "scenario_derived"})
+
+# 图片"明确可见"（vision_explicit）能作为选型依据的字段。
+# 这几项图片确实能看出来（明显的室内会议室 / 明显的 LED 屏 / 明显的租赁箱体），
+# 所以 Gate 不必再问一遍；但它**不是客户确认**，status 仍报 inferred。
+# 观看距离 / 尺寸 / 亮度等图片推不准的字段不在此列 —— 那些继续问客户。
+VISION_TRUSTED_FIELDS: frozenset[str] = frozenset(
+    {"display_type", "environment", "purpose", "installation"}
+)
 
 # 档案字段 ↔ 槽位键的对应关系（用于判定"客户是否明确说出该字段"）
 _SLOT_ALIASES: Dict[str, tuple[str, ...]] = {
@@ -169,6 +180,8 @@ class RequirementProfile(BaseModel):
     # ── 冲突（Phase 18）：客户明确说的与规则/语义推断互相矛盾时记录 ──────
     # 有冲突时 Recommendation Ready Gate 一律不放行
     conflicts: List[str] = Field(default_factory=list)
+    # 冲突对应的字段名（用于"就问那一项"，例如图片说室内、客户说室外）
+    conflict_slots: List[str] = Field(default_factory=list)
 
     # ── Unknown 容错（《全量需求捕获与 Unknown 容错优化》Phase 1）──────────
     # 字段级"已主动询问次数"：slot -> 次数（最多问到 2 次）
@@ -177,6 +190,13 @@ class RequirementProfile(BaseModel):
     unknown_reasons: Dict[str, str] = Field(default_factory=dict)
     # 上一轮主动问的是哪个槽位（客户答非所问时要能对上"这一项我没答"）
     last_asked_slot: str = ""
+
+    # ── 视觉需求（《智谱视觉需求提取接入实施计划》第七/十八/二十阶段）─────
+    # 图片给出的尺寸只作为**提示**：[宽度mm, 高度mm]。用来追问客户确认，
+    # 绝不写进 target_width_m / target_height_m，也就不可能进入箱体计算。
+    vision_size_hint_mm: Optional[List[float]] = None
+    # 图片给出的点间距 / 亮度 / 其它说明（提示与排查用，不参与 Gate 放行）
+    vision_notes: List[str] = Field(default_factory=list)
 
     @field_validator("special_requirements", mode="before")
     @classmethod
@@ -686,7 +706,7 @@ class RequirementProfile(BaseModel):
             current_strength = _EXPLICIT_STRENGTH.get(sources.get(key, "default"), 1)
             incoming_strength = _EXPLICIT_STRENGTH.get(incoming.sources.get(key, "default"), 1)
 
-            if key == "special_requirements":
+            if key in ("special_requirements", "vision_notes"):
                 merged = list(dict.fromkeys(list(current or []) + list(value)))
                 data[key] = merged
                 sources[key] = max(
@@ -704,6 +724,9 @@ class RequirementProfile(BaseModel):
         # 真正消解冲突后由 Extractor 用「重新检测」的结果覆盖（见 requirement_extractor）
         data["conflicts"] = list(
             dict.fromkeys(list(self.conflicts or []) + list(incoming.conflicts or []))
+        )
+        data["conflict_slots"] = list(
+            dict.fromkeys(list(self.conflict_slots or []) + list(incoming.conflict_slots or []))
         )
         # ── Unknown 容错状态随档案一起合并（Phase 1 / 10）──────────────────
         ask_counts = dict(self.ask_counts or {})

@@ -641,10 +641,23 @@ ack 的写法（很重要，销售不能只会追问）：
             state["should_generate_solution"] = False
             logger.info(f"Intent 'greeting' — forcing should_generate_solution=False (suppress_greeting={state.get('suppress_greeting')})")
     
-    # Closing always blocks solution
+    # Closing：只有在客户**明确要结束**时才收尾。
+    # 实测教训：客户回答 "close"（=近）被误判成 closing 时，这一支会把
+    # "Gate 已经放行的推荐"也一起否掉，结果不推荐产品、也不问尺寸。
+    # 所以：Gate 已就绪 + 客户没有明确说结束 → 照常推荐（把意图纠回 need_query）。
     elif intent == "closing":
-        state["should_generate_solution"] = False
-        logger.info(f"Intent 'closing' — forcing should_generate_solution=False")
+        from .classify import is_explicit_closing
+
+        message_text = str(state.get("current_message") or "")
+        if state["should_generate_solution"] and not is_explicit_closing(message_text):
+            state["intent"] = "need_query"
+            state["next_action"] = "router"
+            logger.info(
+                "Intent 'closing' 但客户并未明确结束且 Gate 已放行 → 照常推荐（next_action=router）"
+            )
+        else:
+            state["should_generate_solution"] = False
+            logger.info(f"Intent 'closing' — forcing should_generate_solution=False")
     
     # For product_question/others: preserve their routing UNLESS requirements are sufficient
     elif intent in ("product_question", "others"):

@@ -321,6 +321,222 @@ class TestScenario6MultiTurn:
         assert turn["should_generate_solution"] is True
 
 
+class TestCloseAnswerIsNotClosing:
+    """实测回归（客户日志）：
+
+    客户用 "close"（意思是"近"）回答观看距离，被意图分类器判成 closing，
+    结果整轮被强制不推荐、只回了一句"我会准备报价"，既不推荐产品也不问尺寸。
+    这里锁定三件事：
+      1. "close / near / far / 5-10 米"这类模糊回答能被解析成观看距离；
+      2. "close" 不会被判成"结束对话"，但 "bye / 不用了" 仍然会；
+      3. Gate 已经就绪时，非明确结束的 closing 不能吞掉推荐。
+    """
+
+    def test_rough_distance_answers_are_parsed(self):
+        from src.rag.query_understanding import extract_slots
+
+        assert extract_slots("close").get("viewing_distance_m") == 3.0
+        assert extract_slots("near").get("viewing_distance_m") == 3.0
+        assert extract_slots("very close").get("viewing_distance_m") == 2.0
+        assert extract_slots("far").get("viewing_distance_m") == 15.0
+        assert extract_slots("5-10 metres").get("viewing_distance_m") == 7.5
+        assert extract_slots("more than 10m").get("viewing_distance_m") == 15.0
+        assert extract_slots("within 3m").get("viewing_distance_m") == 1.8
+
+    def test_rough_parser_does_not_over_trigger(self):
+        from src.rag.query_understanding import extract_slots
+
+        assert extract_slots("close the deal").get("viewing_distance_m") is None
+        assert extract_slots("i dont know").get("viewing_distance_m") is None
+
+    def _classify(self, monkeypatch, message, llm_intent):
+        # 注意：nodes/__init__.py 里 `from .classify import classify` 会把子模块名遮蔽掉，
+        # 所以必须从 sys.modules 取真正的模块对象
+        import sys
+
+        classify_mod = sys.modules["src.agents.sales.nodes.classify"]
+
+        class _Response:
+            content = llm_intent
+
+        class _FakeChat:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def invoke(self, *args, **kwargs):
+                return _Response()
+
+        monkeypatch.setattr(classify_mod, "ChatOpenAI", _FakeChat)
+        state = {"current_message": message, "intent": "", "next_action": ""}
+        return classify_mod.classify(state)
+
+    def test_close_is_not_treated_as_closing(self, monkeypatch):
+        state = self._classify(monkeypatch, "close", "closing")
+        assert state["intent"] == "need_query", "「近」不能被当成「结束对话」"
+
+    def test_explicit_closing_still_closes(self, monkeypatch):
+        state = self._classify(monkeypatch, "thanks, that's all. bye", "closing")
+        assert state["intent"] == "closing"
+
+        state = self._classify(monkeypatch, "不用了，谢谢", "closing")
+        assert state["intent"] == "closing"
+
+    def _ready_profile(self):
+        slots = {
+            "display_type": "LED",
+            "environment": "indoor",
+            "purpose": "conference",
+            "installation": "fixed",
+            "viewing_distance_m": 3,
+        }
+        return RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+
+    def test_ready_gate_still_recommends_when_intent_is_closing(self, sales_llm):
+        state = {
+            "messages": [
+                {"role": "user", "content": "I need a display like this"},
+                {"role": "user", "content": "close"},
+            ],
+            "current_message": "close",
+            "requirements": {},
+            "additional_requirements": [],
+            "intent": "closing",
+            "next_action": "end",
+            "should_generate_solution": False,
+            "response": "",
+            "requirement_profile": self._ready_profile(),
+            "session_id": "closing-guard-ready",
+        }
+        out = sales_llm.requirement_mining(state)
+
+        assert out["should_generate_solution"] is True, "Gate 已就绪就必须推荐"
+        assert out["next_action"] == "router"
+        assert out["intent"] == "need_query"
+
+    def test_explicit_closing_does_not_force_recommendation(self, sales_llm):
+        state = {
+            "messages": [{"role": "user", "content": "bye, thanks a lot"}],
+            "current_message": "bye, thanks a lot",
+            "requirements": {},
+            "additional_requirements": [],
+            "intent": "closing",
+            "next_action": "end",
+            "should_generate_solution": False,
+            "response": "",
+            "requirement_profile": self._ready_profile(),
+            "session_id": "closing-guard-stop",
+        }
+        out = sales_llm.requirement_mining(state)
+        assert out["should_generate_solution"] is False
+
+
+class TestReplayOfReportedConversation:
+    """完整复刻客户日志的那一轮对话（图片 → permanent → i dont know → close）。
+
+    旧行为：最后一轮 ="close" 被判成 closing → 不推荐、只回"我会准备报价"。
+    新行为：close 被理解成"近"（约 3m）→ Gate 放行 → 进入推荐（并会继续问尺寸）。
+    """
+
+    @pytest.fixture
+    def replay_llm(self, monkeypatch):
+        import sys
+
+        sales_req = sys.modules["src.agents.sales.nodes.requirement"]
+        classify_mod = sys.modules["src.agents.sales.nodes.classify"]
+        extractor_mod = sys.modules["src.core.requirement_extractor"]
+
+        class _Response:
+            def __init__(self, content):
+                self.content = content
+
+        class _Fake:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def invoke(self, messages, *args, **kwargs):
+                parts = messages if isinstance(messages, list) else [messages]
+                system = str(getattr(parts[0], "content", ""))
+                user = str(getattr(parts[-1], "content", ""))
+                if "意图分类器" in system:
+                    # 复刻实测：DeepSeek 把 "close" 判成了 closing
+                    return _Response("closing" if user.strip().lower() == "close" else "need_query")
+                return _Response('{"usage": "conference", "additional_requirements": [], "ack": ""}')
+
+        monkeypatch.setattr(sales_req, "ChatOpenAI", _Fake)
+        monkeypatch.setattr(classify_mod, "ChatOpenAI", _Fake)
+        monkeypatch.setattr(
+            extractor_mod.RequirementExtractor,
+            "_llm_semantic_extract",
+            lambda self, message, rule_slots, session_id="": {},
+        )
+        extractor_mod.RequirementExtractor._semantic_cache.clear()
+        return sales_req
+
+    def _turn(self, module, message, profile):
+        state = {
+            "messages": [{"role": "user", "content": message}],
+            "current_message": message,
+            "session_id": "replay-close",
+            "requirements": {},
+            "additional_requirements": [],
+            "intent": "need_query",
+            "next_action": "ask",
+            "should_generate_solution": False,
+            "response": "",
+            "pending_question": "",
+            "pending_slot": "",
+        }
+        if profile is not None:
+            state["requirement_profile"] = profile
+        return module.requirement_mining(state)
+
+    def test_final_turn_recommends_and_keeps_distance(self, replay_llm, monkeypatch):
+        import sys
+
+        classify_mod = sys.modules["src.agents.sales.nodes.classify"]
+        sales_req = replay_llm
+
+        # 第 1 轮：客户发图 + "i need a display like this"
+        # （图片结果由视觉模块合并进档案：LED / indoor / conference）
+        vision_slots = {"display_type": "LED", "environment": "indoor", "purpose": "conference"}
+        profile = RequirementProfile.from_slots(vision_slots, explicit_keys=set(vision_slots))
+
+        turn = self._turn(sales_req, "i need a display like this", profile)
+        assert turn["pending_slot"] == "installation"
+
+        turn = self._turn(sales_req, "permanent", turn["requirement_profile"])
+        assert turn["pending_slot"] == "viewing_distance"
+
+        turn = self._turn(sales_req, "i dont know", turn["requirement_profile"])
+        assert turn["recommendation_gate"]["status"] == "CONTINUE_ASKING"
+
+        # 最后一轮："close" —— 之前这里被判成 closing，导致既不推荐也不问尺寸
+        intent = classify_mod.classify(
+            {"current_message": "close", "intent": "", "next_action": ""}
+        )
+        assert intent["intent"] == "need_query"
+
+        state = {
+            "messages": [{"role": "user", "content": "close"}],
+            "current_message": "close",
+            "session_id": "replay-close",
+            "requirements": {},
+            "additional_requirements": [],
+            "intent": intent["intent"],
+            "next_action": intent["next_action"],
+            "should_generate_solution": False,
+            "response": "",
+            "pending_question": "",
+            "pending_slot": "",
+            "requirement_profile": turn["requirement_profile"],
+        }
+        final = sales_req.requirement_mining(state)
+
+        assert final["requirement_profile"].viewing_distance_m == 3.0, "close 应被理解为「近」"
+        assert final["recommendation_gate"]["status"] == "READY"
+        assert final["should_generate_solution"] is True, "这一轮必须进入推荐"
+
+
 class TestSolutionGraphGate:
     """Gate 必须真正接入 Solution Agent 图"""
 

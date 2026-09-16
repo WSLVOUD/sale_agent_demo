@@ -79,9 +79,25 @@ else:
     logger.warning(f"Static directory not found: {static_dir}")
 
 # Pydantic models
+class ImageInput(BaseModel):
+    """客户随消息发送的图片（《智谱视觉需求提取接入实施计划》第十五阶段）。
+
+    三种传法任选其一：
+      url         http(s) 图片地址，或 data:image/...;base64,xxx
+      data        裸 base64（需带 mime_type）
+      mime_type   仅 data 方式需要，默认 image/jpeg
+    """
+
+    url: Optional[str] = None
+    data: Optional[str] = None
+    mime_type: Optional[str] = "image/jpeg"
+
+
 class ChatRequest(BaseModel):
     session_id: str
-    question: str
+    # 允许纯图片消息（不带文字）
+    question: str = ""
+    images: Optional[List[ImageInput]] = None
 
 class ChatResponse(BaseModel):
     session_id: str
@@ -93,6 +109,7 @@ class ChatResponse(BaseModel):
     complexity: Optional[str] = None
     first_contact_intro: Optional[str] = None  # First contact self-introduction
     first_contact_messages: Optional[List[dict]] = None  # First contact generated messages (intro + assets)
+    vision: Optional[dict] = None  # 视觉需求提取指标（计划第二十二阶段）
 
 class ClearMemoryRequest(BaseModel):
     session_id: str
@@ -121,6 +138,32 @@ class TaskStatusResponse(BaseModel):
 def _get_api_key() -> str:
     """获取配置的 API Key（支持 .env 中的 LED_API_KEY）。"""
     return os.environ.get("LED_API_KEY", "")
+
+
+def _normalize_images(images: Optional[List[ImageInput]]) -> List[str]:
+    """把请求里的图片统一成"URL 或 data URL"字符串（Vision 模块只认这两种）。
+
+    计划第二十一阶段：这里做数量与格式的第一层校验，超限直接忽略多余图片，
+    不让异常图片把主流程打断。
+    """
+    if not images:
+        return []
+    limit = int(getattr(config, "VISION_MAX_IMAGES", 3) or 3)
+    normalized: List[str] = []
+    for item in list(images)[:limit]:
+        try:
+            if item.url:
+                normalized.append(item.url.strip())
+            elif item.data:
+                mime = (item.mime_type or "image/jpeg").split(";")[0].strip()
+                normalized.append(f"data:{mime};base64,{item.data.strip()}")
+            else:
+                logger.warning("Image payload without url/data — ignored")
+        except Exception as error:  # pragma: no cover - 防御式
+            logger.warning("Bad image payload ignored: %s", error)
+    if len(images) > limit:
+        logger.warning("Too many images (%d), only first %d used", len(images), limit)
+    return normalized
 
 
 def _verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> str:
@@ -458,9 +501,11 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
         )
     
     try:
+        request_images = _normalize_images(request.images)
         result = orchestrator.process_message(
             message=request.question,
-            session_id=request.session_id
+            session_id=request.session_id,
+            images=request_images or None,
         )
         # 记录成功
         fallback_manager.record_success("chat")
@@ -534,6 +579,7 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
         complexity=result.get("complexity"),
         first_contact_intro=result.get("_perf", {}).get("first_contact_intro"),
         first_contact_messages=result.get("_perf", {}).get("first_contact_messages"),
+        vision=result.get("vision"),
     )
 
 
@@ -550,6 +596,7 @@ async def _stream_chat(request: ChatRequest):
 
     session_id = request.session_id
     question = request.question
+    stream_images = _normalize_images(request.images) or None
 
     yield f"data: {_json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
 
@@ -558,6 +605,7 @@ async def _stream_chat(request: ChatRequest):
         result = orchestrator.process_message(
             message=question,
             session_id=session_id,
+            images=stream_images,
         )
         answer = str(result.get("response") or "")
         if not answer:

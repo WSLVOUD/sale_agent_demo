@@ -352,6 +352,37 @@ def _size_axis_question(profile: Any, language: str, seed: int) -> Optional[str]
     return question.replace("{value}", value)
 
 
+# 图片给出的尺寸只能用来"问客户确认"，不能直接当尺寸
+_SIZE_SLOTS = {"size", "width", "height"}
+
+
+def size_hint_sentence(profile: Any, language: str = "en") -> str:
+    """把图片估计的尺寸变成一句提示（计划第十八阶段：只能当 size_hint）。"""
+    hint = list(getattr(profile, "vision_size_hint_mm", None) or [])
+    if len(hint) < 2:
+        return ""
+    try:
+        width_m = float(hint[0]) / 1000
+        height_m = float(hint[1]) / 1000
+    except (TypeError, ValueError):
+        return ""
+    if width_m <= 0 or height_m <= 0:
+        return ""
+    if language == "zh":
+        return f"图片上看大约是 {width_m:g} 米 × {height_m:g} 米。"
+    return f"The image suggests roughly {width_m:g}m x {height_m:g}m."
+
+
+def _with_size_hint(profile: Any, slot: Optional[str], language: str, question: Optional[str]) -> Optional[str]:
+    """问尺寸时带上"图片估计值"，让客户只需要确认（不强加）。"""
+    if not question or slot not in _SIZE_SLOTS:
+        return question
+    hint = size_hint_sentence(profile, language)
+    if not hint:
+        return question
+    return f"{hint} {question}"
+
+
 def _is_confirmed(profile: Any, field_name: str) -> bool:
     """该字段是否来自**客户明确表达**（而非规则/上下文推断）。
 
@@ -361,11 +392,17 @@ def _is_confirmed(profile: Any, field_name: str) -> bool:
 
     M2 四态口径：explicit / confirmed / scenario_derived 都算"客户侧"；
     default（系统默认）与 inferred（算法估算）不算。
+
+    《智谱视觉需求提取接入实施计划》补充：图片**明确可见**（vision_explicit）
+    的环境 / 场景 / 安装方式 / 屏类型也算"已确定"，不必再问客户一遍；
+    图片推测（vision_inferred）不算 —— 那只是猜测。
     """
-    from src.models.requirement import CONFIRMED_SOURCES
+    from src.models.requirement import CONFIRMED_SOURCES, VISION_TRUSTED_FIELDS
 
     source = (getattr(profile, "sources", None) or {}).get(field_name)
-    return source in CONFIRMED_SOURCES
+    if source in CONFIRMED_SOURCES:
+        return True
+    return source == "vision_explicit" and field_name in VISION_TRUSTED_FIELDS
 
 
 def _environment_settled(profile: Any) -> bool:
@@ -418,10 +455,19 @@ def check_recommendation_ready(
     conflicts = list(getattr(profile, "conflicts", None) or [])
     if conflicts:
         missing = ["environment", "purpose", "installation", "viewing_distance"]
+        # 《智谱视觉接入计划》第十一阶段：图片推断与客户说法冲突时，
+        # 直接问**冲突的那一项**（例如图片像室内、客户说室外），而不是笼统问场景。
+        conflict_slot = next(
+            (slot for slot in (getattr(profile, "conflict_slots", None) or []) if slot),
+            "purpose",
+        )
         return GateDecision(
             ready=False, gate="recommendation", missing=missing,
             reason="需求存在冲突，需要澄清：" + ", ".join(conflicts),
-            next_question=question_for("purpose", language, variant_seed),
+            next_question=question_for(conflict_slot, language, variant_seed)
+            or question_for("purpose", language, variant_seed),
+            status="CONTINUE_ASKING",
+            unknown_slots=[],
         )
 
     # 1) 客户直接点名型号 / 系列
@@ -485,6 +531,8 @@ def check_recommendation_ready(
             if first == "size_axis"
             else None
         ) or question_for(first, language, variant_seed, easier=easier)
+        # 图片给过尺寸估计 → 问尺寸时带上，让客户只需确认
+        question = _with_size_hint(profile, first, language, question)
         return GateDecision(
             ready=False, gate="recommendation", missing=blocking,
             reason="信息不足以做可靠选型：" + ", ".join(blocking),
@@ -540,10 +588,13 @@ def check_calculation_ready(
     if missing:
         # 宽高都缺时一次性问"整块尺寸"，避免只问宽度、下一轮又追问高度
         slot = "size" if len(missing) == 2 else missing[0]
+        question = _with_size_hint(
+            profile, slot, language, question_for(slot, language, variant_seed)
+        )
         return GateDecision(
             ready=False, gate="calculation", missing=missing,
             reason="缺少屏体尺寸，先推荐产品、暂不做箱体/模组计算",
-            next_question=question_for(slot, language, variant_seed),
+            next_question=question,
         )
 
     return GateDecision(
@@ -563,4 +614,5 @@ __all__ = [
     "first_missing_slot",
     "format_measurement",
     "question_for",
+    "size_hint_sentence",
 ]

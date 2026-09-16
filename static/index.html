@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LED产品助手</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <!-- ?v= 用于强制刷新静态资源缓存（改前端后不用手动清缓存） -->
+    <link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
     <div class="chat-container">
@@ -49,11 +50,20 @@
 
         <!-- 底部输入区 -->
         <footer class="input-area">
+            <!-- 待发送的图片预览（客户发照片时用） -->
+            <div class="image-preview" id="image-preview"></div>
             <div class="input-wrapper">
+                <button class="attach-btn" id="attach-btn" type="button" title="添加图片（也可以直接粘贴或拖拽）">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                    <span class="attach-text">图片</span>
+                </button>
+                <input type="file" id="image-input" accept="image/*" multiple hidden>
                 <textarea 
                     class="message-input" 
                     id="message-input" 
-                    placeholder="请输入您的问题..."
+                    placeholder="请输入您的问题，或粘贴/上传一张图片..."
                     rows="1"
                 ></textarea>
                 <button class="send-btn" id="send-btn">
@@ -62,9 +72,10 @@
                     </svg>
                 </button>
             </div>
+            <div class="input-hint">可点"+ 图片"上传，或直接粘贴（Ctrl+V）/ 拖拽图片，最多 3 张</div>
         </footer>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=3"></script>
 </body>
 </html>

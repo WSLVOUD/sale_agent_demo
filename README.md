@@ -25,6 +25,7 @@
 | 多语言 Query Understanding + Query Rewrite | ✅ 已完成 |
 | **首次客户固定工作流（First Contact）** | ✅ 已完成 |
 | **全量需求捕获 + Unknown 容错（最多问两次）** | ✅ 已完成 |
+| **智谱视觉需求提取（客户发图片识别需求）** | ✅ 已完成 |
 | **Memory 持久化（SQLite）** | 🚧 规划中 |
 
 ---
@@ -274,6 +275,135 @@ python -m pytest tests -q                             # 759 passed, 4 skipped
 | 长时间不重启 | 会话与缓存无限增长 | LRU 控制在 200 个会话内 |
 
 > 测试：`tests/test_session_isolation.py`（9 个用例，含 Sales 节点级端到端复现）。
+
+---
+
+## 最近更新（智谱视觉需求提取：客户发图片也能采集需求，2026-09-16）
+
+客户可以把图片（截图 / 现场照片 / 图纸）和文字一起发过来，系统用**智谱视觉模型**
+从图片里提取 LED 需求，合并进同一份 `RequirementProfile`，再照常继续问缺失项。
+
+### 链路
+
+```text
+客户消息（文字 + 图片）
+   ↓
+文字：RequirementExtractor
+图片：Zhipu Vision（glm-4v-plus）→ Vision Extractor（结构化 + 单位标准化）
+   ↓
+合并进同一个 RequirementProfile（客户明说 > 图片明确可见 > 场景判定 > 图片推测）
+   ↓
+Sales Agent / Question Planner（只问仍然缺的）
+   ↓
+Recommendation Ready Gate → Solution Agent → RAG / Calculator
+```
+
+### 三条硬规则
+
+1. **区分"看见"和"猜测"**：`vision_explicit`（图片明确可见）与
+   `vision_inferred`（模型推测）分开记录。想看但没看出来的项目一律返回 `null`，
+   模型没按格式返回时**默认按"推测"处理**。
+2. **图片不能顶掉客户**：客户已经明确说过的信息，图片永远不会覆盖；
+   两者矛盾时保留客户的值、记录冲突，并**就问冲突的那一项**。
+3. **图片尺寸不进入工程计算**：图片给的宽高只写入 `vision_size_hint_mm`，
+   用来追问"图片上看大约 5m × 3m，是这样吗？"；`target_width_m / target_height_m`
+   永远只由客户确认的尺寸写入，所以箱体/模组计算不可能用到图片猜的尺寸。
+
+### 关键文件
+
+| 文件 | 作用 |
+|------|------|
+| `src/vision/client.py` | 智谱视觉客户端（超时 / 重试 / 模型回退 / MIME+大小检查） |
+| `src/vision/extractor.py` | 图片 → 结构化需求（JSON 容错解析、单位换算、图片哈希缓存） |
+| `src/vision/integration.py` | 合并进 RequirementProfile（优先级 / 冲突 / 尺寸 hint / 指标） |
+| `src/vision/schema.py` / `prompts.py` | 数据结构与提示词 |
+| `tests/test_vision.py` / `tests/test_vision_pipeline.py` | 63 个测试（单元 + 端到端） |
+| `tests/vision_golden/` | Golden Dataset（生成图片 + manifest + 评测脚本 + 报告） |
+
+### 使用方式
+
+```bash
+# .env
+GLM_API_KEY=你的智谱key
+GLM_VISION_MODEL=glm-4v-plus      # 可选
+VISION_ENABLED=true                # false = 完全忽略图片
+VISION_MAX_IMAGES=3                # 单次最多几张图
+```
+
+```bash
+# 文字 + 图片（base64）
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{
+  "session_id": "s1",
+  "question": "Can you recommend something like this?",
+  "images": [{"data": "<base64>", "mime_type": "image/jpeg"}]
+}'
+
+# 跑 Golden Dataset（需要真实 API）
+python tests/vision_golden/run_golden.py
+```
+
+页面上传图片有三种方式（最多 3 张，发送后照常对话）：
+
+1. 输入框左边的 **「图片」按钮**（点开选文件）
+2. **直接粘贴**（Ctrl+V，页面任意位置都行，不要求输入框聚焦；
+   截图、复制的图片文件、以及从网页复制的图片链接都能接住）
+3. **把图片拖进页面**，松手即添加
+
+添加后会显示缩略图预览，可单独删除；纯图片（不写字）也能发送。
+
+### 实测与限制
+
+- 接口实测通过（`glm-4v-plus`）；Golden 合成图基线：屏类型 100%、室内外 87.5%、
+  场景 100%、"没屏幕就不填"100%、尺寸编造 0%、图片尺寸进工程计算 0。
+- ⚠️ Golden 目前是**合成图**，只验证链路与"是否会瞎编"；真实精度需要业务侧提供
+  脱敏真实照片后再测。
+
+---
+
+## 修复：客户回答 "close"（近）却被当成结束对话（2026-09-16）
+
+### 现象（客户实测日志）
+
+对话走到"观看距离"这一问：
+
+```text
+AI：Will viewers be fairly close to the screen, or more than about 10 metres away?
+客户：close
+AI：Alright, I'll put together a detailed proposal and quote for you...
+```
+
+既不推荐产品，也不问屏幕尺寸。
+
+### 根因（两个叠加）
+
+1. **意图被误判**：客户说的 `close` 意思是"近"，但意图分类器判成了 `closing`（要结束对话）。
+   而 `requirement_mining` 里有一条 `closing → should_generate_solution = False`，
+   于是**Gate 刚刚放行的推荐被否掉**，只回了收尾话术。
+2. **"close / near / far" 没被解析成观看距离**：规则解析器只认 "5m"、"about 8 meters" 这类
+   带数字的说法，模糊回答一个都没接住，所以观看距离一直是空的。
+
+### 修复
+
+| 位置 | 改动 |
+|------|------|
+| `src/rag/query_understanding.py` | 新增模糊回答与区间解析：`close→3m`、`very close→2m`、`far→15m`、`5-10 metres→7.5m`、`more than 10m→15m`、`within 3m→1.8m`；并用上下文/短句约束避免 `close the deal` 之类误判 |
+| `src/agents/sales/nodes/classify.py` | 只有 `bye / that's all / 不用了 / 再见` 这类**明确结束语**才判 `closing`；短回答（"close"、"5m"、"permanent"、室内/室外…）一律按需求回答处理 |
+| `src/agents/sales/nodes/requirement.py` | `closing` 不再无条件吞掉推荐：**Gate 已就绪 + 客户没有明确结束** → 照常推荐（意图纠回 `need_query`，`next_action=router`） |
+
+### 修复后的同一段对话（真实 DeepSeek + 智谱重放）
+
+```text
+第4轮 客户：close
+档案：viewing_distance_m = 3.0  （close = 近）
+路由：trigger_solution，推荐数 1
+回复：For your viewing distance, the TW11-3216-P2.5 is the right fit ... 
+      What target screen width and height do you need?
+```
+
+→ 既推荐了产品（室内 3m 按业务规则首选 P2.5），也继续追问屏幕尺寸。
+
+> 回归测试：`tests/test_requirement_dialogue.py::TestCloseAnswerIsNotClosing`
+> 与 `TestReplayOfReportedConversation`（复刻这段日志）。
 
 ---
 

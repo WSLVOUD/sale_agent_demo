@@ -15,6 +15,12 @@ class LEDChatApp {
         this.statusIndicator = document.getElementById('status-indicator');
         this.newChatBtn = document.getElementById('new-chat-btn');
         this.welcomeScreen = document.getElementById('welcome-screen');
+        this.attachBtn = document.getElementById('attach-btn');
+        this.imageInput = document.getElementById('image-input');
+        this.imagePreview = document.getElementById('image-preview');
+        // 待发送的图片：[{ dataUrl, mimeType, base64 }]
+        this.pendingImages = [];
+        this.maxImages = 3;
         
         this.init();
     }
@@ -39,6 +45,9 @@ class LEDChatApp {
             }
         });
         this.newChatBtn.addEventListener('click', () => this.startNewChat());
+
+        // 图片：按钮上传 + 粘贴 + 拖拽
+        this.bindImageInput();
         
         // 快捷问题按钮
         document.querySelectorAll('.quick-question-btn').forEach(btn => {
@@ -68,6 +77,150 @@ class LEDChatApp {
     
     generateSessionId() {
         return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    // ── 图片（客户发照片描述需求）─────────────────────────────────────────
+    bindImageInput() {
+        // 1) 按钮上传
+        if (this.attachBtn && this.imageInput) {
+            this.attachBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                this.imageInput.click();
+            });
+            this.imageInput.addEventListener('change', () => {
+                this.addImages(Array.from(this.imageInput.files || []));
+                this.imageInput.value = '';
+            });
+        }
+
+        // 2) 粘贴：挂在 document 上并走捕获阶段 ——
+        //    之前只监听输入框，鼠标点过别处（输入框失焦）时粘贴事件就接不到，
+        //    这也是"粘贴图片用不了"的原因之一。
+        document.addEventListener('paste', (event) => this.handlePaste(event), true);
+
+        // 3) 拖拽：把图片拖进页面任意位置都能加进来
+        const dropZone = document.querySelector('.chat-container') || document.body;
+        ['dragenter', 'dragover'].forEach(name => {
+            dropZone.addEventListener(name, (event) => {
+                if (event.dataTransfer && Array.from(event.dataTransfer.types || []).includes('Files')) {
+                    event.preventDefault();
+                    dropZone.classList.add('drag-over');
+                }
+            });
+        });
+        ['dragleave', 'drop'].forEach(name => {
+            dropZone.addEventListener(name, (event) => {
+                dropZone.classList.remove('drag-over');
+                if (name !== 'drop') return;
+                const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
+                if (files.length) {
+                    event.preventDefault();
+                    this.addImages(files);
+                }
+            });
+        });
+    }
+
+    async handlePaste(event) {
+        const data = event.clipboardData;
+        if (!data) return;
+
+        // a) 剪贴板里直接有图片文件（截图 / 复制本地图片）
+        const files = [];
+        if (data.files && data.files.length) {
+            files.push(...Array.from(data.files).filter(file => file.type.startsWith('image/')));
+        }
+        if (!files.length && data.items) {
+            for (const item of Array.from(data.items)) {
+                if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+                    const file = item.getAsFile();
+                    if (file) files.push(file);
+                }
+            }
+        }
+        if (files.length) {
+            event.preventDefault();
+            this.addImages(files);
+            return;
+        }
+
+        // b) 从网页复制的图片常常只有 URL（没有二进制），这里兜底接住
+        const html = (data.getData && data.getData('text/html')) || '';
+        const text = (data.getData && (data.getData('text/uri-list') || data.getData('text/plain'))) || '';
+        const url = this.extractImageUrl(html) || this.extractImageUrl(text);
+        if (url) {
+            event.preventDefault();
+            this.addImageUrl(url);
+        }
+    }
+
+    extractImageUrl(text) {
+        const source = String(text || '');
+        if (!source) return '';
+        const imgMatch = source.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (imgMatch) return imgMatch[1];
+        const urlMatch = source.match(/https?:\/\/[^\s"'<>]+\.(?:png|jpe?g|gif|webp|bmp)(?:\?[^\s"'<>]*)?/i);
+        return urlMatch ? urlMatch[0] : '';
+    }
+
+    addImages(files) {
+        for (const file of files) {
+            if (!file.type.startsWith('image/')) continue;
+            if (this.pendingImages.length >= this.maxImages) {
+                this.addMessage('ai', `一次最多发送 ${this.maxImages} 张图片。`);
+                break;
+            }
+            const reader = new FileReader();
+            reader.onload = () => {
+                const dataUrl = String(reader.result || '');
+                const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : '';
+                if (!base64) return;
+                this.pendingImages.push({
+                    dataUrl: dataUrl,
+                    mimeType: file.type || 'image/jpeg',
+                    base64: base64,
+                });
+                this.renderImagePreview();
+                this.messageInput.focus();
+            };
+            reader.readAsDataURL(file);
+        }
+    }
+
+    addImageUrl(url) {
+        if (this.pendingImages.length >= this.maxImages) {
+            this.addMessage('ai', `一次最多发送 ${this.maxImages} 张图片。`);
+            return;
+        }
+        this.pendingImages.push({ url: url, dataUrl: url, mimeType: '', base64: '' });
+        this.renderImagePreview();
+        this.messageInput.focus();
+    }
+
+    renderImagePreview() {
+        if (!this.imagePreview) return;
+        this.imagePreview.innerHTML = '';
+        this.pendingImages.forEach((image, index) => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'image-preview-item';
+            wrapper.innerHTML = `
+                <img src="${image.dataUrl}" alt="待发送图片">
+                <button class="image-remove" data-index="${index}" title="移除">×</button>
+            `;
+            this.imagePreview.appendChild(wrapper);
+        });
+        this.imagePreview.querySelectorAll('.image-remove').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.pendingImages.splice(Number(btn.dataset.index), 1);
+                this.renderImagePreview();
+            });
+        });
+        this.imagePreview.classList.toggle('has-images', this.pendingImages.length > 0);
+    }
+
+    clearImages() {
+        this.pendingImages = [];
+        this.renderImagePreview();
     }
     
     async checkApiStatus() {
@@ -176,7 +329,9 @@ class LEDChatApp {
     
     async sendMessage() {
         const question = this.messageInput.value.trim();
-        if (!question || this.isLoading) return;
+        const outgoingImages = this.pendingImages.slice();
+        // 纯图片消息也允许发送（客户只发照片描述需求）
+        if ((!question && outgoingImages.length === 0) || this.isLoading) return;
         
         // 移除欢迎界面
         const welcome = document.getElementById('welcome-screen');
@@ -184,7 +339,8 @@ class LEDChatApp {
         this.welcomeScreen = null;
         
         // 添加用户消息
-        this.addMessage('user', question);
+        this.addMessage('user', question, outgoingImages.map(image => image.dataUrl));
+        this.clearImages();
         
         // 清空输入框
         this.messageInput.value = '';
@@ -199,7 +355,12 @@ class LEDChatApp {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     session_id: this.sessionId,
-                    question: question
+                    question: question,
+                    images: outgoingImages.map(image => (
+                        image.base64
+                            ? { data: image.base64, mime_type: image.mimeType }
+                            : { url: image.url }
+                    )),
                 })
             });
             
@@ -231,16 +392,23 @@ class LEDChatApp {
         }
     }
     
-    addMessage(role, content) {
+    addMessage(role, content, images = null) {
         const messageEl = document.createElement('div');
         messageEl.className = `message ${role}`;
         
         const avatar = role === 'user' ? '👤' : '🤖';
+
+        let imagesHtml = '';
+        if (Array.isArray(images) && images.length) {
+            imagesHtml = `<div class="message-images">${
+                images.map(src => `<img src="${src}" alt="客户图片" class="message-image">`).join('')
+            }</div>`;
+        }
         
         messageEl.innerHTML = `
             <div class="message-avatar">${avatar}</div>
             <div class="message-content">
-                <div class="message-bubble">${this.formatText(content)}</div>
+                <div class="message-bubble">${imagesHtml}${content ? this.formatText(content) : ''}</div>
             </div>
         `;
         

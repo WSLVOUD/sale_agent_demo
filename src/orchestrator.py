@@ -26,6 +26,66 @@ except Exception:  # pragma: no cover - 防御式
     RESPONSE_LANGUAGE = "en"
 
 
+def _vision_enabled() -> bool:
+    """视觉开关（默认开；配置里 VISION_ENABLED=false 可整体关掉）。"""
+    try:
+        return bool(getattr(_config, "VISION_ENABLED", True))
+    except Exception:  # pragma: no cover - 防御式
+        return True
+
+
+def _merge_vision_into_stored_profile(
+    memory_store: Any,
+    session_id: str,
+    vision_results: List[Any],
+    metrics: Optional[Dict[str, Any]] = None,
+) -> None:
+    """把图片识别出的需求并进"memory 里的需求档案"。
+
+    为什么放在 Orchestrator 而不是 Sales Agent：
+      - 需求档案是 Sales Agent 的输入，图片在 Sales 之前就要合并好；
+      - Sales Agent 保持不动（计划第十六阶段：不新建 Vision Sales Agent）。
+
+    合并结果写回 memory；下一轮 Sales Agent 从 memory 读取时即可看到图片信息。
+    任何异常都不往上抛（图片不能拖垮主流程）。
+    """
+    if not vision_results or not memory_store:
+        return
+    try:
+        from .models.requirement import RequirementProfile
+        from .vision import apply_vision_to_profile
+
+        stored = None
+        if hasattr(memory_store, "get_requirement_profile"):
+            stored = memory_store.get_requirement_profile(session_id)
+        profile = None
+        if isinstance(stored, RequirementProfile):
+            profile = stored
+        elif isinstance(stored, dict) and stored:
+            try:
+                profile = RequirementProfile.model_validate(stored)
+            except Exception:  # pragma: no cover - 防御式
+                profile = None
+        if profile is None:
+            profile = RequirementProfile()
+
+        for result in vision_results:
+            profile, stats = apply_vision_to_profile(profile, result)
+            logger.info(
+                "[%s] Vision merged into profile: fields=%s conflicts=%s size_hint=%s",
+                session_id, stats.get("merged_fields"), stats.get("conflict_count"),
+                stats.get("size_hint"),
+            )
+
+        if hasattr(memory_store, "set_requirement_profile"):
+            memory_store.set_requirement_profile(session_id, profile)
+        if isinstance(metrics, dict):
+            metrics["merge_success"] = True
+        # 旧的 requirements 视图由 Sales Agent 下一轮从 Profile 重建
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("[%s] Vision merge failed: %s", session_id, exc)
+
+
 class PerfTracker:
     """Lightweight performance tracker for one request cycle."""
 
@@ -115,7 +175,8 @@ class DualAgentOrchestrator:
         self,
         message: str,
         session_id: str,
-        history: List[Dict[str, Any]] = None
+        history: List[Dict[str, Any]] = None,
+        images: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
         """
         Process user message through appropriate agent(s).
@@ -124,11 +185,50 @@ class DualAgentOrchestrator:
             message: User's message
             session_id: Session identifier
             history: Conversation history (optional)
+            images: 客户随消息发送的图片（可选，最多 VISION_MAX_IMAGES 张）
 
         Returns:
             Dict with response and metadata
         """
         perf = PerfTracker(session_id, message)
+
+        # ── 纯图片消息（计划第二十四阶段 Case 1）────────────────────────────
+        # 客户只发了图片、没有文字时，用一句"照片已收到"的话驱动需求采集，
+        # 这样 Sales Agent 会正常回答 + 继续问缺失项，而不是拿空字符串走自由问答。
+        # 注意：这里不编造任何需求，只是描述"客户发了一张照片"这个事实。
+        customer_text = message
+        if images and not str(message or "").strip():
+            message = "I've sent a photo of the screen I'm interested in."
+
+        # ── 视觉需求提取（《智谱视觉需求提取接入实施计划》第九/十四阶段）──────
+        # Orchestrator 只负责"协调"：把图片交给 Vision 模块，拿到结构化结果；
+        # 视觉失败绝不影响主流程（第十九阶段）。
+        vision_results: List[Any] = []
+        vision_metrics: Dict[str, Any] = {}
+        if images and _vision_enabled():
+            from .vision import extract_vision_for_turn
+
+            try:
+                vision_results, vision_metrics = extract_vision_for_turn(
+                    images, session_id=session_id, customer_text=customer_text
+                )
+            except Exception as exc:  # pragma: no cover - 防御式
+                logger.warning("[%s] Vision pipeline failed: %s", session_id, exc)
+                vision_results, vision_metrics = [], {"error": str(exc)}
+            logger.info(
+                "[%s] Vision metrics: images=%s latency_ms=%s explicit=%s inferred=%s null=%s success=%s error=%s",
+                session_id,
+                vision_metrics.get("images"),
+                vision_metrics.get("vision_latency_ms"),
+                vision_metrics.get("fields_extracted"),
+                vision_metrics.get("fields_inferred"),
+                vision_metrics.get("fields_null"),
+                vision_metrics.get("vision_success"),
+                vision_metrics.get("error") or "-",
+            )
+            perf.vision_metrics = vision_metrics
+        elif images:
+            logger.info("[%s] Vision disabled — images ignored", session_id)
 
         # ── First Contact 检查 ────────────────────────────────────────────────
         # 客户第一次发送消息时，执行固定接待流程
@@ -168,10 +268,21 @@ class DualAgentOrchestrator:
                     for key, value in (extract_slots(message) or {}).items()
                     if not str(key).startswith("_") and value not in (None, "", [], {})
                 }
-                if first_slots:
+                if first_slots or vision_results:
                     profile = RequirementProfile.from_slots(
                         first_slots, explicit_keys=set(first_slots)
                     )
+                    # 首轮就带图片：图片里的需求同样要保存（第十五阶段：
+                    # 不能因为图片消息而绕过 First Contact，但也不能丢掉图片信息）
+                    if vision_results:
+                        from .vision import apply_vision_to_profile
+
+                        for result in vision_results:
+                            profile, vision_stats = apply_vision_to_profile(profile, result)
+                            logger.info(
+                                "[%s] First-contact vision merged: %s", session_id, vision_stats
+                            )
+                        vision_metrics["merge_success"] = True
                     if hasattr(self.memory_store, "set_requirement_profile"):
                         self.memory_store.set_requirement_profile(session_id, profile)
                     from .models.legacy_adapter import profile_to_legacy
@@ -223,9 +334,16 @@ class DualAgentOrchestrator:
                 "next_action": "first_contact_done",
             }
             result["_perf"] = perf.summary()
+            if vision_metrics:
+                result["vision"] = vision_metrics
             return result
 
         # ── Sales Agent（仅在首次接待完成后执行）────────────────────────────
+        # 图片识别出的需求先并入 memory 里的需求档案，Sales Agent 下一行就能看到
+        _merge_vision_into_stored_profile(
+            self.memory_store, session_id, vision_results, vision_metrics
+        )
+
         # Step 1: Sales Agent processes message
         sales_result = self.sales_agent.run(
             session_id=session_id,
@@ -337,6 +455,8 @@ class DualAgentOrchestrator:
         )
 
         result["_perf"] = perf.summary()
+        if vision_metrics:
+            result["vision"] = vision_metrics
         return result
     
     def _load_history(self, session_id: str) -> List[Dict[str, str]]:

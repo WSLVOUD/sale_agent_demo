@@ -1,5 +1,6 @@
 """classify node - intent classification for the Sales Agent."""
 import logging
+import re
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -8,6 +9,47 @@ from ....config import config
 from ....rag.parameter_inference import detect_intent
 
 logger = logging.getLogger(__name__)
+
+# ── 真正的"结束对话"说法（只有这些才允许判成 closing）────────────────────────
+# 教训（实测日志）：客户回答"close"（意思是"近"），被分类成 closing，
+# 于是整轮被强制不推荐、只回了一句"我会准备报价"。短回答绝不能被当成结束。
+_CLOSING_STOP_RE = re.compile(
+    r"\b(?:bye|goodbye|see you|that'?s all|that is all|that'?s everything|"
+    r"no thanks|no thank you|we'?re done|we are done|nothing else|end the chat|stop here)\b|"
+    r"不用了|就这样|先这样|结束|再见|拜拜|没有其他|没有了|不需要了",
+    re.IGNORECASE,
+)
+
+# "像在回答需求"的短回答 / 典型答法
+_ANSWER_LIKE_RE = re.compile(
+    r"^\s*(?:yes|no|ok|okay|sure|fine|yep|nope|maybe|"
+    r"close|closer|closest|near|nearby|far|farther|medium|middle|"
+    r"permanent|fixed|rental|indoor|outdoor|"
+    r"近|远|很近|比较近|固定|租赁|室内|室外)\s*[.!。！]?\s*$|"
+    r"\b(?:i (?:do ?n[o']t|do not) know|not sure|no idea|unsure)\b|"
+    r"不知道|不清楚|不确定|没量过|"
+    r"\d+(?:[.,]\d+)?\s*(?:m|meter|metre|ft|feet|inch|mm|cm|%|nit|瓦|寸|米|英尺|厘米|毫米)",
+    re.IGNORECASE,
+)
+
+
+def looks_like_requirement_answer(message: str) -> bool:
+    """客户这句话是不是"在回答需求问题"（而不是要结束对话）。
+
+    短回答（"close" / "5m" / "permanent" / "室内"）也算 —— 这正是被误判的根源。
+    """
+    text = str(message or "").strip()
+    if not text:
+        return False
+    words = re.findall(r"[a-zA-Z\u4e00-\u9fff]+", text)
+    if len(words) <= 4:
+        return True
+    return bool(_ANSWER_LIKE_RE.search(text))
+
+
+def is_explicit_closing(message: str) -> bool:
+    """"我要结束了"的明确说法（只有这种才真的走收尾流程）。"""
+    return bool(_CLOSING_STOP_RE.search(str(message or "")))
 
 
 def classify(state: SalesState) -> SalesState:
@@ -62,6 +104,16 @@ def classify(state: SalesState) -> SalesState:
     intent = response.content.strip().lower()
 
     logger.info(f"Classified intent: {intent}")
+
+    # 【关键修复】客户在回答需求（哪怕是"close"这种短回答）时，不能被判成"结束对话"。
+    # 否则 requirement_mining 会强制不推荐，只回一句"我会准备报价"，
+    # 既不推荐产品也不问尺寸（实测日志出现过）。
+    if intent == "closing" and not is_explicit_closing(message) and looks_like_requirement_answer(message):
+        logger.info(
+            "Overriding LLM intent 'closing' → 'need_query' (message looks like a requirement answer: %r)",
+            message[:60],
+        )
+        intent = "need_query"
 
     # 【关键修复】如果 detect_intent 检测到推荐意图，即使 LLM 分类为 others/industry，也强制走推荐流程
     if detected == "recommendation" and intent in ("others", "industry"):

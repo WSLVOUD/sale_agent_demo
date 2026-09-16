@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "image": "indoor_conference_1.png",
+      "expected": {
+        "environment": "indoor",
+        "display_type": "LED",
+        "notes": "synthetic"
+      }
+    },
+    {
+      "image": "indoor_conference_2.png",
+      "expected": {
+        "environment": "indoor",
+        "display_type": "LED",
+        "notes": "synthetic, no text label"
+      }
+    },
+    {
+      "image": "outdoor_advertising_1.png",
+      "expected": {
+        "environment": "outdoor",
+        "display_type": "LED",
+        "notes": "synthetic"
+      }
+    },
+    {
+      "image": "outdoor_advertising_2.png",
+      "expected": {
+        "environment": "outdoor",
+        "display_type": "LED",
+        "notes": "synthetic, no text label"
+      }
+    },
+    {
+      "image": "rental_stage_1.png",
+      "expected": {
+        "environment": "indoor",
+        "display_type": "LED",
+        "purpose": "stage",
+        "notes": "synthetic"
+      }
+    },
+    {
+      "image": "dimension_drawing.png",
+      "expected": {
+        "environment": "indoor",
+        "display_type": "LED",
+        "installation": "fixed",
+        "target_width_m": 5.0,
+        "target_height_m": 3.0,
+        "notes": "synthetic drawing"
+      }
+    },
+    {
+      "image": "no_screen_wall.png",
+      "expected": {
+        "environment": null,
+        "display_type": null,
+        "notes": "no screen — expect nulls"
+      }
+    },
+    {
+      "image": "no_screen_landscape.png",
+      "expected": {
+        "environment": null,
+        "display_type": null,
+        "notes": "no screen — expect nulls"
+      }
+    }
+  ]
+}

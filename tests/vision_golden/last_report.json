@@ -1,0 +1,249 @@
+{
+  "cases": 8,
+  "errors": [],
+  "display_type_accuracy": 1.0,
+  "environment_accuracy": 0.875,
+  "purpose_accuracy": 1.0,
+  "installation_accuracy": 1.0,
+  "null_precision": 1.0,
+  "clear_size_accuracy": 1.0,
+  "size_fabrication_rate": 0.0,
+  "vision_inferred_as_confirmed": 0,
+  "rows": [
+    {
+      "image": "indoor_conference_1.png",
+      "expected": {
+        "environment": "indoor",
+        "display_type": "LED",
+        "notes": "synthetic"
+      },
+      "got": {
+        "display_type": "LED",
+        "display_type_source": "vision_explicit",
+        "environment": "indoor",
+        "environment_source": "vision_explicit",
+        "purpose": "conference",
+        "purpose_source": "vision_explicit",
+        "installation": null,
+        "installation_source": null,
+        "target_width_m": null,
+        "target_height_m": null,
+        "vision_size_hint_mm": null,
+        "conflicts": [],
+        "merged_fields": 3
+      },
+      "ok": {
+        "display_type": true,
+        "environment": true,
+        "vision_size_not_in_profile": true
+      }
+    },
+    {
+      "image": "indoor_conference_2.png",
+      "expected": {
+        "environment": "indoor",
+        "display_type": "LED",
+        "notes": "synthetic, no text label"
+      },
+      "got": {
+        "display_type": "LED",
+        "display_type_source": "vision_explicit",
+        "environment": "indoor",
+        "environment_source": "vision_explicit",
+        "purpose": "conference",
+        "purpose_source": "vision_explicit",
+        "installation": null,
+        "installation_source": null,
+        "target_width_m": null,
+        "target_height_m": null,
+        "vision_size_hint_mm": null,
+        "conflicts": [],
+        "merged_fields": 3
+      },
+      "ok": {
+        "display_type": true,
+        "environment": true,
+        "vision_size_not_in_profile": true
+      }
+    },
+    {
+      "image": "outdoor_advertising_1.png",
+      "expected": {
+        "environment": "outdoor",
+        "display_type": "LED",
+        "notes": "synthetic"
+      },
+      "got": {
+        "display_type": "LED",
+        "display_type_source": "vision_explicit",
+        "environment": "outdoor",
+        "environment_source": "vision_explicit",
+        "purpose": "advertising",
+        "purpose_source": "vision_explicit",
+        "installation": null,
+        "installation_source": null,
+        "target_width_m": null,
+        "target_height_m": null,
+        "vision_size_hint_mm": null,
+        "conflicts": [],
+        "merged_fields": 3
+      },
+      "ok": {
+        "display_type": true,
+        "environment": true,
+        "vision_size_not_in_profile": true
+      }
+    },
+    {
+      "image": "outdoor_advertising_2.png",
+      "expected": {
+        "environment": "outdoor",
+        "display_type": "LED",
+        "notes": "synthetic, no text label"
+      },
+      "got": {
+        "display_type": "LED",
+        "display_type_source": "vision_explicit",
+        "environment": "indoor",
+        "environment_source": "vision_explicit",
+        "purpose": "conference",
+        "purpose_source": "vision_explicit",
+        "installation": null,
+        "installation_source": null,
+        "target_width_m": null,
+        "target_height_m": null,
+        "vision_size_hint_mm": null,
+        "conflicts": [],
+        "merged_fields": 3
+      },
+      "ok": {
+        "display_type": true,
+        "environment": false,
+        "vision_size_not_in_profile": true
+      }
+    },
+    {
+      "image": "rental_stage_1.png",
+      "expected": {
+        "environment": "indoor",
+        "display_type": "LED",
+        "purpose": "stage",
+        "notes": "synthetic"
+      },
+      "got": {
+        "display_type": "LED",
+        "display_type_source": "vision_explicit",
+        "environment": "indoor",
+        "environment_source": "vision_inferred",
+        "purpose": "stage",
+        "purpose_source": "vision_explicit",
+        "installation": "rental",
+        "installation_source": "vision_explicit",
+        "target_width_m": null,
+        "target_height_m": null,
+        "vision_size_hint_mm": null,
+        "conflicts": [],
+        "merged_fields": 4
+      },
+      "ok": {
+        "display_type": true,
+        "environment": true,
+        "purpose": true,
+        "vision_size_not_in_profile": true
+      }
+    },
+    {
+      "image": "dimension_drawing.png",
+      "expected": {
+        "environment": "indoor",
+        "display_type": "LED",
+        "installation": "fixed",
+        "target_width_m": 5.0,
+        "target_height_m": 3.0,
+        "notes": "synthetic drawing"
+      },
+      "got": {
+        "display_type": "LED",
+        "display_type_source": "vision_explicit",
+        "environment": "indoor",
+        "environment_source": "vision_explicit",
+        "purpose": "conference",
+        "purpose_source": "vision_inferred",
+        "installation": "fixed",
+        "installation_source": "vision_explicit",
+        "target_width_m": 5.0,
+        "target_height_m": 3.0,
+        "vision_size_hint_mm": [
+          5000.0,
+          3000.0
+        ],
+        "conflicts": [],
+        "merged_fields": 4
+      },
+      "ok": {
+        "display_type": true,
+        "environment": true,
+        "installation": true,
+        "target_width_m": true,
+        "target_height_m": true,
+        "vision_size_not_in_profile": true
+      }
+    },
+    {
+      "image": "no_screen_wall.png",
+      "expected": {
+        "environment": null,
+        "display_type": null,
+        "notes": "no screen — expect nulls"
+      },
+      "got": {
+        "display_type": null,
+        "display_type_source": null,
+        "environment": null,
+        "environment_source": null,
+        "purpose": null,
+        "purpose_source": null,
+        "installation": null,
+        "installation_source": null,
+        "target_width_m": null,
+        "target_height_m": null,
+        "vision_size_hint_mm": null,
+        "conflicts": [],
+        "merged_fields": 0
+      },
+      "ok": {
+        "display_type": true,
+        "environment": true,
+        "vision_size_not_in_profile": true
+      }
+    },
+    {
+      "image": "no_screen_landscape.png",
+      "expected": {
+        "environment": null,
+        "display_type": null,
+        "notes": "no screen — expect nulls"
+      },
+      "got": {
+        "display_type": null,
+        "display_type_source": null,
+        "environment": null,
+        "environment_source": null,
+        "purpose": null,
+        "purpose_source": null,
+        "installation": null,
+        "installation_source": null,
+        "target_width_m": null,
+        "target_height_m": null,
+        "vision_size_hint_mm": null,
+        "conflicts": [],
+        "merged_fields": 0
+      },
+      "ok": {
+        "display_type": true,
+        "environment": true,
+        "vision_size_not_in_profile": true
+      }
+    }
+  ]
+}

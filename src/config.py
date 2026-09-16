@@ -64,6 +64,17 @@ class Config:
     #   auto = 跟随客户语言回复（v2.0 文档描述的"Original Language Response"）
     RESPONSE_LANGUAGE_POLICY = os.getenv("RESPONSE_LANGUAGE_POLICY", "en").strip().lower() or "en"
 
+    # ── 智谱视觉需求提取（《智谱视觉需求提取接入实施计划》）──────────────
+    # 图片 → 智谱视觉模型 → 结构化需求 → 合并进 RequirementProfile
+    GLM_API_KEY       = os.getenv("GLM_API_KEY", "")
+    GLM_VISION_MODEL  = os.getenv("GLM_VISION_MODEL", "glm-4v-plus")
+    GLM_API_BASE      = os.getenv("GLM_API_BASE", "https://open.bigmodel.cn/api/paas/v4")
+    VISION_ENABLED    = os.getenv("VISION_ENABLED", "true").strip().lower() not in ("0", "false", "no")
+    VISION_TIMEOUT_SECS = int(os.getenv("VISION_TIMEOUT_SECS", "40"))
+    VISION_MAX_RETRIES  = int(os.getenv("VISION_MAX_RETRIES", "1"))
+    VISION_MAX_IMAGES   = int(os.getenv("VISION_MAX_IMAGES", "3"))
+    VISION_MAX_IMAGE_MB = float(os.getenv("VISION_MAX_IMAGE_MB", "5"))
+
 
 def resolve_embedding_model_path() -> str:
     """Return the on-disk BGE-M3 directory. Raises if the local model is missing."""

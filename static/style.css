@@ -33,6 +33,7 @@ html, body {
     max-width: 900px;
     height: 100vh;
     margin: 0 auto;
+    position: relative;   /* 拖拽图片时的高亮遮罩需要它 */
     display: flex;
     flex-direction: column;
     background: var(--bg-page);
@@ -423,6 +424,119 @@ html, body {
 }
 
 /* ===== 响应式 ===== */
+/* ===== 图片发送（视觉需求提取）===== */
+.attach-btn {
+    height: 44px;
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-input);
+    color: #94a3b8;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    transition: all 0.2s;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.attach-btn:hover {
+    color: var(--bg-message-user);
+    border-color: var(--bg-message-user);
+    background: rgba(56, 189, 248, 0.08);
+}
+
+.attach-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.attach-text {
+    line-height: 1;
+}
+
+.input-hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #94a3b8;
+    text-align: center;
+}
+
+.chat-container.drag-over::after {
+    content: "松开即可添加图片";
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    color: #e2e8f0;
+    background: rgba(15, 23, 42, 0.75);
+    border: 2px dashed var(--bg-message-user);
+    z-index: 50;
+    pointer-events: none;
+}
+
+.image-preview {
+    display: none;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.image-preview.has-images {
+    display: flex;
+}
+
+.image-preview-item {
+    position: relative;
+    width: 72px;
+    height: 72px;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+
+.image-preview-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.image-remove {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+    font-size: 14px;
+    line-height: 18px;
+    cursor: pointer;
+    padding: 0;
+}
+
+.message-images {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.message-image {
+    max-width: 220px;
+    max-height: 180px;
+    border-radius: 10px;
+    object-fit: cover;
+}
+
 @media (max-width: 768px) {
     .chat-header {
         height: 56px;

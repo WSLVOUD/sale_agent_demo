@@ -320,6 +320,92 @@ def purpose_english(purpose: Optional[str]) -> str:
     return str(purpose)
 
 
+# ── 观看距离的"模糊回答"（降门槛提问后，客户常说 close / near / far）──────────
+# 计划（Phase 7）明确要求允许客户回答 approximately / roughly / near / far /
+# more than 10m；这里把这类回答映射为一个**近似**距离，让流程能继续往下走，
+# 而不是卡在观看距离上反复问。
+_ROUGH_DISTANCE_PATTERNS: "tuple[tuple[Any, float], ...]" = (
+    (re.compile(r"\b(?:very close|really close|right in front|extremely close)\b|非常近|很近|特别近", re.IGNORECASE), 2.0),
+    (re.compile(
+        r"\b(?:close|closer|closest|near|nearby)\b(?!\s+(?:the|a|an|my|your|our|it|them|that|this)\b)"
+        r"|近距离|比较近|离得近|挺近",
+        re.IGNORECASE,
+    ), 3.0),
+    (re.compile(r"\b(?:medium|middle|moderate|average|halfway)\b|中等|不远不近", re.IGNORECASE), 7.0),
+    (re.compile(r"\b(?:far|farther|further|far away)\b|远处|比较远|很远|挺远", re.IGNORECASE), 15.0),
+)
+
+_DISTANCE_CONTEXT_RE = re.compile(
+    r"\b(?:away|distance|viewers?|audience|screen|sitting|seated)\b|离|距离|观众|屏幕",
+    re.IGNORECASE,
+)
+
+_RANGE_UNITS = r"(?:meters?|metres?|m|feet|foot|ft|米|英尺)"
+
+
+def _extract_rough_viewing_distance(text: str) -> Optional[float]:
+    """"近 / 远 / 中等"这类模糊回答 → 近似观看距离（米）。
+
+    只在"像在回答观看距离"的短句里生效，避免把 "close the deal"、
+    "near the airport" 这类说法误判成距离。
+    """
+    lowered = str(text or "").lower().strip()
+    if not lowered:
+        return None
+    words = re.findall(r"[a-z\u4e00-\u9fff]+", lowered)
+    if len(words) > 6 and not _DISTANCE_CONTEXT_RE.search(lowered):
+        return None
+    for pattern, value in _ROUGH_DISTANCE_PATTERNS:
+        if pattern.search(lowered):
+            return value
+    return None
+
+
+def _extract_ranged_viewing_distance(text: str) -> Optional[float]:
+    """区间 / 上下界 → 近似观看距离："5-10 metres" → 7.5、"more than 10m" → 15。"""
+    lowered = str(text or "").lower()
+
+    ranged = re.search(
+        r"(\d+(?:[.,]\d+)?)\s*(?:-|–|—|~|～|to|到|至)\s*(\d+(?:[.,]\d+)?)\s*" + _RANGE_UNITS,
+        lowered,
+    )
+    if ranged:
+        try:
+            low = float(ranged.group(1).replace(",", "."))
+            high = float(ranged.group(2).replace(",", "."))
+        except ValueError:
+            return None
+        if 0 < low <= high:
+            return round(_distance_to_meters((low + high) / 2, ranged.group(0)), 3)
+
+    upper = re.search(
+        r"(?:more than|over|above|greater than|>|超过|以上|至少)\s*"
+        r"(\d+(?:[.,]\d+)?)\s*" + _RANGE_UNITS,
+        lowered,
+    ) or re.search(r"(\d+(?:[.,]\d+)?)\s*" + _RANGE_UNITS + r"\s*(?:\+|以上|多)", lowered)
+    if upper:
+        try:
+            value = float(upper.group(1).replace(",", "."))
+        except ValueError:
+            return None
+        if value > 0:
+            return round(_distance_to_meters(value * 1.5, upper.group(0)), 3)
+
+    lower = re.search(
+        r"(?:less than|under|below|within|no more than|以内|不到|少于)\s*"
+        r"(\d+(?:[.,]\d+)?)\s*" + _RANGE_UNITS,
+        lowered,
+    )
+    if lower:
+        try:
+            value = float(lower.group(1).replace(",", "."))
+        except ValueError:
+            return None
+        if value > 0:
+            return round(_distance_to_meters(value * 0.6, lower.group(0)), 3)
+    return None
+
+
 def _extract_viewing_distance(text: str) -> Optional[float]:
     lowered = text.lower()
     # 允许"距离"与数值之间有少量修饰词（如 "distancia de visión 15 metros"）
@@ -338,6 +424,16 @@ def _extract_viewing_distance(text: str) -> Optional[float]:
             re.IGNORECASE,
         )
         match = pattern_rev.search(lowered)
+    if not match:
+        # 区间 / 上下界："5-10 metres" → 7.5、"more than 10m" → 15、"less than 5m" → 3
+        ranged = _extract_ranged_viewing_distance(lowered)
+        if ranged is not None:
+            return ranged
+    if not match:
+        # 模糊回答："close / near / far / 近 / 远"（第二轮降门槛提问时客户的常见回答）
+        rough = _extract_rough_viewing_distance(lowered)
+        if rough is not None:
+            return rough
     if not match:
         # 兜底：客户直接回答裸数值 + 单位（"5m"、"about 5 meters"、"大约5米"）。
         # 排除面积（平米）与尺寸（5m x 3m）表达，避免误判。
