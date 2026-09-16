@@ -30,6 +30,7 @@ MISSING_LABELS: Dict[str, str] = {
     "environment": "whether it will be installed indoors or outdoors",
     "purpose": "the application scenario (meeting room, retail, advertising ...)",
     "installation": "whether it is a fixed installation or for rental/events",
+    "pixel_pitch": "the pixel pitch you have in mind (P2.5, P3, P5 ...)",
     "viewing_distance": "roughly how far viewers will stand from the screen",
     "width": "the target screen width",
     "height": "the target screen height",
@@ -44,6 +45,9 @@ MISSING_ORDER: tuple[str, ...] = (
     "environment",
     "purpose",
     "installation",
+    # 点间距先于观看距离：客户知道自己要什么 P 值就听客户的；
+    # 客户不知道再用观看距离反推（客户口径）。
+    "pixel_pitch",
     "viewing_distance",
     "display_type",
     "width",
@@ -108,6 +112,23 @@ QUESTION_VARIANTS: Dict[str, Dict[str, tuple[str, ...]]] = {
             "这块屏是固定在现场，还是要租用/活动用的？",
             "简单确认下——固定安装还是租赁？",
             "这个是长期固定的项目，还是租赁/活动用的？",
+        ),
+    },
+    # 点间距：先问客户有没有指定 P 值（有就按客户的选型；没有就转问观看距离）
+    "pixel_pitch": {
+        "en": (
+            "Do you have a pixel pitch in mind — for example P2.5, P3 or P5?",
+            "Which pixel pitch are you aiming for (P2.5, P3, P5 …)?",
+            "Is there a particular pixel pitch you need, or should I work it out from the viewing distance?",
+            "Do you already know the pitch you want — P3, P4, P5 …?",
+            "What pixel pitch do you have in mind: a finer one like P1.5–P2.5, or a wider one like P4–P5?",
+        ),
+        "zh": (
+            "您对点间距有要求吗？比如 P2.5、P3 或 P5。",
+            "您想用多大的点间距（P2.5、P3、P5…）？",
+            "点间距上有指定吗？没有的话我可以根据观看距离帮您定。",
+            "您有想好的 P 值吗？比如 P3、P4、P5。",
+            "想要更细腻一点的（P1.5–P2.5），还是点间距大一点的（P4–P5）？",
         ),
     },
     "viewing_distance": {
@@ -203,6 +224,17 @@ QUESTION_VARIANTS: Dict[str, Dict[str, tuple[str, ...]]] = {
 # 客户第一次说"不知道"之后，第二次要给区间 / 二选一，让他更容易回答；
 # 客户可以用"大概/大约/更远/更近/10 米以上"这种模糊说法回答。
 EASIER_QUESTIONS: Dict[str, Dict[str, tuple[str, ...]]] = {
+    "pixel_pitch": {
+        "en": (
+            "No problem if you're not sure — would you prefer a finer image (P1.5–P2.5) "
+            "or a wider pitch (P4–P5)?",
+            "If you don't have a pitch in mind, just tell me: finer detail, or a wider pitch?",
+        ),
+        "zh": (
+            "不确定也没关系 —— 您想要更细腻一些（P1.5–P2.5），还是点间距大一点（P4–P5）？",
+            "没有具体 P 值也行 —— 更看重画面细腻度，还是点间距大一些的方案？",
+        ),
+    },
     "viewing_distance": {
         "en": (
             "That's okay — even a rough idea helps. Will viewers be fairly close to the screen, "
@@ -512,7 +544,14 @@ def check_recommendation_ready(
         missing.append("installation")
     elif not _is_confirmed(profile, "installation"):
         missing.append("installation")
-    if getattr(profile, "viewing_distance_m", None) is None:
+    # 点间距 / 观看距离：两者都不知道时**先问点间距**（客户口径）——
+    # 客户知道自己要什么 P 值就按客户的选型；不知道再问观看距离、用规则反推。
+    # 客户已经给了观看距离时就不用再问点间距了（距离能推 P 值）。
+    pitch_missing = getattr(profile, "pixel_pitch_mm", None) is None
+    distance_missing = getattr(profile, "viewing_distance_m", None) is None
+    if pitch_missing and distance_missing:
+        missing.append("pixel_pitch")
+    if distance_missing:
         missing.append("viewing_distance")
     elif not _is_confirmed(profile, "viewing_distance_m"):
         missing.append("viewing_distance")

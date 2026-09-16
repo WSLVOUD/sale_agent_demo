@@ -709,6 +709,128 @@ def degraded_note(
     ).strip()
 
 
+# ── 图片识别结果 → 跟客户确认（客户口径：识别完先核对，不对就按客户说的记）──
+_VISION_FIELD_PHRASES: Dict[str, Dict[str, Dict[str, str]]] = {
+    "display_type": {
+        "en": {"LED": "an LED screen", "LCD": "an LCD display", "IFP": "an interactive flat panel"},
+        "zh": {"LED": "LED 屏", "LCD": "LCD 屏", "IFP": "交互平板"},
+    },
+    "environment": {
+        "en": {
+            "indoor": "indoor use",
+            "outdoor": "outdoor use",
+            "semi_outdoor": "semi-outdoor use",
+        },
+        "zh": {"indoor": "室内使用", "outdoor": "室外使用", "semi_outdoor": "半户外使用"},
+    },
+    "installation": {
+        "en": {"fixed": "a fixed installation", "rental": "a rental setup"},
+        "zh": {"fixed": "固定安装", "rental": "租赁使用"},
+    },
+}
+
+_VISION_PURPOSE_PHRASES: Dict[str, Dict[str, str]] = {
+    "en": {
+        "conference": "a conference room", "classroom": "a classroom", "retail": "a retail space",
+        "advertising": "advertising", "stadium": "a stadium", "church": "a church",
+        "stage": "a stage", "concert": "a concert venue", "museum": "a museum",
+        "showroom": "a showroom", "airport": "an airport", "bank": "a bank",
+        "hotel": "a hotel", "restaurant": "a restaurant", "office": "an office",
+        "hospital": "a hospital", "exhibition": "an exhibition hall", "hall": "a hall",
+        "control_room": "a control room", "rental": "rental and events",
+    },
+    "zh": {
+        "conference": "会议室", "classroom": "教室", "retail": "零售门店",
+        "advertising": "广告传媒", "stadium": "体育场馆", "church": "教堂",
+        "stage": "舞台", "concert": "演唱会", "museum": "博物馆",
+        "showroom": "展厅", "airport": "机场", "bank": "银行",
+        "hotel": "酒店", "restaurant": "餐厅", "office": "办公室",
+        "hospital": "医院", "exhibition": "展馆", "hall": "大厅",
+        "control_room": "监控中心", "rental": "租赁活动",
+    },
+}
+
+_VISION_CONFIRM_TEMPLATES = {
+    "en": (
+        # 一句话说完：看到什么 + 请客户纠正（避免"三句话各说各的"）
+        "Thanks for the photo — it looks like {items}, so correct me if I've misread it.",
+        "From your picture I'd say {items}, and let me know if that's not right.",
+        "The photo reads to me as {items} (tell me if I'm off).",
+        "Looking at your photo, I'd take it as {items} — feel free to correct me.",
+    ),
+    "zh": (
+        "照片收到了，看着像是{items}，我理解不对的话你纠正我。",
+        "从照片看应该是{items}，跟实际不一样的话跟我说一声。",
+        "我看照片判断是{items}（说得不对你直接纠正我）。",
+        "按照片来看是{items}，如果不对提醒我一下。",
+    ),
+}
+
+# 图片确认句 → 追问之间的过渡词（让两句接得上，而不是硬拼）
+_VISION_BRIDGES = {
+    "en": ("So, ", "Then, ", "Now, ", "Also, ", "So I can match the right model, "),
+    "zh": ("那么，", "这样的话，", "那个，", "顺便问一下，"),
+}
+
+# 纯客套、没有实质信息的"回应"：已经有图片确认句时就不再叠一遍
+_GENERIC_ACK_STARTS = {
+    "en": (
+        "got it", "thanks", "thank you", "sure", "ok", "okay", "understood",
+        "alright", "sounds good", "happy to help", "no problem", "noted",
+    ),
+    "zh": ("好的", "收到", "明白", "了解", "没问题", "谢谢", "嗯", "可以"),
+}
+
+
+def _is_generic_ack(text: str, language: str) -> bool:
+    """这句"回应"是不是纯客套（是的话，图片确认句在场时就不重复了）。"""
+    cleaned = str(text or "").strip().lower()
+    if not cleaned:
+        return False
+    if language == "en" and len(cleaned.split()) > 14:
+        return False
+    return any(cleaned.startswith(prefix) for prefix in _GENERIC_ACK_STARTS.get(language, ()))
+
+
+def vision_confirmation_items(profile, language: Optional[str] = None) -> List[str]:
+    """把"图片识别出、还没确认"的字段转成人话（用于跟客户核对）。"""
+    lang = _lang(language)
+    fields = list(getattr(profile, "vision_confirmation_pending", None) or [])
+    items: List[str] = []
+    for field in fields:
+        value = getattr(profile, field, None)
+        if value in (None, "", [], {}):
+            continue
+        if field == "purpose":
+            phrase = (_VISION_PURPOSE_PHRASES.get(lang) or {}).get(str(value))
+        else:
+            phrase = ((_VISION_FIELD_PHRASES.get(field) or {}).get(lang) or {}).get(str(value))
+        if phrase and phrase not in items:
+            items.append(phrase)
+    return items
+
+
+def vision_confirmation_sentence(profile, language: Optional[str] = None, seed: int = 0) -> str:
+    """生成"图片里看到的是 XXX，对吗？"这一句（多种说法轮换，不死板）。
+
+    客户纠正后按客户说的记录（见 RequirementProfile.merge：客户明说 > 图片识别）。
+    """
+    if profile is None:
+        return ""
+    items = vision_confirmation_items(profile, language)
+    if not items:
+        return ""
+    lang = _lang(language)
+    if lang == "zh":
+        item_text = "、".join(items)
+    elif len(items) == 1:
+        item_text = items[0]
+    else:
+        item_text = ", ".join(items[:-1]) + " and " + items[-1]
+    templates = _VISION_CONFIRM_TEMPLATES.get(lang) or _VISION_CONFIRM_TEMPLATES["en"]
+    return templates[seed % len(templates)].format(items=item_text).strip()
+
+
 def acknowledge(
     message: str,
     *,
@@ -828,6 +950,7 @@ def compose_requirement_reply(
     include_ack: bool = True,
     data_dir: Optional[str] = None,
     llm_ack: str = "",
+    vision_confirmation: str = "",
 ) -> str:
     """把"回应"与"追问"合成一句自然的销售回复。
 
@@ -837,8 +960,7 @@ def compose_requirement_reply(
     """
     answer = str(answer or "").strip()
     question = str(question or "").strip()
-    if not question:
-        return answer
+    vision_confirmation = str(vision_confirmation or "").strip()
 
     lang = _lang(language or reply_language(message))
     ack = (
@@ -854,24 +976,51 @@ def compose_requirement_reply(
         if include_ack
         else ""
     )
+    # 图片确认句本身就包含了"接住客户这句话"（照片收到 + 我看到什么），
+    # 所以纯客套的 ack（"Got it — happy to help you find a display like that."）
+    # 不再叠上去 —— 否则就是三句话各说各的，读起来很生硬。
+    if vision_confirmation and _is_generic_ack(ack, lang):
+        ack = ""
+    # 图片识别结果先跟客户确认：放在"回应"之后、追问之前
+    lead = " ".join(part for part in (ack, vision_confirmation) if part).strip()
+
+    if not question:
+        # 没有待问项时保持原行为（不要把 ack 硬拼上来）
+        if not vision_confirmation:
+            return answer
+        return " ".join(part for part in (answer, vision_confirmation) if part).strip()
 
     if answer and _already_asks(answer, slot, lang):
-        return f"{ack} {answer}".strip() if ack else answer
+        return f"{lead} {answer}".strip() if lead else answer
     if answer:
         connectors = _CONNECTORS[lang]
         tail = _tail_question(question)
         if lang == "en":
             tail = _lower_first_word(tail)
-        return f"{answer} {connectors[seed % len(connectors)]} {tail}".strip()
-    if ack:
+        body = f"{answer} {connectors[seed % len(connectors)]} {tail}".strip()
+        return f"{lead} {body}".strip() if lead else body
+    if lead:
+        # 有图片确认句时：用过渡词把"确认"和"追问"接起来，并用完整问句
+        # （"…looks like an indoor LED screen for a conference room, correct me if I've misread it.
+        #   So, is this a permanent install, or is it for rental/events?"）
+        if vision_confirmation:
+            bridges = _VISION_BRIDGES[lang]
+            full_question = question
+            if lang == "en":
+                full_question = _lower_first_word(full_question)
+            # 中文不加空格，英文加空格
+            separator = "" if lang == "zh" else " "
+            return f"{lead}{separator}{bridges[seed % len(bridges)]}{full_question}".strip()
         # 回应是"回答客户的问题"时，加一句自然过渡再接需求问题，避免生硬
         if _ack_is_customer_answer(message, data_dir):
             bridges = _BRIDGES[lang]
             tail = _tail_question(question)
             if lang == "en":
                 tail = _lower_first_word(tail)
-            return f"{ack} {bridges[seed % len(bridges)]} {tail}".strip()
-        return f"{ack} {question}".strip()
+            if ack and not vision_confirmation:
+                return f"{ack} {bridges[seed % len(bridges)]} {tail}".strip()
+            return f"{lead} {tail}".strip()
+        return f"{lead} {question}".strip()
     return question
 
 
@@ -888,4 +1037,6 @@ __all__ = [
     "relaxation_answer",
     "reply_language",
     "requirement_echo",
+    "vision_confirmation_items",
+    "vision_confirmation_sentence",
 ]

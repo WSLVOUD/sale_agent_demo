@@ -166,6 +166,7 @@ class SolutionAgentRunner:
         additional_requirements: List[str] = None,
         profile: Any = None,
         session_id: str = "",
+        intent: str = "",
     ) -> SolutionState:
         """Build the initial state for the agent."""
         # Normalize history
@@ -224,7 +225,11 @@ class SolutionAgentRunner:
             merged_requirement = {**merged_requirement, **(current_parsed.get("requirement") or {})}
 
         # Determine intent
-        if requirements:
+        if intent:
+            # 上游（Sales / Orchestrator）已经定好了这一轮是什么意图，别再自己判一遍，
+            # 否则"客户在问别的事"会被重新判成 recommendation → 又走推荐/反问。
+            current_intent = intent
+        elif requirements:
             current_intent = "recommendation"
         else:
             from .nodes.intent import detect_intent
@@ -278,6 +283,7 @@ class SolutionAgentRunner:
         additional_requirements: List[str] = None,
         profile: Any = None,
         session_id: str = "",
+        intent: str = "",
     ) -> Dict[str, Any]:
         """Run the agent with a user message.
 
@@ -336,7 +342,7 @@ class SolutionAgentRunner:
 
         # ── Step 2b: Agent Path ────────────────────────────────────────
         initial_state = self._build_initial_state(
-            message, history, requirements, additional_requirements, profile, session_id
+            message, history, requirements, additional_requirements, profile, session_id, intent
         )
 
         # 将路由层提取的约束注入 agent state（避免 LLM 重复推理）

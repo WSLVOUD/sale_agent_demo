@@ -14,6 +14,7 @@ Vision → RequirementProfile 的合并（计划「第七 / 八 / 九 / 十八 �
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -141,7 +142,87 @@ def apply_vision_to_profile(
     profile.sources = sources
     profile.conflicts = conflicts
     profile.conflict_slots = conflict_slots
+
+    # ── 待客户确认：图片识别出的字段要跟客户核一遍（客户口径）───────────────
+    # 只登记"客户还没确认过"的字段；范围限定在图片确实能看出来的那几项，
+    # 尺寸走 vision_size_hint_mm 的追问，不在这里重复问。
+    pending: List[str] = []
+    assertions: Dict[str, Any] = dict(profile.vision_assertions or {})
+    for name in ("display_type", "environment", "purpose", "installation"):
+        source = str(sources.get(name) or "")
+        if source.startswith("vision") and getattr(profile, name, None) not in (None, "", [], {}):
+            pending.append(name)
+            assertions[name] = getattr(profile, name)
+    if pending:
+        profile.vision_confirmation_pending = sorted(set(pending))
+        profile.vision_assertions = assertions
+        stats["pending_confirmation"] = list(profile.vision_confirmation_pending)
+
     return profile, stats
+
+
+_AFFIRM_RE = re.compile(
+    r"^\s*(?:yes|yeah|yep|yup|correct|right|exactly|sure|ok(?:ay)?|"
+    r"that'?s right|that is right|it is|it'?s right|perfect|exact)\b|"
+    r"对的|是的|没错|正确|就是这样|没问题|可以的|对的啊|嗯|是的呀",
+    re.IGNORECASE,
+)
+
+
+def resolve_vision_confirmation(profile, message: str) -> Dict[str, Any]:
+    """客户对"图片识别结果"的回应落地：确认 → 标记为客户确认；纠正 → 记下客户的值。
+
+    设计（客户口径）：
+      - 图片识别出的字段会先跟客户核一遍（见 ``vision_confirmation_sentence``）；
+      - 客户说"对/是的" → 这些字段升级为**客户确认**（sources 从 vision_explicit → confirmed）；
+      - 客户给了不同的值（"不是，是室外的"）→ 客户的值本来就已经按"客户优先"合并进档案，
+        这里额外记一条纠正记录，便于回溯"图片说的 vs 客户说的"；
+      - 客户没回应就跳过，不再重复追问同一件事。
+    """
+    stats: Dict[str, Any] = {"confirmed": [], "corrected": [], "skipped": False}
+    if profile is None:
+        return stats
+    pending = list(getattr(profile, "vision_confirmation_pending", None) or [])
+    if not pending:
+        return stats
+
+    text = str(message or "")
+    affirmed = bool(_AFFIRM_RE.search(text))
+    sources = dict(profile.sources or {})
+    assertions = dict(getattr(profile, "vision_assertions", None) or {})
+    corrections = list(getattr(profile, "vision_corrections", None) or [])
+
+    for field in pending:
+        value = getattr(profile, field, None)
+        asserted = assertions.get(field)
+        source = str(sources.get(field) or "")
+
+        if source in CONFIRMED_SOURCES:
+            # 客户已经用**自己的话**给了值
+            if asserted not in (None, "") and value != asserted:
+                note = f"image said {asserted}, customer said {value} ({field})"
+                if note not in corrections:
+                    corrections.append(note)
+                stats["corrected"].append(field)
+                logger.info("Vision correction on %s: image=%s → customer=%s", field, asserted, value)
+            elif affirmed and source == "vision_explicit":
+                sources[field] = "confirmed"
+                stats["confirmed"].append(field)
+            continue
+
+        if affirmed and source == "vision_explicit":
+            sources[field] = "confirmed"
+            stats["confirmed"].append(field)
+
+    if not stats["confirmed"] and not stats["corrected"]:
+        stats["skipped"] = True
+
+    profile.sources = sources
+    profile.vision_corrections = corrections
+    # 核对过一轮就不再重复问同一件事
+    profile.vision_confirmation_pending = []
+    profile.vision_assertions = {}
+    return stats
 
 
 def extract_vision_for_turn(
@@ -206,4 +287,8 @@ def extract_vision_for_turn(
     return results, metrics
 
 
-__all__ = ["apply_vision_to_profile", "extract_vision_for_turn"]
+__all__ = [
+    "apply_vision_to_profile",
+    "extract_vision_for_turn",
+    "resolve_vision_confirmation",
+]

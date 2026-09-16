@@ -407,6 +407,273 @@ AI：Alright, I'll put together a detailed proposal and quote for you...
 
 ---
 
+## 修复 + 优化：推荐之后要"接得住" + 代理商问题的回答（2026-09-16）
+
+### 问题 1：推荐完产品后，客户问什么，AI 都又推荐一遍
+
+实测日志：已经推荐过产品后，客户问 **"你们在肯尼亚有代理商吗？"**，
+系统却又走了一遍推荐（"For your viewing distance, the TW11-3216-P3.0 is the right fit…"），
+客户的问题完全没被回答。
+
+根因（三处叠加）：
+
+1. **销售侧判"这句话是不是在报需求"时用了历史状态**：
+   `has_scenario = 历史 requirements 里已有 usage 或 本轮有 purpose` ——
+   场景一旦确定，"历史里已有 usage"永远为真，于是之后**每一句话**都被当成"在报需求"，
+   被判 `need_query` → Gate 已就绪 → 又推荐一遍。
+2. **方案侧意图规则**：只要句子里检测到任何需求槽位（例如出现"屏 / LED"）就直接判
+   `recommendation` —— 客户问"这个屏大概多久能发货？"也被当成"要推荐"。
+3. **runner 每轮 `clear()` 会话时把"已推荐"标记清掉了**（只有本轮又出产品才重新写入），
+   所以从第 3 轮起标记丢失，又开始重复推荐。
+
+修复：
+
+| 位置 | 改动 |
+|------|------|
+| `src/agents/sales/nodes/requirement.py` | 只看**本轮这句话**有没有需求信息（规则槽位 + 本轮 LLM 语义 + 场景关键词）；提问句（？/吗/怎么/有没有…）不再被改判成需求回答；**但**"自我介绍+说场景+要规格"这种混合句仍留在需求采集 |
+| 同上 | **已推荐过 + 本轮没有新需求 + 不是"再推荐/报价/下单"** → 先回答客户，不重复推荐（走 others / product_question 回答路径） |
+| `src/rag/parameter_inference.py` | 提问句不再因为出现"屏/LED"被判成推荐请求；"你们能推荐一款吗？"这类**明确要推荐**仍判 recommendation |
+| `src/agents/sales/runner.py` + `src/memory/store.py` | "已推荐"标记跨轮保留（`get_recommendation()` → 重新写入） |
+| `src/agents/sales/state.py` | 新增 `already_recommended` 状态字段 |
+
+行为：需求有变化（例如"改成室外的"）或客户明确要"再推荐/报价/下单" → 照旧重新推荐；
+其它情况一律先回答客户。
+
+### 问题 2：问"有没有代理商"时的回答
+
+回答固定要说清三件事（按客户口径）：
+
+1. **只有中国（深圳）这一个公司/工厂**，当地没有代理、经销商或办事处；
+2. **工厂是我们自己的**，中间没有环节 → 开销/成本更低、报价更有竞争力；
+3. 海外客户由**深圳团队直接对接**。
+
+中英文各 4 套说法按轮次轮换（**不是一句话死板重复**），事实写进
+`data/company_profile.txt`（已补充"自有工厂""唯一所在地"两条），
+`company_answer()` 只依据公司资料回答，不编造。
+
+### 实测（真实 DeepSeek + 智谱，四轮）
+
+```text
+第1轮 I need an indoor fixed LED screen for a conference room, 3m x 5m, viewing distance 5 meters
+      → 推荐 TW11-3216-P3.0（55 箱体 / 330 模组 / 3.2m x 5.28m）
+第2轮 你们在肯尼亚有代理商吗？
+      → 不再推荐；答：只有深圳这一个点、没有当地代理、自有工厂、中间无加价、成本更低
+第3轮 那付款方式和交期怎么算？
+      → 不再推荐；如实回答付款方式与交期（没有确切数据就直说）
+第4轮 这个屏大概多久能发货？
+      → 不再推荐；就是论事回答发货时间
+```
+
+> 回归测试：`tests/test_requirement_dialogue.py::TestAfterRecommendationMustAnswer`（7 条）
+> 与 `tests/test_company_info.py::TestAgentDistributorAnswerContent`（4 条）。
+
+---
+
+## 新增：图片识别结果先跟客户确认（2026-09-16）
+
+客户口径：**识别完图片不要直接当事实用，先把"我看到什么"说给客户听，让他确认；
+他说得不对就按他说的改，并把客户正确的需求记下来。**
+
+### 行为
+
+```text
+客户发图（+ 一句话）
+   ↓ 智谱视觉提取 → 合并进 RequirementProfile（来源 vision_explicit）
+回复：先接住客户这句话 + "我在图片里看到的是 XXX，对吗？" + 继续问缺失项
+   ↓ 客户回应（下一轮）
+   ├─ "对 / 是的"     → 这些字段升级为**客户确认**（sources: vision_explicit → confirmed）
+   ├─ "不对，是室外的" → 以客户说的为准（Extractor 已按"客户优先"合并），
+   │                     并记录纠正：image said indoor, customer said outdoor (environment)
+   └─ 没回应/问别的    → 不再重复追问同一件事（核对只做一次）
+```
+
+### 实现
+
+| 位置 | 改动 |
+|------|------|
+| `src/models/requirement.py` | 新增 `vision_confirmation_pending`（待确认字段）、`vision_assertions`（图片当时的判断）、`vision_corrections`（客户纠正记录） |
+| `src/vision/integration.py` | `apply_vision_to_profile()` 登记待确认字段；新增 `resolve_vision_confirmation()` 落地"确认 / 纠正 / 跳过" |
+| `src/rag/reply_composer.py` | 新增 `vision_confirmation_sentence()`：把识别结果转成一句人话（中英文各 4 套说法轮换，不死板），并支持插到"回应之后、追问之前" |
+| `src/agents/sales/nodes/script_generator.py` | 带图那一轮把确认句加进回复（包括"直接给出推荐"的那一轮） |
+| `src/agents/sales/nodes/requirement.py` | 下一轮先落地客户对图片识别的确认/纠正，再走原来的需求采集 |
+| `src/agents/sales/runner.py` / `state.py` | 新增 `has_vision` / `vision_applied`，让节点知道"这一轮是不是带图" |
+
+### 实测（真实智谱 + DeepSeek）
+
+```text
+第1轮 客户：[图片] i need a display like this
+      → "Thanks for the photo — it looks like an LED screen, indoor use and a conference room,
+         so correct me if I've misread it. So, fixed installation or rental — which one is it for you?"
+      档案：display_type=LED、environment=indoor、purpose=conference（待确认 3 项）
+
+第2轮 客户：no, actually it is outdoor, for a shop
+      → "Got it, thanks for clarifying. Is this a permanent install, or is it for rental/events?"
+      档案：environment=outdoor（客户）、purpose=retail（客户），更正记录：
+           image said indoor, customer said outdoor (environment)
+           image said conference, customer said retail (purpose)
+```
+
+> 话术衔接：确认句是**一句话**（含"说错请纠正"），后面用 `So, / Then, / Now, / Also, /`
+> `那么，/ 这样的话，/` 之类的过渡词接上追问（完整问句、英文首字母小写），
+> 并且当 LLM 的"回应"只是客套（"Got it — happy to help…"）时会被丢掉，避免三句话各说各的。
+
+> 回归测试：`tests/test_vision_pipeline.py::TestVisionConfirmation`（6 条）。
+
+---
+
+## 修复：客户问"还有其他推荐吗"时的回答格式 + 不再提价格（2026-09-16）
+
+### 问题（客户实测）
+
+客户问 **"你还有其他的推荐吗？"**，系统把**同一款**又讲了一遍（参数 + 价格档位），
+然后追问尺寸：
+
+> For your viewing distance, the TW11-3216-P3.0 is a solid fit: 3.076mm pixel pitch, 500nit
+> brightness… **It also sits in our low price tier** with a 1 year warranty. If you want higher
+> brightness or longer coverage, TW21-3216-P3.0 and TW11-3216-P4.0 are options.
+> What target screen width and height should I use…?
+
+### 现在（客户口径）
+
+```text
+客户：你还有其他的推荐吗？
+回复：…TW11-3216-P3.0 fits well: 3.076mm pitch suits that range, each 640mm*480mm cabinet holds 6 modules.
+      If you want higher brightness, TW21-3216-P3.0.
+      If you want a wider 4mm pitch, TW11-3216-P4.0.
+      Share your target screen size, brightness, delivery or installation needs and I'll lock in the right model.
+```
+
+规则：
+
+1. **备选说成条件句**：`If you want <差别>, <型号>.`（差别是程序比出来的：更高亮度 / 更细或更宽的点间距 /
+   COB / HDR / 防水 / 更长质保 / 租赁版本…），不再把型号堆成一句 "…are options"。
+2. **结尾邀请补充需求**："Share your target screen size, brightness, delivery or installation needs
+   and I'll lock in the right model."（这一轮**不再单独催尺寸**）。
+3. **绝不提价格**：产品数据里已经去掉 `price tier`，并加了硬规则"NEVER mention price, price tier,
+   cost, discount, budget or value for money"；其它分支（others 节点）也从"直接比价"改成
+   "价格取决于最终型号与配置，销售团队会出正式报价"。
+4. **客户补充需求后重新锁定一款**：新需求（含预算档、亮度、点间距等）算作"新增需求"，
+   会按"已有需求 + 新需求"重新推荐，并在话术里先接住他刚说的那句
+   （如 "On quality and quick delivery, this model is a solid, readily available choice."）。
+
+### 顺带修掉的一个更严重的问题
+
+同一条日志里，客户中途问别的事时，Solution Agent 会**只拿这一句话重建需求**，
+于是又回头问 "Are we talking about an indoor or an outdoor install?"（明明早就知道室内 / 会议室 / 10 米）。
+
+修复：Orchestrator 在 `others` / `product_question` 这两条路由上，把
+**本会话已收集的需求档案**和 **Sales 定好的意图**一起传给 Solution Agent；
+Solution 的意图节点也不再自己重判意图（只在没有上游意图时才判）。
+
+> 回归测试：`tests/test_sizing_and_expression.py::TestAlternativesReplyFormat`、
+> `tests/test_reply_composer.py::TestOrchestratorComposesAnswerAndQuestion::test_others_route_carries_profile_and_intent`。
+
+---
+
+## 新增：交付时间口径（2026-09-16）
+
+客户口径：
+
+1. **问交期** → 从**下单付款**开始计算，常规交付时间约 **15–30 天**；
+2. **要求加快** → 可以走**空运**，能提前交付，但**成本会增加**（会在报价里体现）；
+3. **提到安装档期**（"想 11 月安装"、"need it by December"）→ 先接住他的话，
+   再把交期说清楚，让他自己判断来不来得及（**不承诺具体日期**）。
+
+### 实测（真实 DeepSeek）
+
+```text
+客户：i wanna buy a display, and wanna install 11月
+→ Got it, 11月 is your target for installation. From order and payment our delivery usually takes
+  about 15–30 days, so we'd want the order confirmed in good time.
+  In the meantime, is this for indoor or outdoor use?
+
+客户：大概多久能发货？
+→ Our standard lead time is roughly 15–30 days from order and payment; I'll pin down the dates
+  once we settle the configuration. While we're at it, most installations are indoors.
+  Will this one be indoors, or outside?
+
+客户：我们比较急，能不能加快？
+→ For a faster schedule we'd switch to air freight: it costs more, but it brings the delivery date
+  forward — I can price that option for you. And so I can point you to the right one,
+  could you tell me the main use case?
+```
+
+注意：答复之后**照常继续问还缺的需求**（不会只回答完就断线），也不会因为客户提到档期
+就跳过需求采集。
+
+### 实现
+
+| 文件 | 作用 |
+|------|------|
+| `src/rag/delivery_info.py` | 交期/加急/档期识别 + 中英文多套说法（15–30 天、空运加成本） |
+| `src/agents/sales/nodes/script_generator.py` | 命中交付类话题时直接按口径回答（+ 接上待问问题），且不重复叠加 LLM 客套 |
+| `src/agents/solution/nodes/others.py` | 自由问答分支也按同一口径回答交期（不承诺具体日期） |
+
+> 回归测试：`tests/test_delivery_info.py`（24 条）。
+
+---
+
+## 变更：先问点间距，客户不知道再问观看距离（2026-09-16）
+
+客户口径：**先问客户对点间距有没有要求；客户不知道，就转问观看距离，用规则反推点间距。**
+
+### 询问顺序
+
+```text
+室内外 → 使用场景 → 安装方式
+      ↓
+① 点间距（先问）："Do you already know the pitch you want — P3, P4, P5 …?"
+      ├─ 客户给出 P 值     → 按客户要的 P 值选型（直接放行推荐，不再问观看距离）
+      └─ 客户不知道        → **只问一次**就跳过，转 ②
+                             （客户说"你决定 / 随便 / 越清晰越好"也算不知道）
+② 观看距离
+      ├─ 客户给出距离      → 用规则推点间距（室内 ≤3m→P2.5、>3m→P3；室外 4m→P4、
+      │                      6–20m→P5、25–30m→P8、>30m→P10），然后推荐
+      └─ 客户也不知道      → 保持老规则：降门槛再问一次 → 仍不知道 → unknown
+                              → 降级推荐 + 说明缺失项
+```
+
+关键规则：
+
+- **点间距是"单次询问"**：客户答"不知道"就跳过（`SINGLE_ASK_SLOTS`），不会问第二遍；
+  观看距离仍然是"最多问两遍"。
+- **观看距离已经有了就不再问点间距**（距离能推 P 值），所以老会话不会被这个新问题拦下来。
+- 客户给出的 P 值（`P3` / `p2.5` / `3mm pitch` / `点间距3mm`）都会解析进
+  `pixel_pitch_mm`，并作为"客户明确规格"直接放行推荐。
+
+### 实测（真实 DeepSeek，四轮）
+
+```text
+客户：I need an indoor LED screen for a conference room
+→ …is this a fixed install or a rental?
+
+客户：fixed installation
+→ Understood — a fixed installation it is. Do you already know the pitch you want — P3, P4, P5 …?
+
+客户：I don't know
+→ No problem at all — pitch is something we can work out together once we know the room and viewing
+  setup. How far will the audience typically be sitting from the screen?
+   （点间距只问了 1 次：ask_counts={'pixel_pitch': 1}）
+
+客户：about 10 meters
+→ …TW11-3216-P3.0 is a solid fit: its 3.076mm pitch suits that range…（室内 10m → P3）
+  If you want higher brightness, TW21-3216-P3.0. … What target width and height should I use…?
+```
+
+### 改动位置
+
+| 文件 | 改动 |
+|------|------|
+| `src/rag/readiness.py` | `MISSING_ORDER` 把 `pixel_pitch` 插到 `viewing_distance` 之前；新增点间距的问法 / 降门槛问法 / 缺失标签；Gate 只在"点间距和观看距离都不知道"时先问点间距 |
+| `src/models/requirement.py` | 新增 `SINGLE_ASK_SLOTS = {pixel_pitch}`：客户答"不知道"即跳过，不问第二遍 |
+| `src/core/unknown_detector.py` | "你决定 / 随便 / 越清晰越好 / up to you" → 按"不知道"处理 |
+| `src/rag/query_understanding.py` | 点间距解析补 `3mm pitch` / `间距3mm` 这类写法 |
+| `src/agents/sales/question_planner.py` | 采集顺序同步插入点间距 |
+
+> 回归测试：`tests/test_requirement_dialogue.py::TestPitchAskedBeforeDistance`（7 条）。
+
+---
+
 ## 技术栈
 
 | 层级 | 技术选型 | 说明 |

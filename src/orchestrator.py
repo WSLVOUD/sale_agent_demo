@@ -347,7 +347,8 @@ class DualAgentOrchestrator:
         # Step 1: Sales Agent processes message
         sales_result = self.sales_agent.run(
             session_id=session_id,
-            message=message
+            message=message,
+            has_vision=bool(vision_results),
         )
         perf.mark("sales_done")
         perf.intent = sales_result.get("intent", "")
@@ -383,6 +384,9 @@ class DualAgentOrchestrator:
                 message=message,
                 history=history,
                 session_id=session_id,
+                profile=self._stored_profile(session_id),
+                # 意图由 Sales 定（客户是在问问题，不是要重新推荐）
+                intent=str(sales_result.get("intent") or ""),
             )
             perf.solution_route = solution_result.get("route", "agent")
             perf.llm_calls += 1
@@ -410,6 +414,10 @@ class DualAgentOrchestrator:
                 message=message,
                 history=history,
                 session_id=session_id,
+                # 【关键】把本会话已经收集到的需求档案一起带过去：
+                # 否则 Solution 会只拿这一句话重建需求，又回头问"室内还是室外"（实测出现过）。
+                profile=self._stored_profile(session_id),
+                intent=str(sales_result.get("intent") or ""),
             )
             perf.solution_route = solution_result.get("route", "agent")
             perf.llm_calls += 1
@@ -459,6 +467,24 @@ class DualAgentOrchestrator:
             result["vision"] = vision_metrics
         return result
     
+    def _stored_profile(self, session_id: str):
+        """取本会话已收集的需求档案（转发给 Solution Agent，避免它重新问一遍）。"""
+        if not self.memory_store or not hasattr(self.memory_store, "get_requirement_profile"):
+            return None
+        try:
+            stored = self.memory_store.get_requirement_profile(session_id)
+            if not stored:
+                return None
+            from .models.requirement import RequirementProfile
+
+            return (
+                stored if isinstance(stored, RequirementProfile)
+                else RequirementProfile.model_validate(stored)
+            )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[%s] Load stored profile failed: %s", session_id, exc)
+            return None
+
     def _load_history(self, session_id: str) -> List[Dict[str, str]]:
         """从共享 memory 实例读取历史消息。"""
         if not self.memory_store:

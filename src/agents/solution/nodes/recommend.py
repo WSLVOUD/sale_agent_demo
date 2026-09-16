@@ -251,23 +251,31 @@ def _express_recommendation(
     need_size_question=False,
     language: str = "en",
     degraded_slots=(),
+    follow_up: bool = False,
 ):
     """用一次 LLM 调用把确定性结论表达成销售话术；失败时退化为模板。"""
     top = recommendations[0]
-    others = ", ".join(r["model"] for r in recommendations[1:3])
 
     spec_lines = [
         f"- {rec['model']}: pixel pitch {rec['pixel_pitch_mm']}mm, "
         f"brightness {rec['brightness_nit']}nit, "
         f"cabinet {rec['cabinet_size_mm']}, "
         f"{rec['modules_per_cabinet']} modules per cabinet, "
-        f"{rec['price_tier']} price tier, {rec['warranty_years']} year warranty"
+        f"{rec['warranty_years']} year warranty"
         for rec in recommendations[:3]
+    ]
+    # 备选款：说清"它比首选款多什么"，让客户按自己的偏好选（不提价格）
+    alternative_lines = [
+        f"- {rec['model']}: {_alternative_difference(top, rec)}"
+        for rec in recommendations[1:3]
     ]
     reasons = "; ".join(top.get("reasons") or [])
     extra = ""
     if additional_requirements:
         extra = f"\nCustomer's additional requirements: {', '.join(additional_requirements)}"
+    latest = ""
+    if customer_text:
+        latest = f"\nCustomer's latest message: {str(customer_text)[:200]}"
     calc_text = ""
     if calculation:
         calc_text = (
@@ -277,10 +285,19 @@ def _express_recommendation(
             f"({calculation['area_sqm']} sqm), {calculation['total_modules']} modules."
         )
     next_step_rule = (
-        "4. Finish by asking for the target screen width and height so you can work out "
-        "the cabinet and module configuration.\n"
-        if need_size_question and not calculation
-        else "4. Finish with one short follow-up question about the next step.\n"
+        # 客户只是在问"还有没有别的推荐"：别再把尺寸当成单独一问，
+        # 改成邀请客户补充需求（把尺寸/亮度/交期/安装方式当例子提一下），
+        # 之后按"已有需求 + 新需求"再锁定一款（客户口径）。
+        "4. Finish by inviting the customer to share any other requirements so you can lock in "
+        "the right model for them — mention examples such as the target screen size, brightness, "
+        "delivery or installation type. Do not ask for the size as a separate question here.\n"
+        if follow_up
+        else (
+            "4. Finish by asking for the target screen width and height so you can work out "
+            "the cabinet and module configuration.\n"
+            if need_size_question and not calculation
+            else "4. Finish with one short follow-up question about the next step.\n"
+        )
     )
 
     # ── Phase 15：部分需求客户不知道 → Best-effort 推荐 + 自然说明 ───────────
@@ -309,12 +326,21 @@ def _express_recommendation(
         f"{top['model']}\n\n"
         "Verified product data:\n" + "\n".join(spec_lines) + "\n\n"
         f"Recommendation reasons: {reasons}\n"
-        f"Alternatives: {others or 'none'}"
-        f"{calc_text}{extra}\n\n"
+        "Alternatives (each line says what that model gives you instead):\n"
+        + ("\n".join(alternative_lines) if alternative_lines else "- none")
+        + f"{calc_text}{extra}{latest}\n\n"
         "Rules:\n"
         "1. Mention the selected model with its full model code — it does not have to be the very first words.\n"
         "2. Add 1-2 concrete selling points using ONLY the verified data above.\n"
+        "2b. If the customer's latest message mentions other requirements (quality, lead time, installation, "
+        "brightness, size, delivery…), acknowledge them in ONE short clause and tie the choice to them, "
+        "so the reply answers what they just said instead of repeating the same text.\n"
         "3. If a calculated configuration is given, include the cabinet count and actual size.\n"
+        "3b. If alternatives are listed, offer each one as ONE short conditional sentence in this exact shape: "
+        "\"If you want <that difference>, <MODEL>.\" (e.g. \"If you want higher brightness, TW21-3216-P3.0.\") "
+        "Never list them as a plain list and never repeat the selected model's specs.\n"
+        "3c. NEVER mention price, price tier, cost, discount, budget or value for money — pricing is handled "
+        "separately by the sales team.\n"
         + next_step_rule
         + degraded_rule +
         f"5. Plain text only, no markdown, no bullets, max 90 words.\n"
@@ -344,6 +370,8 @@ def _express_recommendation(
     fallback = opener
     if top.get("reasons"):
         fallback += " " + "; ".join(top["reasons"][:2]) + "."
+    for rec in recommendations[1:3]:
+        fallback += f" If you want {_alternative_difference(top, rec)}, {rec['model']}."
     if calculation:
         fallback += (
             f" For your target size we need {calculation['columns']}x{calculation['rows']} "
@@ -353,11 +381,65 @@ def _express_recommendation(
         )
     if degraded_note_text:
         fallback += " " + degraded_note_text
-    if need_size_question and not calculation:
+    if follow_up:
+        fallback += (
+            " If you have any other requirements — the target screen size, brightness, delivery or "
+            "installation type — tell me and I'll lock in the right model for you."
+        )
+    elif need_size_question and not calculation:
         fallback += " Could you share the target screen width and height so I can work out the cabinet and module configuration?"
     else:
         fallback += " Would you like me to prepare a quotation for this configuration?"
     return fallback
+
+
+def _alternative_difference(top: dict, other: dict) -> str:
+    """备选款与首选款的差别（说成"你要什么就选它"，不提价格）。"""
+    bits = []
+    top_pitch = float(top.get("pixel_pitch_mm") or 0)
+    other_pitch = float(other.get("pixel_pitch_mm") or 0)
+    if top_pitch and other_pitch and abs(other_pitch - top_pitch) > 0.01:
+        bits.append(
+            f"a finer {other_pitch:g}mm pitch" if other_pitch < top_pitch
+            else f"a wider {other_pitch:g}mm pitch"
+        )
+
+    top_brightness = int(top.get("brightness_nit") or 0)
+    other_brightness = int(other.get("brightness_nit") or 0)
+    if other_brightness and top_brightness and other_brightness > top_brightness:
+        bits.append(f"higher brightness ({other_brightness}nit vs {top_brightness}nit)")
+    elif other_brightness and top_brightness and other_brightness < top_brightness:
+        bits.append(f"a lower brightness option ({other_brightness}nit)")
+
+    top_features = set(top.get("features") or [])
+    other_features = set(other.get("features") or [])
+    for token, phrase in (
+        ("cob", "COB packaging"),
+        ("hdr", "HDR"),
+        ("waterproof", "waterproofing"),
+        ("gob", "GOB protection"),
+        ("flexible", "a flexible / curved build"),
+    ):
+        if token in other_features and token not in top_features:
+            bits.append(phrase)
+
+    if int(other.get("warranty_years") or 0) > int(top.get("warranty_years") or 0):
+        bits.append(f"a longer {other['warranty_years']}-year warranty")
+    if other.get("installation") and other.get("installation") != top.get("installation"):
+        bits.append(f"a {other['installation']} version")
+    if not bits:
+        bits.append("a different cabinet / pitch combination")
+    return ", ".join(bits[:2])
+
+
+# 客户在问"还有没有别的推荐"（这种轮次说备选，而不是重讲首选 + 催尺寸）
+_ALTERNATIVES_RE = re.compile(
+    r"(?:还|另外|再)?有(?:没有)?(?:其他|其它|别的|别|更多|什么)?(?:的|一些|几款)?"
+    r"(?:推荐|型号|选择|方案|款式|屏幕|屏)|"
+    r"其他推荐|其它推荐|别的推荐|更多(?:选择|型号|推荐)|换一款|换个型号|"
+    r"\b(?:any other|other options?|other models?|more options?|alternatives?|anything else)\b",
+    re.IGNORECASE,
+)
 
 
 _SIZE_ASK_RE = re.compile(
@@ -517,6 +599,9 @@ def recommend_node(state: SolutionState) -> SolutionState:
 
     # ── 5. 一次 LLM 表达 ────────────────────────────────────────────────
     degraded_slots = list(selection.get("unknown_requirements") or [])
+    # 客户这轮问的是"还有没有别的推荐" → 用"备选 + 邀请补充需求"的格式，
+    # 不重讲首选、不催尺寸、不提价格（客户口径）。
+    follow_up = bool(_ALTERNATIVES_RE.search(str(customer_text or "")))
     answer = _express_recommendation(
         recommendations=recommendations,
         profile=profile,
@@ -526,11 +611,12 @@ def recommend_node(state: SolutionState) -> SolutionState:
         need_size_question=not calc_decision.ready,
         language=state.get("understood_language") or "en",
         degraded_slots=degraded_slots,
+        follow_up=follow_up,
     )
 
     # 缺尺寸时必须追问（确定性兜底：模型若没问，就补一句尺寸追问，
     # 保证"没尺寸一定问、有尺寸才算"，不依赖 LLM 是否听话）
-    if not calc_decision.ready and calc_decision.next_question:
+    if not follow_up and not calc_decision.ready and calc_decision.next_question:
         answer = _ensure_size_question(answer, calc_decision.next_question)
 
     # Phase 15：客户不知道的字段必须在话术里说明（缺什么 + 影响什么），

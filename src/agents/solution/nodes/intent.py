@@ -28,9 +28,12 @@ def _last_user_message(state: SolutionState) -> str:
 def intent_node(state: SolutionState) -> SolutionState:
     """Classify the turn unless the caller already established recommendation intent."""
     message = _last_user_message(state)
-    if state.get("intent") == "recommendation":
-        intent = "recommendation"
-        logger.info("Preserving caller-established recommendation intent")
+    caller_intent = str(state.get("intent") or "")
+    if caller_intent in ("recommendation", "product_question", "conversation", "others"):
+        # 上游（Sales / Orchestrator）已经定好意图就别再判一遍：
+        # 否则"客户在问别的事"会被重新判成 recommendation，又走推荐/反问。
+        intent = caller_intent
+        logger.info("Preserving caller-established intent: %s", intent)
     else:
         intent = detect_intent(message, state=state)
     logger.info("Current-turn intent=%s message=%r", intent, message[:120])

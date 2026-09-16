@@ -55,6 +55,10 @@ SLOT_TO_FIELD: Dict[str, str] = {
 # 同一字段最多主动询问次数（Phase 5：超过就不再问）
 MAX_ASKS_PER_SLOT = 2
 
+# 这些槽位"问一次就够"：客户不知道时直接跳过、换下一个问题（不再问第二遍）。
+# 点间距就是这一类 —— 客户不知道 P 值，我们就转问观看距离，用规则替他推。
+SINGLE_ASK_SLOTS: frozenset[str] = frozenset({"pixel_pitch"})
+
 # 槽位优先级（Phase 17）：HIGH 先问，LOW 最后
 SLOT_PRIORITY: Dict[str, str] = {
     "environment": "HIGH",
@@ -197,6 +201,13 @@ class RequirementProfile(BaseModel):
     vision_size_hint_mm: Optional[List[float]] = None
     # 图片给出的点间距 / 亮度 / 其它说明（提示与排查用，不参与 Gate 放行）
     vision_notes: List[str] = Field(default_factory=list)
+    # 图片识别出的字段里，**还没跟客户确认过**的那些（字段名）。
+    # 下一轮客户回复后（确认或纠正）就清空，并把他确认过的值标记为客户确认。
+    vision_confirmation_pending: List[str] = Field(default_factory=list)
+    # 图片当时"看到"的值（用于对比客户是否纠正了它）：field -> value
+    vision_assertions: Dict[str, Any] = Field(default_factory=dict)
+    # 客户纠正图片识别的记录："image said indoor, customer said outdoor"
+    vision_corrections: List[str] = Field(default_factory=list)
 
     @field_validator("special_requirements", mode="before")
     @classmethod
@@ -634,6 +645,9 @@ class RequirementProfile(BaseModel):
         # 客户明确"跳过这一项" → 不用再问第二次，直接算 unknown
         if self.unknown_reasons.get(slot) == "customer_skip":
             return True
+        # 单次询问的槽位（点间距）：客户答"不知道"就跳过，转去问观看距离
+        if slot in SINGLE_ASK_SLOTS and self.unknown_reasons.get(slot):
+            return True
         # 客户第一次答"不知道"只是 unknown_pending：还允许按"降低门槛"的方式再问一次，
         # 只有问满 MAX_ASKS_PER_SLOT 次仍无值，才真正锁定为 unknown。
         return self.ask_count(slot) >= MAX_ASKS_PER_SLOT
@@ -706,13 +720,25 @@ class RequirementProfile(BaseModel):
             current_strength = _EXPLICIT_STRENGTH.get(sources.get(key, "default"), 1)
             incoming_strength = _EXPLICIT_STRENGTH.get(incoming.sources.get(key, "default"), 1)
 
-            if key in ("special_requirements", "vision_notes"):
+            if key in ("special_requirements", "vision_notes", "vision_corrections"):
                 merged = list(dict.fromkeys(list(current or []) + list(value)))
                 data[key] = merged
                 sources[key] = max(
                     (sources.get(key, "default"), incoming.sources.get(key, "default")),
                     key=lambda s: _EXPLICIT_STRENGTH.get(s, 1),
                 )
+                continue
+
+            if key == "vision_confirmation_pending":
+                # 新图片带来的待确认列表覆盖旧的；没有新图片时保留原来的
+                if value:
+                    data[key] = list(value)
+                continue
+
+            if key == "vision_assertions":
+                merged_assertions = dict(current or {})
+                merged_assertions.update(dict(value))
+                data[key] = merged_assertions
                 continue
 
             if current in (None, "", [], {}) or incoming_strength >= current_strength:

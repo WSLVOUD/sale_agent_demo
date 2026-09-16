@@ -105,8 +105,33 @@ def _answer_company_question(state: SalesState) -> str:
             message=current_message,
             seed=_turn_seed(state),
             requirement=state.get("requirements") or {},
+            vision_confirmation=_vision_confirmation(state),
         )
     )
+
+
+def _vision_confirmation(state: SalesState) -> str:
+    """带图的那一轮：把"图片里看到了什么"跟客户核一遍（客户口径：识别完要确认）。
+
+    客户说"对"→ 这些字段记为**客户确认**；说别的 → 以客户说的为准并记录纠正。
+    见 vision.integration.resolve_vision_confirmation。
+    """
+    if not state.get("vision_applied"):
+        return ""
+    profile = state.get("requirement_profile")
+    if profile is None:
+        return ""
+    try:
+        from ....rag.reply_composer import reply_language, vision_confirmation_sentence
+
+        return vision_confirmation_sentence(
+            profile,
+            reply_language(str(state.get("current_message") or "")),
+            _turn_seed(state),
+        )
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("Vision confirmation sentence failed: %s", exc)
+        return ""
 
 
 def script_generator(state: SalesState) -> SalesState:
@@ -114,6 +139,10 @@ def script_generator(state: SalesState) -> SalesState:
     # Check if router has already processed
     if state.get("solutions") and state.get("response"):
         logger.info("Router has generated response with solutions, keeping it")
+        # 带图那一轮即使直接给了推荐，也要把"图片里看到什么"跟客户核一遍
+        confirmation = _vision_confirmation(state)
+        if confirmation and confirmation not in str(state["response"]):
+            state["response"] = f"{state['response']} {confirmation}".strip()
         state["next_action"] = "trigger_solution"  # Keep trigger signal for orchestrator
         return state
     
@@ -121,6 +150,42 @@ def script_generator(state: SalesState) -> SalesState:
     
     # 检查是否需要抑制问候语（首次接待刚完成后）
     suppress_greeting = state.get("suppress_greeting", False)
+
+    # ── 交付时间 / 安装档期（客户口径）──────────────────────────────────────
+    # 客户问交期 → 从下单付款开始计算，常规交付约 15–30 天；
+    # 客户要求加快 → 可以走空运，能提前但成本会增加；
+    # 客户说"想 11 月安装"这类档期 → 先接住他的话，再把交期说清楚（不承诺具体日期）。
+    current_message_text = str(state.get("current_message") or "")
+    from ....rag.delivery_info import delivery_answer, install_timing_note
+
+    delivery_reply = delivery_answer(
+        current_message_text,
+        language=reply_language(current_message_text),
+        seed=_turn_seed(state),
+    ) or install_timing_note(
+        current_message_text,
+        language=reply_language(current_message_text),
+        seed=_turn_seed(state),
+    )
+    if delivery_reply:
+        pending = str(state.get("pending_question") or "")
+        state["response"] = _strip_markdown(
+            compose_requirement_reply(
+                answer=delivery_reply,
+                question=pending,
+                slot=str(state.get("pending_slot") or ""),
+                message=current_message_text,
+                seed=_turn_seed(state),
+                requirement=state.get("requirements") or {},
+                # 交付口径本身就是"接住客户这句话"（含档期复述），不再叠 LLM 客套，
+                # 否则会出现 "Got it… Got it, 11月 is your target…" 这种重复。
+                include_ack=False,
+                vision_confirmation=_vision_confirmation(state),
+            )
+        )
+        state["next_action"] = "ask"
+        logger.info("Delivery / lead-time reply: %s", state["response"])
+        return state
 
     # ── Phase 7：需求采集 —— 一次只问一个高价值问题 ─────────────────────────
     # 由 question_planner / Ready Gate 决定"问什么"；
@@ -145,6 +210,7 @@ def script_generator(state: SalesState) -> SalesState:
                 llm_ack=str(state.get("acknowledgement") or ""),
                 # 需求重置时 runner 已经加过"我们重新来一遍"的确认语，这里不重复
                 include_ack=not state.get("requirements_reset"),
+                vision_confirmation=_vision_confirmation(state),
             )
         )
         state["next_action"] = "ask"
@@ -230,6 +296,7 @@ def script_generator(state: SalesState) -> SalesState:
                     seed=_turn_seed(state),
                     requirement=requirements,
                     llm_ack=str(state.get("acknowledgement") or ""),
+                    vision_confirmation=_vision_confirmation(state),
                 )
             )
             state["next_action"] = "ask"

@@ -327,7 +327,7 @@ class _StubSales:
         self.memory_store = None
         self.solution_runner = None
 
-    def run(self, session_id, message):
+    def run(self, session_id, message, has_vision=False, **_kwargs):
         return dict(self.result)
 
 
@@ -633,6 +633,61 @@ class TestOrchestratorComposesAnswerAndQuestion:
             assert "We do work with partners in the region" in result["response"]
             assert "indoors or outdoors" in result["response"]
             assert result["next_action"] == "follow_up"
+        finally:
+            memory.clear(session_id)
+
+    def test_others_route_carries_profile_and_intent(self):
+        """实测回归：客户中途问"你们在肯尼亚有代理商吗？"时，
+
+        旧行为是把这一句话单独丢给 Solution Agent → 它重建需求 → 又回头问
+        "Are we talking about an indoor or an outdoor install?"（明明早就知道）。
+        现在：Orchestrator 必须把**已收集的需求档案**和 Sales 定的意图一起传过去。
+        """
+        from src.memory.store import memory
+        from src.models.requirement import RequirementProfile
+        from src.orchestrator import DualAgentOrchestrator
+
+        session_id = "compose-others-profile"
+        memory.clear(session_id)
+        memory.mark_first_contact_done(session_id)
+        try:
+            slots = {
+                "display_type": "LED", "environment": "indoor", "purpose": "conference",
+                "installation": "fixed", "viewing_distance_m": 10,
+            }
+            memory.set_requirement_profile(
+                session_id, RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+            )
+
+            captured = {}
+
+            class _CapturingSolution:
+                def run(self, message, history=None, session_id=None, profile=None,
+                        requirements=None, intent="", **_kwargs):
+                    captured["profile"] = profile
+                    captured["intent"] = intent
+                    return {"answer": "We handle overseas projects directly from Shenzhen.",
+                            "products": [], "route": "agent"}
+
+            orch = DualAgentOrchestrator(
+                sales_agent=_StubSales({
+                    "intent": "others",
+                    "next_action": "others",
+                    "response": "Sure.",
+                    "requirements": {},
+                    "products": [],
+                }),
+                solution_agent=_CapturingSolution(),
+            )
+
+            result = orch.process_message("你们在肯尼亚有代理商吗？", session_id)
+
+            assert captured["intent"] == "others", "意图由 Sales 定，Solution 不该再自己判一遍"
+            profile = captured["profile"]
+            assert profile is not None, "必须带上已收集的需求档案"
+            assert profile.environment == "indoor"
+            assert profile.purpose == "conference"
+            assert "Shenzhen" in result["response"]
         finally:
             memory.clear(session_id)
 

@@ -151,7 +151,9 @@ class TestScenario1NotTooEarly:
             )
         )
         assert decision.ready is False
-        assert set(decision.missing) == {"installation", "viewing_distance"}
+        # 客户口径：点间距 / 观看距离都不知道时，先问点间距
+        assert set(decision.missing) == {"installation", "pixel_pitch", "viewing_distance"}
+        assert decision.missing.index("pixel_pitch") < decision.missing.index("viewing_distance")
 
     def test_missing_is_asked_in_priority_order(self):
         decision = check_recommendation_ready(RequirementProfile.from_slots({"display_type": "LED"}))
@@ -430,6 +432,229 @@ class TestCloseAnswerIsNotClosing:
         assert out["should_generate_solution"] is False
 
 
+class TestPitchAskedBeforeDistance:
+    """客户口径：先问点间距；客户不知道 → 不再问第二遍点间距，转问观看距离。
+
+    （观看距离仍然保持"最多问两遍"的老规则。）
+    """
+
+    def _profile_without_pitch(self):
+        slots = {"display_type": "LED", "environment": "indoor", "purpose": "conference",
+                 "installation": "fixed"}
+        return RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+
+    def _turn(self, module, message, profile):
+        state = {
+            "messages": [{"role": "user", "content": message}],
+            "current_message": message,
+            "session_id": "pitch-order",
+            "requirements": {},
+            "additional_requirements": [],
+            "intent": "need_query",
+            "next_action": "ask",
+            "should_generate_solution": False,
+            "response": "",
+            "pending_question": "",
+            "pending_slot": "",
+            "requirement_profile": profile,
+        }
+        return module.requirement_mining(state)
+
+    def test_pitch_is_asked_before_viewing_distance(self):
+        from src.rag.readiness import check_recommendation_ready
+
+        decision = check_recommendation_ready(self._profile_without_pitch())
+        assert decision.missing[0] == "pixel_pitch", decision.missing
+        assert "viewing_distance" in decision.missing
+        assert "pitch" in (decision.next_question or "").lower()
+
+    def test_customer_gives_pitch_skips_distance_question(self):
+        from src.rag.readiness import check_recommendation_ready
+
+        slots = {"pixel_pitch_mm": 3}
+        profile = self._profile_without_pitch().merge(
+            RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+        )
+        decision = check_recommendation_ready(profile)
+        assert decision.ready is True, "客户明确给了点间距 → 按客户的选型，直接放行"
+
+    def test_dont_know_pitch_moves_to_viewing_distance(self, sales_llm):
+        state = self._turn(sales_llm, "we need an indoor LED screen for a conference room",
+                           self._profile_without_pitch())
+        assert state["pending_slot"] == "pixel_pitch"
+        assert state["requirement_profile"].ask_count("pixel_pitch") == 1
+
+        # 客户说不知道 → 只问一次，直接转观看距离
+        state = self._turn(sales_llm, "I don't know", state["requirement_profile"])
+        profile = state["requirement_profile"]
+        assert profile.ask_count("pixel_pitch") == 1, "点间距不该问第二遍"
+        assert profile.is_unknown("pixel_pitch") is True
+        assert state["pending_slot"] == "viewing_distance"
+
+    def test_defer_to_us_counts_as_dont_know(self, sales_llm):
+        state = self._turn(sales_llm, "we need an indoor LED screen for a conference room",
+                           self._profile_without_pitch())
+        assert state["pending_slot"] == "pixel_pitch"
+        state = self._turn(sales_llm, "你决定吧", state["requirement_profile"])
+        assert state["requirement_profile"].is_unknown("pixel_pitch") is True
+        assert state["pending_slot"] == "viewing_distance"
+
+    def test_viewing_distance_still_asked_twice(self, sales_llm):
+        """观看距离保持老规则：不知道 → 降门槛再问一次 → 仍不知道才跳过。"""
+        profile = self._profile_without_pitch()
+        profile.record_ask("pixel_pitch")
+        profile.mark_unknown("pixel_pitch", "customer_does_not_know")
+
+        state = self._turn(sales_llm, "5 meters", profile)
+        # 客户直接给了距离 → 放行推荐
+        assert state["recommendation_gate"]["status"] in ("READY", "DEGRADED_READY")
+
+        profile2 = self._profile_without_pitch()
+        profile2.record_ask("pixel_pitch")
+        profile2.mark_unknown("pixel_pitch", "customer_does_not_know")
+        profile2.record_ask("viewing_distance")
+        profile2.mark_unknown("viewing_distance", "customer_does_not_know")
+        assert profile2.ask_count("viewing_distance") == 1
+        assert profile2.is_unknown("viewing_distance") is False, "第一次不知道还不该跳过"
+
+    def test_pitch_parsing_forms(self):
+        from src.rag.query_understanding import extract_slots
+
+        assert extract_slots("P2.5").get("pixel_pitch_mm") == 2.5
+        assert extract_slots("p3").get("pixel_pitch_mm") == 3.0
+        assert extract_slots("3mm pitch").get("pixel_pitch_mm") == 3.0
+        assert extract_slots("点间距3mm").get("pixel_pitch_mm") == 3.0
+
+    def test_pitch_question_has_variants(self):
+        from src.rag.readiness import EASIER_QUESTIONS, QUESTION_VARIANTS
+
+        assert len(QUESTION_VARIANTS["pixel_pitch"]["en"]) >= 3
+        assert len(QUESTION_VARIANTS["pixel_pitch"]["zh"]) >= 3
+        assert EASIER_QUESTIONS["pixel_pitch"]["en"], "第二问（答非所问时）也要有降门槛说法"
+
+
+class TestAfterRecommendationMustAnswer:
+    """实测反馈：推荐完产品后，客户接着问什么，AI 都又推荐一遍，接不住话。
+
+    根因：`has_scenario` 用的是"历史里已经收集到的 usage"，
+    于是场景一旦确定，之后**每一句话**都被当成"在报需求"→ need_query →
+    Gate 已就绪 → 又推荐一遍（客户问代理商、付款、认证都得到同一份推荐）。
+
+    现在：只看**本轮这句话**有没有需求信息，并且提问（？/吗/有没有…）永远走回答路径；
+    已经推荐过、本轮又没有新需求时，不再重复推荐。
+    """
+
+    def _ready_profile(self):
+        slots = {
+            "display_type": "LED",
+            "environment": "indoor",
+            "purpose": "conference",
+            "installation": "fixed",
+            "viewing_distance_m": 5,
+            "target_width_mm": 3000,
+            "target_height_mm": 5000,
+        }
+        return RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+
+    @pytest.fixture
+    def no_usage_llm(self, monkeypatch):
+        """假 LLM：不返回 usage（模拟真实 LLM 对"纯提问"返回 null 的场景）。"""
+        import sys
+
+        sales_req = sys.modules["src.agents.sales.nodes.requirement"]
+
+        class _Response:
+            content = '{"usage": null, "additional_requirements": [], "ack": ""}'
+
+        class _FakeChat:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def invoke(self, *args, **kwargs):
+                return _Response()
+
+        monkeypatch.setattr(sales_req, "ChatOpenAI", _FakeChat)
+        return sales_req
+
+    def _state(self, message, intent="others", already_recommended=True, profile=None):
+        return {
+            "messages": [{"role": "user", "content": message}],
+            "current_message": message,
+            "session_id": "after-recommendation",
+            "requirements": {"usage": "会议室", "location_type": "室内"},
+            "additional_requirements": [],
+            "intent": intent,
+            "next_action": "ask",
+            "should_generate_solution": False,
+            "response": "",
+            "pending_question": "",
+            "pending_slot": "",
+            "already_recommended": already_recommended,
+            "requirement_profile": profile or self._ready_profile(),
+        }
+
+    def test_agent_question_is_not_re_recommended(self, sales_llm):
+        state = self._state("你们在肯尼亚有代理商吗？")
+        out = sales_llm.requirement_mining(state)
+
+        assert out["should_generate_solution"] is False, "客户在提问，不该又推荐一遍"
+        assert out["intent"] == "others", "提问必须留给回答问题的路径"
+
+    def test_question_is_not_reclassified_as_requirement_answer(self, no_usage_llm):
+        """带问号的句子不能被当成"在报需求"（哪怕历史里已经有 usage）。"""
+        state = self._state("你们在肯尼亚有代理商吗？")
+        out = no_usage_llm.requirement_mining(state)
+        assert out["intent"] != "need_query"
+
+    def test_company_question_gets_company_answer(self, sales_llm):
+        """端到端（节点级）：代理商问题必须由公司信息回答，含"自有工厂 + 成本"。"""
+        from src.agents.sales.nodes.script_generator import script_generator
+
+        state = self._state("你们在肯尼亚有代理商吗？")
+        state = sales_llm.requirement_mining(state)
+        state = script_generator(state)
+
+        assert state["next_action"] == "ask"
+        answer = state["response"]
+        lowered = answer.lower()
+        # 语言跟随系统策略（默认英文），只校验内容要点：只有中国一个点 + 自有工厂 + 成本更低
+        assert "factory" in lowered or "工厂" in answer, answer
+        assert any(
+            word in lowered for word in ("cost", "price", "middleman")
+        ) or any(word in answer for word in ("成本", "开销", "中间")), answer
+        assert "shenzhen" in lowered or "深圳" in answer, answer
+
+    def test_product_question_after_recommendation_is_answered(self, no_usage_llm):
+        state = self._state("what is the pixel pitch of that model?", intent="product_question")
+        out = no_usage_llm.requirement_mining(state)
+
+        assert out["should_generate_solution"] is False
+        assert out["intent"] == "product_question"
+
+    def test_new_requirements_still_trigger_a_new_recommendation(self, sales_llm):
+        """客户改了需求（这一轮给了新信息）→ 必须重新推荐。"""
+        state = self._state("actually make it outdoor instead")
+        out = sales_llm.requirement_mining(state)
+
+        assert out["requirement_profile"].environment == "outdoor"
+        assert out["should_generate_solution"] is True
+
+    def test_explicit_request_still_recommends(self, sales_llm):
+        state = self._state("can you recommend another model?", intent="product_question")
+        out = sales_llm.requirement_mining(state)
+        assert out["should_generate_solution"] is True
+
+    def test_first_recommendation_is_not_blocked(self, sales_llm):
+        """没推荐过的时候照旧：Gate 就绪就推荐。"""
+        state = self._state(
+            "I need an indoor fixed LED screen for a conference room",
+            intent="need_query",
+            already_recommended=False,
+        )
+        out = sales_llm.requirement_mining(state)
+        assert out["should_generate_solution"] is True
+
+
 class TestReplayOfReportedConversation:
     """完整复刻客户日志的那一轮对话（图片 → permanent → i dont know → close）。
 
@@ -505,10 +730,14 @@ class TestReplayOfReportedConversation:
         assert turn["pending_slot"] == "installation"
 
         turn = self._turn(sales_req, "permanent", turn["requirement_profile"])
-        assert turn["pending_slot"] == "viewing_distance"
+        # 客户口径：安装方式之后**先问点间距**
+        assert turn["pending_slot"] == "pixel_pitch"
 
+        # 点间距客户不知道 → 只问一次就跳过，转问观看距离
         turn = self._turn(sales_req, "i dont know", turn["requirement_profile"])
         assert turn["recommendation_gate"]["status"] == "CONTINUE_ASKING"
+        assert turn["pending_slot"] == "viewing_distance"
+        assert turn["requirement_profile"].ask_count("pixel_pitch") == 1
 
         # 最后一轮："close" —— 之前这里被判成 closing，导致既不推荐也不问尺寸
         intent = classify_mod.classify(

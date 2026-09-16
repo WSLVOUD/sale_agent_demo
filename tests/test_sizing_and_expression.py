@@ -195,3 +195,100 @@ class TestRecommendationWordingVaries:
 
         source = inspect.getsource(recommend._express_recommendation)
         assert "Vary your wording" in source
+
+
+_TOP = {
+    "model": "TW11-3216-P3.0", "pixel_pitch_mm": 3.0, "brightness_nit": 500,
+    "cabinet_size_mm": "640mm*480mm", "modules_per_cabinet": 6,
+    "price_tier": "low", "warranty_years": 1, "series_id": "TW11",
+    "features": [], "installation": "fixed", "reasons": ["pitch fits the viewing distance"],
+}
+_ALT_BRIGHT = {
+    "model": "TW21-3216-P3.0", "pixel_pitch_mm": 3.0, "brightness_nit": 6000,
+    "cabinet_size_mm": "640mm*480mm", "modules_per_cabinet": 6,
+    "price_tier": "medium", "warranty_years": 2, "series_id": "TW21",
+    "features": ["cob"], "installation": "fixed", "reasons": [],
+}
+_ALT_PITCH = {
+    "model": "TW11-3216-P4.0", "pixel_pitch_mm": 4.0, "brightness_nit": 500,
+    "cabinet_size_mm": "640mm*480mm", "modules_per_cabinet": 6,
+    "price_tier": "low", "warranty_years": 1, "series_id": "TW11",
+    "features": [], "installation": "fixed", "reasons": [],
+}
+
+
+class TestAlternativesReplyFormat:
+    """客户问"还有其他推荐吗"时的回答格式（客户口径）：
+
+        "If you want higher brightness, TW21-3216-P3.0." + 邀请补充需求；
+        不重讲首选、不催尺寸、**绝不提价格**。
+    """
+
+    def _profile(self):
+        return _confirmed({**RECOMMEND_READY, "viewing_distance_m": 10})
+
+    def test_request_is_detected(self):
+        import src.agents.solution.nodes.recommend as recommend
+
+        for message in ("你还有其他的推荐吗？", "还有其他推荐吗", "有没有别的型号",
+                        "还有什么方案", "any other options?"):
+            assert recommend._ALTERNATIVES_RE.search(message), message
+        assert not recommend._ALTERNATIVES_RE.search("我需要便宜质量好的屏幕")
+
+    def test_fallback_offers_conditional_alternatives_with_invitation(self, monkeypatch):
+        import src.agents.solution.nodes.recommend as recommend
+
+        class _Failing:
+            def invoke(self, *args, **kwargs):
+                raise RuntimeError("offline")
+
+        monkeypatch.setattr(recommend, "get_llm", lambda *a, **k: _Failing())
+
+        answer = recommend._express_recommendation(
+            recommendations=[_TOP, _ALT_BRIGHT, _ALT_PITCH],
+            profile=self._profile(),
+            calculation=None,
+            additional_requirements=[],
+            customer_text="你还有其他的推荐吗？",
+            need_size_question=True,      # 缺尺寸也不该在本轮催尺寸
+            follow_up=True,
+        )
+        lowered = answer.lower()
+
+        assert "if you want" in lowered, answer
+        assert "tw21-3216-p3.0" in lowered, answer
+        assert "other requirements" in lowered, answer          # 邀请补充需求
+        assert "width and height" not in lowered, answer        # 不在这一轮催尺寸
+        for word in ("price", "cost", "budget", "tier", "cheap"):
+            assert word not in lowered, (word, answer)
+
+    def test_prompt_forbids_price_and_asks_conditional_alternatives(self, monkeypatch):
+        """给 LLM 的提示词里：备选要说成条件句、且禁止提价格。"""
+        import src.agents.solution.nodes.recommend as recommend
+
+        captured = {}
+
+        class _Capture:
+            def invoke(self, prompt, *args, **kwargs):
+                captured["prompt"] = prompt if isinstance(prompt, str) else str(prompt)
+
+                class _R:
+                    content = "ok"
+                return _R()
+
+        monkeypatch.setattr(recommend, "get_llm", lambda *a, **k: _Capture())
+        recommend._express_recommendation(
+            recommendations=[_TOP, _ALT_BRIGHT],
+            profile=self._profile(),
+            calculation=None,
+            additional_requirements=[],
+            customer_text="any other options?",
+            follow_up=True,
+        )
+        prompt = captured["prompt"]
+        # 产品数据里不能再带价格档位（规则里提到"price tier"是为了禁止它）
+        data_section = prompt.split("Rules:")[0]
+        assert "price tier" not in data_section, data_section
+        assert "NEVER mention price" in prompt
+        assert "If you want <that difference>" in prompt
+        assert "higher brightness" in prompt      # 备选差异说明

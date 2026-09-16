@@ -34,6 +34,7 @@ from src.rag.query_understanding import (
     _RENTAL_KEYWORDS,
     _SEMI_OUTDOOR_KEYWORDS,
     extract_slots,
+    looks_like_question,
 )
 from src.core.llm import get_llm
 
@@ -517,6 +518,13 @@ _RECOMMENDATION_PATTERNS = (
 
 _VALID_INTENTS = ("recommendation", "product_question", "conversation", "others")
 
+# 客户**明确在要推荐**（即使写成疑问句："你们能推荐一款室内的吗？"）
+_RECO_REQUEST_PATTERNS = (
+    r"推荐", r"帮我选", r"选一款", r"选一个", r"给个建议", r"建议一下",
+    r"哪个好", r"哪款好", r"哪个合适",
+    r"\brecommend\b", r"\bsuggest\b", r"\bwhich one\b", r"\bwhat do you recommend\b",
+)
+
 
 def detect_intent(message: str, use_llm: bool = False) -> str:
     """统一的意图检测。
@@ -531,12 +539,19 @@ def detect_intent(message: str, use_llm: bool = False) -> str:
         return "" if not use_llm else "others"
     lowered = text.lower()
 
+    # 明确要推荐 → 不管是不是疑问句，都按推荐处理
+    if any(re.search(pattern, lowered) for pattern in _RECO_REQUEST_PATTERNS):
+        return "recommendation"
+
     slots = extract_slots(text)
     has_signal = bool(slots) or any(
         re.search(pattern, lowered) for pattern in _RECOMMENDATION_PATTERNS
     )
     if has_signal:
-        return "recommendation"
+        # 方案侧要排除"提问"：客户问"这个屏多久能发货？"时句子里带着"屏"，
+        # 但那是提问、不是要推荐，交给 LLM 判成 others / product_question。
+        if not use_llm or not looks_like_question(text):
+            return "recommendation"
     if not use_llm:
         return ""
 

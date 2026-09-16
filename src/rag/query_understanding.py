@@ -320,6 +320,25 @@ def purpose_english(purpose: Optional[str]) -> str:
     return str(purpose)
 
 
+# ── 疑问句判定（Sales / Solution 共用一份，避免两处规则漂移）──────────────────
+_QUESTION_RE = re.compile(
+    r"[?？]|"
+    r"吗|呢|是否|有没有|有没|能不能|可不可以|怎么|如何|为什么|为何|哪家|哪个|哪些|多少钱|多久|什么时候|"
+    r"\b(?:do you|can you|could you|would you|is there|are there|how much|how long|how do|how can|"
+    r"what about|anything|any )\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_question(text: str) -> bool:
+    """客户这句话是不是在"提问"（而不是在陈述需求）。
+
+    用途：避免把"你们在肯尼亚有代理商吗？"、"这个屏多久能发货？"这类问题
+    当成"要推荐产品"（句子里出现"屏/LED"并不代表客户想要推荐）。
+    """
+    return bool(_QUESTION_RE.search(str(text or "")))
+
+
 # ── 观看距离的"模糊回答"（降门槛提问后，客户常说 close / near / far）──────────
 # 计划（Phase 7）明确要求允许客户回答 approximately / roughly / near / far /
 # more than 10m；这里把这类回答映射为一个**近似**距离，让流程能继续往下走，
@@ -693,7 +712,7 @@ def _extract_pixel_pitch(text: str) -> Optional[float]:
     if match:
         return float(match.group(1))
     match = re.search(
-        r"(?:点间距|pixel\s*pitch|pitch)\s*(?:是|为|约|:)?\s*"
+        r"(?:点间距|间距|pixel\s*pitch|pitch)\s*(?:是|为|约|:)?\s*"
         r"(?:around|about|approx(?:imately)?|roughly|左右的?)?\s*"
         r"(\d+(?:\.\d+)?)\s*mm",
         text, re.IGNORECASE,
@@ -701,7 +720,10 @@ def _extract_pixel_pitch(text: str) -> Optional[float]:
     if match:
         return float(match.group(1))
     # 反向语序："1.9mm 点间距"
-    match = re.search(r"(\d+(?:\.\d+)?)\s*mm\s*(?:的)?\s*(?:点间距|pixel\s*pitch)", text, re.IGNORECASE)
+    match = re.search(
+        r"(\d+(?:\.\d+)?)\s*mm\s*(?:的)?\s*(?:点间距|间距|pixel\s*pitch|pitch)",
+        text, re.IGNORECASE,
+    )
     if match:
         return float(match.group(1))
     return None

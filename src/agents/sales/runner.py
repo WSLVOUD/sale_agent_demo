@@ -85,12 +85,13 @@ class SalesAgentRunner:
         self.graph = build_sales_graph()
         logger.info("Sales Agent graph compiled")
 
-    def run(self, session_id: str, message: str) -> dict:
+    def run(self, session_id: str, message: str, has_vision: bool = False) -> dict:
         """Process a single user turn and return the response payload.
         
         Args:
             session_id: Unique session identifier
             message: User's current message
+            has_vision: 本轮客户是否带了图片（图片识别结果要跟客户确认一次）
             
         Returns:
             Dict with keys: response, products, requirements, intent, next_action
@@ -160,6 +161,8 @@ class SalesAgentRunner:
             )
             accumulated_requirements = {}
             existing_profile = None
+            # 这是一轮全新的咨询：之前的"已推荐"标记不能带过来
+            recommended_before = False
             if self.memory_store and hasattr(self.memory_store, "reset_requirement_state"):
                 self.memory_store.reset_requirement_state(session_id)
             # 语义缓存也要一起清：重置后是全新需求，不能再用旧上下文理解同一条消息
@@ -200,6 +203,10 @@ class SalesAgentRunner:
             "pending_slot": "",
             "requirements_reset": bool(reset.should_reset),
             "reset_reason": reset.reason,
+            # 本会话是否已经给过推荐：决定"客户后续提问时要不要再推荐一遍"
+            "already_recommended": bool(recommended_before),
+            # 本轮是否带图片：带图的这一轮要把"图片里看到什么"跟客户核一遍
+            "vision_applied": bool(has_vision),
         }
         
         # Invoke the graph
@@ -241,6 +248,13 @@ class SalesAgentRunner:
                 if hasattr(self.memory_store, "should_suppress_sales_greeting"):
                     preserved_suppress_greeting = self.memory_store.should_suppress_sales_greeting(session_id)
 
+                # "本会话已经给过推荐"的标记同样要在 clear() 前后保留：
+                # 否则客户推荐后随便问一句（本轮不出产品），标记就被清掉，
+                # 下一轮又会被当成"还没推荐过"→ 再推荐一遍（实测出现过）。
+                preserved_recommendation = {}
+                if hasattr(self.memory_store, "get_recommendation"):
+                    preserved_recommendation = self.memory_store.get_recommendation(session_id) or {}
+
                 self.memory_store.clear(session_id)
                 self.memory_store.extend(session_id, final_messages)
                 self.memory_store.set_requirements(session_id, result.get("requirements", {}))
@@ -271,6 +285,15 @@ class SalesAgentRunner:
                     self.memory_store, "mark_recommendation_done"
                 ):
                     self.memory_store.mark_recommendation_done(session_id, products)
+                elif (
+                    preserved_recommendation.get("delivered")
+                    and hasattr(self.memory_store, "mark_recommendation_done")
+                ):
+                    # 本轮不是推荐轮 → 把之前的推荐记录放回去（型号列表一并保留）
+                    self.memory_store.mark_recommendation_done(
+                        session_id,
+                        [{"model": model} for model in (preserved_recommendation.get("models") or [])],
+                    )
             else:
                 self.memory_store[session_id] = {
                     "messages": final_messages,

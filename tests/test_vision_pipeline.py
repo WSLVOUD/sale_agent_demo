@@ -21,6 +21,7 @@ from src.memory.store import memory  # noqa: E402
 from src.models.requirement import RequirementProfile  # noqa: E402
 from src.orchestrator import DualAgentOrchestrator  # noqa: E402
 from src.vision.extractor import VisionExtractor  # noqa: E402
+from src.vision.integration import apply_vision_to_profile  # noqa: E402
 
 
 class _StubSales:
@@ -28,8 +29,10 @@ class _StubSales:
         self.result = result or {}
         self.calls = []
 
-    def run(self, session_id, message):
-        self.calls.append({"session_id": session_id, "message": message})
+    def run(self, session_id, message, has_vision=False, **_kwargs):
+        self.calls.append(
+            {"session_id": session_id, "message": message, "has_vision": has_vision}
+        )
         return dict(
             {
                 "intent": "need_query",
@@ -248,6 +251,115 @@ class TestFirstContactWithImage:
             assert profile["purpose"] == "conference"
         finally:
             memory.clear(session_id)
+
+
+class TestVisionConfirmation:
+    """图片识别出的需求要**先跟客户确认**；客户纠正时以客户为准并记录（客户口径）。"""
+
+    def _vision_profile(self):
+        profile = RequirementProfile()
+        vision = VisionExtractor.from_payload(INDOOR_CONFERENCE)
+        merged, _ = apply_vision_to_profile(profile, vision)
+        return merged
+
+    def test_vision_merge_marks_fields_pending_confirmation(self):
+        profile = self._vision_profile()
+        assert "environment" in profile.vision_confirmation_pending
+        assert "purpose" in profile.vision_confirmation_pending
+        assert profile.vision_assertions["environment"] == "indoor"
+
+    def test_image_turn_reply_confirms_with_customer(self):
+        """带图那一轮的回复必须说出"图片里看到什么"，并请客户确认。"""
+        from src.agents.sales.nodes.script_generator import script_generator
+
+        profile = self._vision_profile()
+        state = {
+            "messages": [{"role": "user", "content": "i need a display like this"}],
+            "current_message": "i need a display like this",
+            "session_id": "vision-confirm-turn",
+            "intent": "need_query",
+            "next_action": "ask",
+            "requirements": {},
+            "additional_requirements": [],
+            "should_generate_solution": False,
+            "response": "",
+            "pending_question": "Is it a permanent install, or is it for rental/events?",
+            "pending_slot": "installation",
+            "requirement_profile": profile,
+            "vision_applied": True,
+        }
+        out = script_generator(state)
+        reply = out["response"].lower()
+
+        assert "indoor" in reply, reply          # 图片看到的环境
+        assert "conference" in reply, reply      # 图片看到的场景
+        assert "?" in reply, reply               # 请客户确认
+        assert "installation" in reply or "rental" in reply, reply  # 仍然继续问缺失项
+
+    def test_no_image_turn_has_no_confirmation(self):
+        from src.agents.sales.nodes.script_generator import script_generator
+
+        profile = self._vision_profile()
+        profile.vision_confirmation_pending = []      # 已经确认过
+        state = {
+            "messages": [{"role": "user", "content": "permanent"}],
+            "current_message": "permanent",
+            "session_id": "vision-confirm-none",
+            "intent": "need_query",
+            "next_action": "ask",
+            "requirements": {},
+            "additional_requirements": [],
+            "should_generate_solution": False,
+            "response": "",
+            "pending_question": "What is the typical viewing distance?",
+            "pending_slot": "viewing_distance",
+            "requirement_profile": profile,
+            "vision_applied": False,
+        }
+        out = script_generator(state)
+        assert "photo" not in out["response"].lower()
+        assert "indoor" not in out["response"].lower()
+
+    def test_customer_confirmation_marks_fields_confirmed(self):
+        from src.vision import resolve_vision_confirmation
+
+        profile = self._vision_profile()
+        stats = resolve_vision_confirmation(profile, "yes, that's right")
+
+        assert "environment" in stats["confirmed"]
+        assert "purpose" in stats["confirmed"]
+        assert profile.sources["environment"] == "confirmed"
+        assert profile.sources["purpose"] == "confirmed"
+        assert profile.vision_confirmation_pending == []
+
+    def test_customer_correction_uses_customer_value(self):
+        """客户纠正 → 以客户说的为准，并留下纠正记录。"""
+        from src.agents.sales.nodes.script_generator import script_generator  # noqa: F401
+        from src.vision import resolve_vision_confirmation
+
+        profile = self._vision_profile()
+        # 客户直接用另一句话纠正（Extractor 会以"客户明说"覆盖图片值）
+        slots = {"environment": "outdoor"}
+        profile = profile.merge(
+            RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+        )
+        stats = resolve_vision_confirmation(profile, "no, it is outdoor")
+
+        assert profile.environment == "outdoor", "客户说的必须覆盖图片识别"
+        assert profile.sources["environment"] == "explicit"
+        assert "environment" in stats["corrected"]
+        assert any("image said indoor" in note for note in profile.vision_corrections)
+        assert profile.vision_confirmation_pending == []
+
+    def test_unrelated_reply_does_not_fake_confirmation(self):
+        from src.vision import resolve_vision_confirmation
+
+        profile = self._vision_profile()
+        stats = resolve_vision_confirmation(profile, "what is the price?")
+
+        assert stats["confirmed"] == []
+        assert profile.sources["environment"] == "vision_explicit", "没确认就不能当成客户确认"
+        assert profile.vision_confirmation_pending == [], "但也不该反复追问同一件事"
 
 
 class TestApiImagePayload:

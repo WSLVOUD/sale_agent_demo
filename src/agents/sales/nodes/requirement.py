@@ -195,6 +195,62 @@ _ANSWER_VALUE_SLOTS = (
     "screen_size_hint_mm",
 )
 
+# 场景关键词（用于判断"本轮这句话"有没有在说使用场景）
+_USAGE_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("会议室", "会议室"), ("会议", "会议室"), ("教室", "教室"), ("培训", "教室"),
+    ("商场", "商场"), ("店铺", "商业零售"), ("零售", "商业零售"),
+    ("展厅", "展厅"), ("展览", "展厅"), ("医院", "医疗"),
+    ("监控", "监控指挥"), ("指挥", "监控指挥"),
+    ("舞台", "舞台演出"), ("演出", "舞台演出"), ("演唱会", "演唱会"),
+    ("体育", "体育场馆"), ("赛场", "体育场馆"),
+    ("广告", "广告传媒"), ("幕墙", "建筑幕墙"), ("租赁", "租赁活动"),
+)
+
+# 客户明确要求"再推荐 / 报价 / 下单"（这种即便已经推荐过也应重新给方案）
+_EXPLICIT_RECO_REQUEST_RE = re.compile(
+    r"推荐|帮我选|再选|换一款|换个型号|其他型号|别的型号|还有别的|其他方案|报价|报价单|价格表|下单|采购|"
+    r"\b(?:recommend|suggest|quote|quotation|proposal|price list|another model|other options?|"
+    r"alternative|come back with|proceed)\b",
+    re.IGNORECASE,
+)
+
+# 判断"是否已经推荐过"时看的需求事实字段
+_FACT_FIELDS = (
+    "display_type",
+    "environment",
+    "purpose",
+    "installation",
+    "viewing_distance_m",
+    "target_width_m",
+    "target_height_m",
+    "pixel_pitch_mm",
+    "brightness_min_nit",
+    "brightness_max_nit",
+    "budget_level",
+)
+
+
+def _is_question_message(message: str) -> bool:
+    """客户是不是在提问（与 Solution 侧共用同一份规则，见 query_understanding）。"""
+    from ....rag.query_understanding import looks_like_question
+
+    return looks_like_question(message)
+
+
+def _snapshot_facts(profile) -> dict:
+    return {field: getattr(profile, field, None) for field in _FACT_FIELDS}
+
+
+def _facts_added(before: dict, profile) -> bool:
+    """这一轮是否**新增/更新**了需求事实（用于决定要不要重新推荐）。"""
+    for field in _FACT_FIELDS:
+        new_value = getattr(profile, field, None)
+        if new_value in (None, "", [], {}):
+            continue
+        if new_value != before.get(field):
+            return True
+    return False
+
 
 def _message_role_content(msg) -> tuple[str, str]:
     if isinstance(msg, dict):
@@ -305,6 +361,7 @@ ack 的写法（很重要，销售不能只会追问）：
     # Parse extracted requirements
     import json
     semantic_payload: dict = {}
+    extracted: dict = {}
     try:
         extracted = json.loads(response.content.strip())
         # 只信任 LLM 的 usage 与 additional_requirements。
@@ -350,15 +407,6 @@ ack 的写法（很重要，销售不能只会追问）：
 
     # 补充推断 usage 字段（_rule_based_inference 不推断 usage）
     if not state["requirements"].get("usage"):
-        _USAGE_KEYWORDS = [
-            ("会议室", "会议室"), ("会议", "会议室"), ("教室", "教室"), ("培训", "教室"),
-            ("商场", "商场"), ("店铺", "商业零售"), ("零售", "商业零售"),
-            ("展厅", "展厅"), ("展览", "展厅"), ("医院", "医疗"),
-            ("监控", "监控指挥"), ("指挥", "监控指挥"),
-            ("舞台", "舞台演出"), ("演出", "舞台演出"), ("演唱会", "演唱会"),
-            ("体育", "体育场馆"), ("赛场", "体育场馆"),
-            ("广告", "广告传媒"), ("幕墙", "建筑幕墙"), ("租赁", "租赁活动"),
-        ]
         for kw, usage_val in _USAGE_KEYWORDS:
             if kw in current_msg_text:
                 state["requirements"]["usage"] = usage_val
@@ -373,13 +421,31 @@ ack 的写法（很重要，销售不能只会追问）：
         from ....rag.query_understanding import extract_slots
 
         current_slots = extract_slots(current_msg_text)
-        has_scenario = bool(state["requirements"].get("usage")) or bool(
+        # 【关键】只看**本轮这句话**：不能拿"历史里已经收集到的 usage"当真 ——
+        # 否则场景一旦确定，客户之后说的每一句话（包括"你们在肯尼亚有代理商吗？"）
+        # 都会被当成"在报需求"→ 被判 need_query → Gate 已就绪 → 又推荐一遍，
+        # 客户问什么都得不到回答（实测日志出现过）。
+        #
+        # 但"混合句"要照旧留在需求采集里：客户一句话里既说场景 / 要规格、又问问题
+        # （"we are going for smart class room ... could you help me out about specs"），
+        # 只要本轮真的带来了需求信息，就算 need_query。
+        this_turn_requirement = bool(
             current_slots.get("purpose")
-        )
+            or current_slots.get("environment")
+            or current_slots.get("installation")
+            or (semantic_payload or {}).get("purpose")
+            or (semantic_payload or {}).get("environment")
+            or (semantic_payload or {}).get("installation")
+            or (extracted or {}).get("usage")
+        ) or any(kw in current_msg_text for kw, _ in _USAGE_KEYWORDS)
         # 客户"报需求"（室内外 / 安装方式 / 视距 / 尺寸）而不是"问问题"时，
         # 必须留在需求采集流程：否则会绕到自由问答，在 Gate 没通过的情况下
         # 把一堆型号和参数倒给客户（实测出现过）。
-        if has_scenario or _looks_like_requirement_answer(current_msg_text, current_slots):
+        # 但"提问"（？/吗/怎么/有没有…）必须留给回答路径，不能被改成 need_query。
+        if this_turn_requirement or (
+            not _is_question_message(current_msg_text)
+            and _looks_like_requirement_answer(current_msg_text, current_slots)
+        ):
             logger.info(
                 "Detected requirement answer %r under intent '%s' → reclassify as need_query",
                 current_msg_text, current_intent,
@@ -446,6 +512,8 @@ ack 的写法（很重要，销售不能只会追问）：
         from ....core.requirement_extractor import get_requirement_extractor
 
         previous_purpose = profile.purpose
+        # 本轮开始前的需求事实快照（用于判断"这一轮客户有没有给出新需求"）
+        facts_before = _snapshot_facts(profile)
         message_slots = extract_slots(current_msg_text)
         profile = get_requirement_extractor().extract(
             current_msg_text,
@@ -454,6 +522,21 @@ ack 的写法（很重要，销售不能只会追问）：
             # 语义结果的缓存必须按会话隔离（否则会串到别的对话框）
             session_id=str(state.get("session_id") or ""),
         )
+
+        # ── 图片识别结果的确认（客户口径）───────────────────────────────────
+        # 带图的那一轮我们已经把"图片里看到什么"说给客户听了；
+        # 这一轮（没带图）就是客户的回应：说"对"→ 记为客户确认；
+        # 给了别的值 → 客户的值为准（Extractor 已按客户优先合并），并留一条纠正记录。
+        if not state.get("vision_applied"):
+            from ....vision.integration import resolve_vision_confirmation
+
+            vision_stats = resolve_vision_confirmation(profile, current_msg_text)
+            if vision_stats.get("confirmed") or vision_stats.get("corrected"):
+                logger.info(
+                    "[VisionConfirm] confirmed=%s corrected=%s corrections=%s",
+                    vision_stats.get("confirmed"), vision_stats.get("corrected"),
+                    profile.vision_corrections,
+                )
 
         # ── Phase 4~9：Unknown 容错 ──────────────────────────────────────────
         # 1) 客户"不知道 / 跳过"的是**上一轮问的那一项**（last_asked_slot）；
@@ -569,8 +652,35 @@ ack 的写法（很重要，销售不能只会追问）：
 
         if decision.ready:
             # Gate 放行：触发推荐（后面的 greeting/closing 分支仍可再否决）
-            state["should_generate_solution"] = True
-            state["pending_question"] = ""
+            #
+            # 【关键】已经推荐过一次之后，客户这一轮如果只是"接着问问题"
+            # （既没有给出新的需求信息，也没有明确要求"再推荐 / 报价 / 下单"），
+            # 就不该再推荐一遍 —— 否则客户问代理商、付款、认证等任何问题时，
+            # 得到的都是同一份推荐（实测反馈："推荐完就一直推荐，接不住客户的话"）。
+            # 这种轮次改为走"回答问题"的路径（others / product_question）。
+            turn_added_facts = _facts_added(facts_before, profile)
+            explicit_reco_request = bool(
+                _EXPLICIT_RECO_REQUEST_RE.search(str(current_msg_text or ""))
+            )
+            if (
+                state.get("already_recommended")
+                and not turn_added_facts
+                and not explicit_reco_request
+            ):
+                state["should_generate_solution"] = False
+                state["pending_question"] = ""
+                if current_intent not in ("product_question", "others"):
+                    # 保留"回答问题"语义，交给 Solution 的自由问答分支，
+                    # 而不是被当成需求采集（否则又会绕回来推荐）
+                    state["intent"] = "others"
+                    current_intent = "others"
+                logger.info(
+                    "已推荐过且本轮无新需求（intent=%s）→ 先回答客户，不重复推荐",
+                    current_intent,
+                )
+            else:
+                state["should_generate_solution"] = True
+                state["pending_question"] = ""
         else:
             # Gate 未放行：本轮不推荐，改为追问一个关键问题
             # 追问内容以 Gate 的 missing 为准（保证问的就是拦住推荐的那一项），

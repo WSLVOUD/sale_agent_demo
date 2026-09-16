@@ -290,6 +290,9 @@ class TestDegradedRecommendation:
             "target_height_mm": 3000,
         }
         profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+        # 客户口径：先问点间距；客户不知道 → 只问一次就跳过，再问观看距离
+        profile.record_ask("pixel_pitch")
+        profile.mark_unknown("pixel_pitch")
         profile.record_ask("viewing_distance")
         profile.record_ask("viewing_distance")
         profile.mark_unknown("viewing_distance")
@@ -375,6 +378,9 @@ def _degraded_profile():
         "target_height_mm": 3000,
     }
     profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+    # 客户口径：先问点间距；客户不知道 → 只问一次就跳过，再问观看距离
+    profile.record_ask("pixel_pitch")
+    profile.mark_unknown("pixel_pitch")
     profile.record_ask("viewing_distance")
     profile.record_ask("viewing_distance")
     profile.mark_unknown("viewing_distance")
@@ -421,8 +427,9 @@ class TestPhase14RecommendationBasis:
         assert "environment" in basis["confirmed_requirements"]
         assert "purpose" in basis["confirmed_requirements"]
         assert "width" in basis["confirmed_requirements"]
-        assert basis["unknown_requirements"] == ["viewing_distance"]
-        assert result["unknown_requirements"] == ["viewing_distance"]
+        # 点间距（先问、客户不知道）与观看距离都算客户不知道
+        assert sorted(basis["unknown_requirements"]) == ["pixel_pitch", "viewing_distance"]
+        assert sorted(result["unknown_requirements"]) == ["pixel_pitch", "viewing_distance"]
         assert result["missing_fields"] == []
 
     def test_normal_recommendation_is_not_degraded(self):

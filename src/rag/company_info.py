@@ -27,15 +27,30 @@ _COMPANY_QUESTION_RE = re.compile(
 
 _COMPANY_ANSWERS = {
     "en": (
-        "This is {sales_name} from {company} — we are based in {location}, and that is our only office. We support overseas customers directly from Shenzhen.",
-        "Our company is {company}, based in {location} — it is our single site, and we work with overseas customers directly from there.",
-        "We are {company} in {location}. We do not have a local office elsewhere, but our Shenzhen team handles overseas projects directly.",
-        "We are based in {location} ({company}) — that is our only company location, and we serve customers worldwide from there.",
+        # 代理商问题必须说清三件事：只有中国一个点、自有工厂、因此成本更低
+        "We are {company} in {location} — that is our only site, and we do not have distributors or "
+        "branch offices elsewhere. We run our own factory there, so there is no middleman between us "
+        "and you and the cost stays lower. Overseas customers work with our Shenzhen team directly.",
+        "There is no local agent or dealer for us in your market — {company} is based in {location} and "
+        "that is our only location. Because we manufacture in our own factory, we keep the cost down "
+        "and pass that on to you; you deal with our Shenzhen team directly.",
+        "Good question — we do not work through local distributors. Everything is handled from "
+        "{company} in {location}, our only site, where we also own the factory. That removes the "
+        "middleman markup, so the price stays competitive, and you buy straight from us.",
+        "Right now {location} is our only office and factory ({company}); we have no branch or "
+        "distributor abroad. Making the screens ourselves in our own factory keeps the overhead low, "
+        "which means a better price for you — and our Shenzhen team supports overseas projects directly.",
     ),
     "zh": (
-        "我是 {company} 的 {sales_name}，我们公司位于{location}，目前只有这一个公司/工厂，海外客户由深圳团队直接对接。",
-        "我们公司是 {company}，位于{location}，没有其它地区的分公司或办事处，海外项目由深圳团队直接跟进。",
-        "我们在{location}（{company}），这是公司唯一的所在地，海内外客户都由深圳团队对接。",
+        # 代理商问题必须说清三件事：只有中国一个点、自有工厂、因此成本更低
+        "我们只有中国这一个点 —— {company} 在{location}，没有当地代理商、办事处或分公司。"
+        "我们自己有工厂，中间没有环节，所以成本能压下来；海外客户都是深圳团队直接对接。",
+        "我理解你的问题：我们在当地没有代理商/经销商，公司只有{location}这一处（{company}），"
+        "工厂也是我们自己的。自产直供省掉了中间商，开销更低，价格自然更有优势，海外项目由深圳团队直接跟进。",
+        "坦率说，我们目前只在{location}有公司和工厂（{company}），没有其它地区的分支机构或代理。"
+        "好处是我们从自己的工厂直接供货，中间没有加价环节，成本更低；有需要随时找我们深圳团队。",
+        "我们是 {company}，公司和工厂都在{location}，这是唯一的一个点，海外没有设代理或办事处。"
+        "因为是自己工厂生产、直接对接客户，省掉了中间环节，所以整体开销更低、报价也更有竞争力。",
     ),
 }
 

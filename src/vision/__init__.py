@@ -18,6 +18,7 @@ from src.vision.extractor import (
 from src.vision.integration import (
     apply_vision_to_profile,
     extract_vision_for_turn,
+    resolve_vision_confirmation,
 )
 from src.vision.schema import (
     VISION_EXPLICIT,
@@ -40,4 +41,5 @@ __all__ = [
     "get_vision_extractor",
     "merge_vision_results",
     "parse_vision_json",
+    "resolve_vision_confirmation",
 ]

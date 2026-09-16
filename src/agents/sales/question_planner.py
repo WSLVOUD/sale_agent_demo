@@ -48,6 +48,11 @@ QUESTION_PLAN: tuple[tuple[str, str, str], ...] = (
         "是固定安装，还是租赁/活动用？",
     ),
     (
+        "pixel_pitch_mm",
+        "Do you have a pixel pitch in mind — for example P2.5, P3 or P5?",
+        "您对点间距有要求吗？比如 P2.5、P3 或 P5。",
+    ),
+    (
         "viewing_distance_m",
         "Roughly how far will viewers typically stand from the screen?",
         "观众通常离屏幕大概多远？",

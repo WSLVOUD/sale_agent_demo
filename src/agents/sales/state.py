@@ -70,5 +70,11 @@ class SalesState(TypedDict):
     requirements_reset: bool
     reset_reason: str
 
+    # ── 本会话是否已经给过推荐（决定"客户后续提问时要不要再推荐一遍"）────
+    already_recommended: bool
+
+    # ── 本轮是否带了图片（图片识别结果要跟客户确认一次）──────────────────
+    vision_applied: bool
+
     # 本轮"回应客户这句话"的口语回应（LLM 生成，只影响措辞，不参与 Gate 判定）
     acknowledgement: str

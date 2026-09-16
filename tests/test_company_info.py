@@ -18,12 +18,50 @@ from src.rag.company_info import company_answer, is_company_question  # noqa: E4
 from src.rag.reply_composer import availability_answer, compose_requirement_reply  # noqa: E402
 
 
+class TestAgentDistributorAnswerContent:
+    """客户问"有没有代理商/经销商"时的回答内容（客户口径）：
+
+    ① 只有中国（深圳）这一个公司/工厂，当地没有代理或办事处；
+    ② 工厂是我们自己的，没有中间环节 → 开销更低；
+    ③ 海外客户由深圳团队直接对接。
+    且不能每次都同一句话（按轮次换说法）。
+    """
+
+    def test_chinese_answer_mentions_factory_and_cost(self):
+        answer = company_answer("你们在肯尼亚有代理商吗？", language="zh", seed=0)
+        assert answer
+        assert "工厂" in answer, answer
+        assert any(word in answer for word in ("成本", "开销", "中间")), answer
+        assert any(word in answer for word in ("只有", "没有")), answer
+        assert "Shenzhen" in answer or "深圳" in answer
+
+    def test_english_answer_mentions_factory_and_cost(self):
+        answer = company_answer("Do you have a distributor in Kenya?", language="en", seed=0)
+        assert answer
+        assert "factory" in answer.lower()
+        assert any(word in answer.lower() for word in ("cost", "price", "middleman")), answer
+        assert "Shenzhen" in answer
+
+    def test_wording_varies_by_seed(self):
+        answers = {
+            company_answer("你们在肯尼亚有代理商吗？", language="zh", seed=seed)
+            for seed in range(4)
+        }
+        assert len(answers) == 4, "不能每次都同一句固定话术"
+        for answer in answers:
+            assert "工厂" in answer and ("成本" in answer or "开销" in answer)
+
+    def test_non_company_question_returns_none(self):
+        assert company_answer("do you have P1.2 COB LED", language="en") is None
+
+
 class TestCompanyQuestionDetection:
 
     @pytest.mark.parametrize("message", [
         "Let me ask. Do you have a representative in western India",
         "do you have an office in Europe?",
         "are you a local distributor in Nigeria",
+        "你们在肯尼亚有代理商吗？",
         "where are you located?",
         "what is your company address",
         "你们在深圳有工厂吗",
@@ -51,7 +89,11 @@ class TestCompanyAnswerIsGrounded:
         assert "Shenzhen" in answer
         # 不允许凭空说"有"当地办事处：必须说明只有深圳这一个所在地
         lowered = answer.lower()
-        assert "only office" in lowered or "single site" in lowered
+        assert any(
+            phrase in lowered
+            for phrase in ("only office", "single site", "only site", "only location")
+        ), answer
+        assert "distributor" in lowered or "branch" in lowered or "agent" in lowered
 
     def test_variants_rotate(self):
         texts = {company_answer("where are you located?", seed=seed) for seed in range(6)}

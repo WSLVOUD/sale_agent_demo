@@ -37,9 +37,19 @@ _SKIP_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 客户"让你来定 / 随便 / 没有偏好"（对点间距这类问题最常见）→ 等同"不知道"
+_DEFER_RE = re.compile(
+    r"\b(?:up to you|your call|you decide|you choose|whatever you (?:think|recommend|suggest)|"
+    r"whatever'?s best|whatever works|anything is fine|i'?m fine with anything|no preference|"
+    r"doesn'?t matter)\b|"
+    r"你(?:来)?决定|你(?:帮我)?(?:推荐|选|定)|听你的|随便|都可以|都行|无所谓|"
+    r"没有?偏好|你看着办|越清晰越好|越细越好|清晰度越高越好",
+    re.IGNORECASE,
+)
+
 
 def detect_no_answer(message: str) -> Optional[str]:
-    """返回 ``customer_skip`` / ``customer_does_not_know`` / ``None``。"""
+    """返回 ``customer_skip`` / ``customer_does_not_know`` / ``customer_defers`` / ``None``。"""
     text = str(message or "")
     if not text:
         return None
@@ -47,6 +57,9 @@ def detect_no_answer(message: str) -> Optional[str]:
         return "customer_skip"
     if _DONT_KNOW_RE.search(text):
         return "customer_does_not_know"
+    if _DEFER_RE.search(text):
+        # 客户把决定权交给我们（"你决定 / 随便 / 越清晰越好"）→ 按"不知道"处理
+        return "customer_defers"
     return None
 
 
