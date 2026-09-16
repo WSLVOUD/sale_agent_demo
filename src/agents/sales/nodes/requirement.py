@@ -451,6 +451,34 @@ ack 的写法（很重要，销售不能只会追问）：
             current_msg_text,
             previous_profile=profile,
             semantic_override=semantic_payload or None,
+            # 语义结果的缓存必须按会话隔离（否则会串到别的对话框）
+            session_id=str(state.get("session_id") or ""),
+        )
+
+        # ── Phase 4~9：Unknown 容错 ──────────────────────────────────────────
+        # 1) 客户"不知道 / 跳过"的是**上一轮问的那一项**（last_asked_slot）；
+        #    如果这一轮他其实给了其它字段，Extractor 已经全量记录，互不影响。
+        # 2) 问满两次仍无值 → unknown，不再阻塞；Gate 会转 DEGRADED_READY。
+        from ....core.unknown_detector import detect_no_answer
+
+        last_asked = str(getattr(profile, "last_asked_slot", "") or "")
+        no_answer_reason = detect_no_answer(current_msg_text)
+        # 注意：判定用 slot_is_confirmed 而不是 slot_value_present ——
+        # 场景默认值（例如"教堂默认固装"）虽然"有值"，但客户对安装方式说了
+        # "不知道"时仍必须走 unknown 流程，否则同一问题会被无限追问。
+        if last_asked and no_answer_reason and not profile.slot_is_confirmed(last_asked):
+            profile.mark_unknown(last_asked, no_answer_reason)
+            logger.info(
+                "[QuestionState] slot=%s ask_count=%d status=%s reason=%s",
+                last_asked, profile.ask_count(last_asked),
+                profile.slot_status(last_asked), no_answer_reason,
+            )
+        logger.info(
+            "[RequirementExtraction] message=%r extracted=%s confirmed=%s unknown=%s",
+            current_msg_text[:80],
+            sorted(k for k in message_slots if not str(k).startswith("_")),
+            sorted(s for s, v in profile.status.items() if v == "confirmed"),
+            profile.unknown_slots(),
         )
 
         # ── 场景切换 → 清掉依赖上一个场景的字段（原来在 legacy 字典上做）──────
@@ -532,6 +560,11 @@ ack 的写法（很重要，销售不能只会追问）：
         _turn_seed = _user_turns + (sum(ord(ch) for ch in _session_id) % 7)
         decision = check_recommendation_ready(profile, variant_seed=_turn_seed)
         state["recommendation_gate"] = decision.to_dict()
+        logger.info(
+            "[RecommendationGate] status=%s missing=%s unknown=%s",
+            decision.status or ("READY" if decision.ready else "CONTINUE_ASKING"),
+            decision.missing, decision.unknown_slots,
+        )
         current_intent = str(state.get("intent") or "")
 
         if decision.ready:
@@ -555,6 +588,16 @@ ack 的写法（很重要，销售不能只会追问）：
             if question and current_intent != "closing":
                 state["pending_question"] = question
                 state["pending_slot"] = slot
+                # Phase 5/6：记录"这一项已经问过一次"，下一轮最多再问一次；
+                # 同时记下 last_asked_slot，客户答"不知道"时才知道是哪一项
+                profile.last_asked_slot = slot
+                if slot:
+                    profile.record_ask(slot)
+                logger.info(
+                    "[QuestionState] asking slot=%s ask_count=%d status=%s",
+                    slot, profile.ask_count(slot), profile.slot_status(slot),
+                )
+                logger.info("[QuestionPlanner] next_slot=%s (gate=%s)", slot, decision.status)
                 logger.info(
                     "RecommendationGate blocked (missing=%s, slot=%s) — asking: %s",
                     decision.missing, slot, question,

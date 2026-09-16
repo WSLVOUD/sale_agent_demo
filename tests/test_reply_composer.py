@@ -590,7 +590,7 @@ class _StubSolution:
     def __init__(self, result):
         self.result = result
 
-    def run(self, message, history=None):
+    def run(self, message, history=None, session_id=None, **_kwargs):
         return dict(self.result)
 
 

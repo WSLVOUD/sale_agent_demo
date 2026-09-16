@@ -477,7 +477,13 @@ class TestMultiTurnSwitchProductEndToEnd:
             assert result["response"].rstrip().endswith("?")
             # 旧需求（含教堂 / 5 米 / 室内）必须已被清空
             assert memory.get_requirements(session_id) == {}
-            assert memory.get_requirement_profile(session_id) is None
+            # 档案里不允许留下任何旧的需求事实（只允许保留"这一轮刚问过什么"的
+            # 提问记账 —— 那是"同一字段最多问两次"状态机跨轮必需的状态）。
+            persisted = memory.get_requirement_profile(session_id)
+            if persisted is not None:
+                bookkeeping = ("sources", "ask_counts", "unknown_reasons", "last_asked_slot", "conflicts")
+                facts = {k: v for k, v in persisted.items() if k not in bookkeeping}
+                assert all(v in (None, "", [], {}) for v in facts.values()), facts
             assert not memory.has_recommendation(session_id)
         finally:
             memory.clear(session_id)

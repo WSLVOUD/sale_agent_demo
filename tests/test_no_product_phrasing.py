@@ -121,3 +121,61 @@ class TestFallbackRepliesUseRelaxation:
         source = inspect.getsource(recommend_mod)
         assert "No matching products found in the database" not in source
         assert "No-product rule" in source
+
+
+class TestFastPathRespectsAccumulatedRequirements:
+    """实测 bug：客户前面已说"室外 + 租赁"，后面只回一句 "P3" 时，
+    fast path 只用本条消息抽到的点间距约束 → 给室外租赁推荐了室内型号
+    （TW11-3216 / TW21-3216），随后被回复清洗器删光，最后退化成"放宽条件"兜底。
+    """
+
+    def _fast(self, constraints):
+        from src.rag.fast_path import fast_path_handle
+
+        return fast_path_handle(
+            query="P3", constraints=constraints, template_type=None, data_dir="data"
+        )
+
+    def test_constraint_merge_pulls_in_accumulated_requirements(self):
+        from src.agents.solution.runner import merge_fast_path_constraints
+
+        merged = merge_fast_path_constraints(
+            {"pixel_pitch": 3.0, "pixel_pitch_tolerance": 0.5},
+            {
+                "display_type": "LED",
+                "location_type": "室外",
+                "outdoor": True,
+                "indoor": False,
+                "is_rental": True,
+            },
+        )
+        assert merged["pixel_pitch"] == 3.0
+        assert merged["display_type"] == "LED"
+        assert merged["outdoor"] is True and merged["indoor"] is False
+        assert merged["is_rental"] is True
+
+    def test_outdoor_rental_never_returns_indoor_models(self):
+        result = self._fast({
+            "pixel_pitch": 3.0, "pixel_pitch_tolerance": 0.5,
+            "outdoor": True, "indoor": False, "is_rental": True, "display_type": "LED",
+        })
+        # 目录里没有"室外 + 租赁"系列 → 允许为空，但绝不能推室内型号
+        assert all(p["installation"] == "rental" for p in result["products"]), result["products"]
+
+    def test_outdoor_fixed_returns_only_outdoor_and_survives_sanitizer(self):
+        from src.rag.rerank import sanitize_customer_response
+
+        result = self._fast({
+            "pixel_pitch": 3.0, "pixel_pitch_tolerance": 0.5,
+            "outdoor": True, "indoor": False, "display_type": "LED",
+        })
+        assert result["products"], "室外固装 P3 应该能匹配到室外型号"
+        assert all(("OD" in p["model"] or "HOD" in p["model"]) for p in result["products"]), result["products"]
+        # 清洗器（outdoor=True）不会再把它整段删掉
+        assert sanitize_customer_response(result["answer"], outdoor=True).strip()
+
+    def test_no_match_gives_relaxation_not_no_product(self):
+        result = self._fast({"pixel_pitch": 3.0, "outdoor": True, "is_rental": True})
+        assert not result["products"]
+        assert result["answer"].strip()
+        assert not has_no_product_phrase(result["answer"])

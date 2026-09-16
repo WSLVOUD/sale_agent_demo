@@ -163,8 +163,14 @@ def understand_node(state: SolutionState) -> SolutionState:
         from ....rag.readiness import check_recommendation_ready
 
         extractor = get_requirement_extractor()
-        if extractor._cached_semantic(state.get("current_message", "")) is not None:
-            profile = extractor.extract(state.get("current_message", ""), use_llm=False)
+        # 语义缓存按会话隔离：只复用**本会话**本轮 Sales 已经算过的语义结果
+        session_id = str(state.get("session_id") or "")
+        if extractor._cached_semantic(
+            state.get("current_message", ""), session_id
+        ) is not None:
+            profile = extractor.extract(
+                state.get("current_message", ""), use_llm=False, session_id=session_id
+            )
             if profile.purpose or profile.environment or profile.display_type:
                 decision = check_recommendation_ready(profile)
                 logger.info(

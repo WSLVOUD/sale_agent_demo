@@ -24,6 +24,7 @@
 | 箱体 / 模组工程计算（Screen Calculator） | ✅ 已完成 |
 | 多语言 Query Understanding + Query Rewrite | ✅ 已完成 |
 | **首次客户固定工作流（First Contact）** | ✅ 已完成 |
+| **全量需求捕获 + Unknown 容错（最多问两次）** | ✅ 已完成 |
 | **Memory 持久化（SQLite）** | 🚧 规划中 |
 
 ---
@@ -161,6 +162,118 @@ LLM 最终销售话术（全程仅 1 次）
 - **英文词形变化识别不到**：`permanently` / `banking` / `wall mounted` 都匹配不上关键词（当时只支持可选复数 s）。现在支持 `s/es/d/ed/ing/ly` 词尾。
 - 中文视距 `观众大概 6 米远` 解析不到（单位后要求空白/标点）；`open-air` 不在室外关键词里；`retail`（商场）在 EnvironmentResolver 里被当成"室内外都可能"，与 `query_understanding` 不一致。三处均已修正。
 - 换成"室内首选 P3.0"后暴露一个误报：型号名里的 `P3.0` 与数据里的实际点间距 `3.076mm` 对不上，被确定性校验判成"虚构参数"（扣 1.5 分）。现在厂商命名里的 P 值也算真实数据。
+
+---
+
+## 最近更新（全量需求捕获 + Unknown 容错，2026-09-16）
+
+本阶段解决的问题（客户实测反馈）：
+
+1. **AI 问 A、客户回答 B，B 信息被丢掉** —— 例如 AI 问"观看距离"，客户回"5m x 3m"，
+   尺寸没有被记录。
+2. **客户答"我不知道"，AI 仍反复问同一句** —— 甚至出现同一个问题被连问 12 次。
+
+### 核心机制
+
+```text
+客户消息
+   ↓
+全量需求提取（不按"当前问题"过滤字段）
+   ↓
+RequirementProfile（字段级状态机）
+   missing → unknown_pending → unknown → confirmed
+   ↓
+字段级提问次数（Python 强制，最多 2 次）
+   第 1 次：正常问
+   第 2 次：降低门槛（给区间 / 二选一）
+   仍不知道：标记 unknown → 直接跳过，绝不追问第 3 次
+   ↓
+Recommendation Ready Gate
+   READY          信息齐备 → 正常推荐
+   CONTINUE_ASKING 还有可问字段 → 继续问
+   DEGRADED_READY  只剩 unknown → 按已确认信息 Best-effort 推荐
+   ↓
+推荐话术 = 推荐产品 + 当前依据 + 缺少什么 + 可能影响什么
+```
+
+### 关键文件
+
+| 文件 | 作用 |
+|------|------|
+| `src/core/unknown_detector.py` | 纯正则识别客户"不知道 / 跳过某一项"（中英文） |
+| `src/models/requirement.py` | 字段级状态机：`ask_counts` / `unknown_reasons` / `slot_status()` / `requirement_basis()` |
+| `src/rag/readiness.py` | Gate 三态 + 第二次追问的"降门槛"问法 |
+| `src/rag/recommendation_service.py` | `RECOMMENDED` / `DEGRADED` + 推荐依据（confirmed / inferred / unknown） |
+| `src/rag/reply_composer.py` | `degraded_note()`：缺什么 + 影响什么（多套自然说法） |
+| `src/agents/solution/nodes/recommend.py` | Best-effort 推荐 + 话术确定性兜底 |
+
+### 行为变化
+
+| 场景 | 旧行为 | 新行为 |
+|------|--------|--------|
+| 客户答非所问（问视距、答尺寸） | 尺寸丢失 | 尺寸入库，视距继续问（最多 2 次） |
+| 客户说"不知道" | 同一问题无限重复 | 第二次换"给区间"的问法，之后跳过 |
+| 客户两次都不知道 | 卡在需求采集 | 转 `DEGRADED_READY`，按已有信息推荐并说明缺失项 |
+| 客户后续补上信息 | - | `unknown → confirmed`，并停止追问该项 |
+| 视距未知但尺寸已知 | 不计算箱体 | 照常计算箱体 / 模组 |
+
+### 测试
+
+```bash
+python -m pytest tests/test_unknown_tolerance.py -q   # 59 passed
+python -m pytest tests -q                             # 759 passed, 4 skipped
+```
+
+> 计划文档与逐阶段标注：`LED RAG 智能销售系统：全量需求捕获与 Unknown 容错优化实施计划.md`
+
+---
+
+## 修复：跨会话串台（AI 用别的对话框的内容聊天，2026-09-16）
+
+### 现象
+
+不重启服务时，**刷新页面 / 开新标签页 / 点"新对话"**，新对话里 AI 仍然会带上别的对话框
+的需求（例如新会话说 "5m"，AI 却按"教堂 / 室内"来答）；只有重启服务才恢复正常。
+
+### 根因（两条，互相叠加）
+
+1. **进程级语义缓存没有按会话隔离**（主因）
+
+   `src/core/requirement_extractor.py` 里的 `_semantic_cache` 是类属性（进程级），
+   缓存键只用**消息文字**：`"5m" → {...}`。
+   但语义理解是 LLM 结合"当前对话上下文 + 已收集需求"得出的 ——
+   同一条 `"5m"` 在 A 对话框里是"教堂室内"，在 B 对话框里可能什么都不是。
+   于是新会话说出同名消息时直接命中旧会话的缓存，凭空继承 `purpose=church` /
+   `environment=indoor`，且**只有重启进程才会消失**（正好对应"不停止服务器就一直串"）。
+
+2. **前端所有标签页共用一个 session_id**
+
+   `static/app.js` 用 `localStorage` 存 session_id：刷新、开新标签页、开新窗口
+   都会拿回**同一个会话**；而界面又不会加载历史，看起来是"新对话"，
+   实际后端还是同一个会话在继续。
+
+### 修复
+
+| 位置 | 改动 |
+|------|------|
+| `src/core/requirement_extractor.py` | 语义缓存键改为 `session_id::message`；**不传 session_id 就不缓存、不复用**；新增 `clear_session_semantics()` |
+| `src/agents/sales/nodes/requirement.py` | 抽取时传入 `state["session_id"]` |
+| `src/agents/solution/{state,runner}.py`、`nodes/requirement.py` | Solution Agent 增加 `session_id`，跨 Agent 复用语义结果时也按会话隔离 |
+| `src/orchestrator.py` | 调用 Solution Agent 时传入 `session_id` |
+| `src/agents/sales/runner.py`、`src/api.py` | 会话内需求重置 / `/memory/clear` 时一并清掉该会话的语义缓存 |
+| `src/memory/store.py` | 会话数上限 `MAX_SESSIONS=200`（LRU 淘汰），长时间运行不再无限堆积 |
+| `static/app.js` | session_id 改用 `sessionStorage`（**每个标签页一个会话**）；刷新后调用 `/memory/{id}` 把本会话历史渲染回来，界面与服务端状态一致；"新对话"同时清掉旧会话 |
+
+### 行为变化
+
+| 场景 | 旧行为 | 新行为 |
+|------|--------|--------|
+| 开新标签页 | 与已有标签页共用同一个会话 | 全新会话，互不影响 |
+| 刷新当前页 | 界面空白，但后端仍是旧会话（看着像"AI 还记得别的对话"） | 恢复本标签页的历史，界面与后端一致 |
+| 不同对话框说同一句话（如 "5m"） | 沿用别的会话的语义理解 | 各自独立理解 |
+| 长时间不重启 | 会话与缓存无限增长 | LRU 控制在 200 个会话内 |
+
+> 测试：`tests/test_session_isolation.py`（9 个用例，含 Sales 节点级端到端复现）。
 
 ---
 
@@ -619,6 +732,11 @@ RESPONSE_LANGUAGE_POLICY=en          # en=始终英语（默认）；auto=跟随
 > `LED_RAG_推荐与智能选型工程化优化计划_v2.0.md`）：推荐就绪 Gate、计算就绪 Gate、
 > 确定性推荐引擎、确定性校验、Model 级语料、多语言 Query Understanding、LLM 分工收紧，
 > 以及**会话内需求重置**（客户拿到推荐后换产品 / 换项目时清空需求并重新采集）。
+>
+> 再之后完成了 **全量需求捕获 + Unknown 容错**（详见上方「最近更新（全量需求捕获 + Unknown 容错）」
+> 与 `LED RAG 智能销售系统：全量需求捕获与 Unknown 容错优化实施计划.md`）：
+> 字段级状态机、最多问两次、客户不知道也能 Best-effort 推荐并说明缺失项。
+> 最新测试基线：**759 passed, 4 skipped**。
 
 ---
 

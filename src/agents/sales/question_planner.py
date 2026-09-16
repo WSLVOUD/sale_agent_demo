@@ -23,6 +23,13 @@ from src.models.requirement import RequirementProfile
 
 logger = logging.getLogger(__name__)
 
+# 规划器槽位名 → RequirementProfile 的规范槽位名（Unknown 状态机用这套命名）
+_SLOT_ALIAS: Dict[str, str] = {
+    "viewing_distance_m": "viewing_distance",
+    "target_size": "size",
+    "budget_level": "budget",
+}
+
 # 采集顺序（值为提问模板；'en' 与 'zh' 两套）
 QUESTION_PLAN: tuple[tuple[str, str, str], ...] = (
     (
@@ -62,6 +69,14 @@ BLOCKING_SLOTS = ("environment", "purpose")
 
 
 def _slot_filled(profile: RequirementProfile, slot: str) -> bool:
+    """该槽位是否"不用再问了"。
+
+    Phase 17：客户已经明确表示不知道（问满两次 / 主动跳过）的字段 → 视为
+    "不用再问"，直接跳到下一个，绝不重复追问同一项。
+    """
+    canonical = _SLOT_ALIAS.get(slot, slot)
+    if profile.is_unknown(canonical):
+        return True
     if slot == "target_size":
         return profile.has_target_size
     if slot == "viewing_distance_m":
@@ -83,6 +98,7 @@ def plan_next_question(
     if profile is None:
         return None
     from src.rag.readiness import question_for
+    from src.models.requirement import SLOT_PRIORITY
 
     for slot, question_en, question_zh in QUESTION_PLAN:
         if _slot_filled(profile, slot):
@@ -94,6 +110,8 @@ def plan_next_question(
             "slot": slot,
             "question": question,
             "blocking": slot in BLOCKING_SLOTS,
+            # Phase 17：字段优先级（HIGH → MEDIUM → LOW）
+            "priority": SLOT_PRIORITY.get(_SLOT_ALIAS.get(slot, slot), "MEDIUM"),
             "missing": profile.missing_slots(),
         }
     return None

@@ -37,6 +37,39 @@ SLOT_ORDER: tuple[str, ...] = (
 # 判定"信息是否足够进入推荐"的最小集合
 REQUIRED_FOR_RECOMMENDATION: tuple[str, ...] = ("environment", "purpose")
 
+# 槽位名（对话/追问用）↔ 档案字段名（Phase 1 / Phase 17）
+SLOT_TO_FIELD: Dict[str, str] = {
+    "display_type": "display_type",
+    "environment": "environment",
+    "purpose": "purpose",
+    "installation": "installation",
+    "viewing_distance": "viewing_distance_m",
+    "size": "target_size",          # 派生属性（宽+高）
+    "width": "target_width_m",
+    "height": "target_height_m",
+    "pixel_pitch": "pixel_pitch_mm",
+    "brightness": "brightness_min_nit",
+    "budget": "budget_level",
+}
+
+# 同一字段最多主动询问次数（Phase 5：超过就不再问）
+MAX_ASKS_PER_SLOT = 2
+
+# 槽位优先级（Phase 17）：HIGH 先问，LOW 最后
+SLOT_PRIORITY: Dict[str, str] = {
+    "environment": "HIGH",
+    "purpose": "HIGH",
+    "installation": "HIGH",
+    "size": "HIGH",
+    "display_type": "HIGH",
+    "pixel_pitch": "MEDIUM",
+    "viewing_distance": "MEDIUM",
+    "brightness": "MEDIUM",
+    "width": "MEDIUM",
+    "height": "MEDIUM",
+    "budget": "LOW",
+}
+
 # 来源强度（M2 四态）：合并时强度高者胜，同强度时新值覆盖旧值。
 #   explicit/confirmed（客户明说） > scenario_derived（场景直接判定）
 #   > inferred（算法估算） > default（系统默认）
@@ -136,6 +169,14 @@ class RequirementProfile(BaseModel):
     # ── 冲突（Phase 18）：客户明确说的与规则/语义推断互相矛盾时记录 ──────
     # 有冲突时 Recommendation Ready Gate 一律不放行
     conflicts: List[str] = Field(default_factory=list)
+
+    # ── Unknown 容错（《全量需求捕获与 Unknown 容错优化》Phase 1）──────────
+    # 字段级"已主动询问次数"：slot -> 次数（最多问到 2 次）
+    ask_counts: Dict[str, int] = Field(default_factory=dict)
+    # 字段级 unknown 原因：slot -> customer_does_not_know / customer_skip
+    unknown_reasons: Dict[str, str] = Field(default_factory=dict)
+    # 上一轮主动问的是哪个槽位（客户答非所问时要能对上"这一项我没答"）
+    last_asked_slot: str = ""
 
     @field_validator("special_requirements", mode="before")
     @classmethod
@@ -524,6 +565,110 @@ class RequirementProfile(BaseModel):
                 filled += 1
         return round(filled / len(tracked), 4) if tracked else 0.0
 
+    # ── Unknown 容错：字段级状态机（Phase 1 / 5 / 10 / 17）────────────────
+    def slot_value_present(self, slot: str) -> bool:
+        """该槽位是否已经拿到了值（不管是客户说的还是推断的）。"""
+        if slot == "size":
+            return self.has_target_size
+        if slot == "viewing_distance":
+            return self.viewing_distance_m is not None
+        field = SLOT_TO_FIELD.get(slot, slot)
+        return getattr(self, field, None) not in (None, "", [], {})
+
+    def slot_source(self, slot: str) -> str:
+        """该槽位的来源（explicit/confirmed/scenario_derived/default/inferred）。"""
+        if slot == "size":
+            return self.sources.get("target_width_m") or self.sources.get("target_height_m") or "unknown"
+        field = SLOT_TO_FIELD.get(slot, slot)
+        return self.sources.get(field, "unknown")
+
+    def slot_is_confirmed(self, slot: str) -> bool:
+        """该槽位是否是"客户侧确认过"的（客户明说 / 场景直接判定）。
+
+        注意与 ``slot_value_present`` 的区别：场景默认值（例如"教堂默认固装"）
+        也算"有值"，但**不算客户确认** —— 客户说"我不知道"时它仍然要能
+        走 unknown 流程，否则会出现同一问题被无限追问。
+        """
+        if not self.slot_value_present(slot):
+            return False
+        return self.slot_source(slot) in CONFIRMED_SOURCES
+
+    def ask_count(self, slot: str) -> int:
+        return int(self.ask_counts.get(slot, 0) or 0)
+
+    def record_ask(self, slot: str) -> int:
+        """记录"又问了客户一次"，返回累计次数。"""
+        self.ask_counts[slot] = self.ask_count(slot) + 1
+        return self.ask_counts[slot]
+
+    def mark_unknown(self, slot: str, reason: str = "customer_does_not_know") -> None:
+        """把槽位标记为 unknown（客户不知道 / 明确跳过）。"""
+        self.unknown_reasons[slot] = reason
+        # 明确跳过时不用问第二次
+        if reason == "customer_skip":
+            self.ask_counts[slot] = max(self.ask_count(slot), MAX_ASKS_PER_SLOT)
+
+    def is_unknown(self, slot: str) -> bool:
+        if self.slot_is_confirmed(slot):
+            return False   # Phase 10：客户后来补上了 → unknown 自动解除
+        # 客户明确"跳过这一项" → 不用再问第二次，直接算 unknown
+        if self.unknown_reasons.get(slot) == "customer_skip":
+            return True
+        # 客户第一次答"不知道"只是 unknown_pending：还允许按"降低门槛"的方式再问一次，
+        # 只有问满 MAX_ASKS_PER_SLOT 次仍无值，才真正锁定为 unknown。
+        return self.ask_count(slot) >= MAX_ASKS_PER_SLOT
+
+    def unknown_slots(self) -> List[str]:
+        """已经"问过两次/客户明确跳过"且仍然没有值的槽位。"""
+        return [slot for slot in SLOT_TO_FIELD if self.ask_count(slot) >= 1 and self.is_unknown(slot)]
+
+    def exhausted_slots(self) -> List[str]:
+        """问满两次仍然没有值的槽位（Gate 允许降级推荐）。"""
+        return [
+            slot for slot in SLOT_TO_FIELD
+            if not self.slot_is_confirmed(slot) and self.ask_count(slot) >= MAX_ASKS_PER_SLOT
+        ]
+
+    def pending_unknown_slots(self) -> List[str]:
+        """已经问过一次、但客户还没给出值也没有明确说不知道的槽位（可以再问一次）。"""
+        return [
+            slot for slot in SLOT_TO_FIELD
+            if not self.slot_is_confirmed(slot)
+            and self.ask_count(slot) == 1
+            and slot not in self.unknown_reasons
+        ]
+
+    def slot_status(self, slot: str) -> str:
+        """槽位状态：confirmed / inferred / unknown / unknown_pending / missing。"""
+        if self.is_unknown(slot):
+            return "unknown"
+        if self.slot_value_present(slot):
+            source = self.slot_source(slot)
+            return "confirmed" if source in CONFIRMED_SOURCES else "inferred"
+        if self.ask_count(slot) >= 1:
+            return "unknown_pending"
+        return "missing"
+
+    def requirement_basis(self) -> Dict[str, List[str]]:
+        """Phase 14：推荐依据（哪些字段是客户确认的 / 推断的 / 客户不知道的）。
+
+        派生槽位（``size`` 由宽+高合成）不单独列出，避免与 width/height 重复。
+        """
+        confirmed: List[str] = []
+        inferred: List[str] = []
+        unknown: List[str] = []
+        for slot in SLOT_TO_FIELD:
+            if slot == "size":
+                continue
+            if self.is_unknown(slot):
+                unknown.append(slot)
+            elif self.slot_value_present(slot):
+                if self.slot_source(slot) in CONFIRMED_SOURCES:
+                    confirmed.append(slot)
+                else:
+                    inferred.append(slot)
+        return {"confirmed": confirmed, "inferred": inferred, "unknown": unknown}
+
     def merge(self, other: "RequirementProfile | Dict[str, Any] | None") -> "RequirementProfile":
         """合并新事实：强来源覆盖弱来源，同强度时新值覆盖旧值。"""
         if other is None:
@@ -560,7 +705,22 @@ class RequirementProfile(BaseModel):
         data["conflicts"] = list(
             dict.fromkeys(list(self.conflicts or []) + list(incoming.conflicts or []))
         )
-        return RequirementProfile(**data)
+        # ── Unknown 容错状态随档案一起合并（Phase 1 / 10）──────────────────
+        ask_counts = dict(self.ask_counts or {})
+        for slot, count in (incoming.ask_counts or {}).items():
+            ask_counts[slot] = max(int(ask_counts.get(slot, 0) or 0), int(count or 0))
+        data["ask_counts"] = ask_counts
+
+        unknown_reasons = dict(self.unknown_reasons or {})
+        unknown_reasons.update(incoming.unknown_reasons or {})
+        merged_profile = RequirementProfile(**data)
+        # 客户后来明确补上了 → 撤销 unknown 标记（场景默认值不算"补上"）
+        unknown_reasons = {
+            slot: reason for slot, reason in unknown_reasons.items()
+            if not merged_profile.slot_is_confirmed(slot)
+        }
+        merged_profile.unknown_reasons = unknown_reasons
+        return merged_profile
 
 
 # ── 辅助 ────────────────────────────────────────────────────────────────────

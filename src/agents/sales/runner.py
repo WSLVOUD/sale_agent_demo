@@ -162,6 +162,13 @@ class SalesAgentRunner:
             existing_profile = None
             if self.memory_store and hasattr(self.memory_store, "reset_requirement_state"):
                 self.memory_store.reset_requirement_state(session_id)
+            # 语义缓存也要一起清：重置后是全新需求，不能再用旧上下文理解同一条消息
+            try:
+                from ...core.requirement_extractor import get_requirement_extractor
+
+                get_requirement_extractor().clear_session_semantics(session_id)
+            except Exception as error:  # pragma: no cover - 防御式
+                logger.warning("[%s] Clear semantic cache failed: %s", session_id, error)
 
         # Build initial state
         # 检查是否需要抑制销售问候语（首次接待刚完成后）

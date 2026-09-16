@@ -5,6 +5,9 @@ from langgraph.graph import add_messages
 
 class SolutionState(TypedDict):
     """State definition for the Solution Agent (LED Product RAG)."""
+
+    # 会话 ID（语义缓存按会话隔离；缺失时不复用任何跨会话结果）
+    session_id: str
     
     # Conversation history (auto-managed by add_messages)
     messages: Annotated[List[Dict[str, Any]], add_messages]

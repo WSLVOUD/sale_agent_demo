@@ -598,6 +598,117 @@ def relaxation_answer(language: Optional[str] = None, seed: int = 0) -> str:
     return variants[seed % len(variants)]
 
 
+# ── Phase 15：Best-effort 推荐时"缺了什么 + 会影响什么"的自然说法 ────────────
+# 客户不知道某项需求 → 仍然按已有信息推荐，但必须**自然**说明缺的是什么、
+# 可能影响什么；绝不能说"信息不足无法推荐"。
+_UNKNOWN_IMPACT: Dict[str, Dict[str, Any]] = {
+    "viewing_distance": {
+        "en": ("the exact viewing distance",
+               "the final pixel pitch may need a small adjustment once you know it"),
+        "zh": ("具体的观看距离", "拿到后最终点间距可能还需要微调"),
+    },
+    "installation": {
+        "en": ("the installation type",
+               "I've assumed a fixed installation for now and can switch you to a rental "
+               "series if that changes"),
+        "zh": ("安装方式", "目前按固定安装来选，如果改成租赁我可以换租用系列"),
+    },
+    "size": {
+        "en": ("the exact screen size",
+               "the cabinet count and final screen dimensions can be worked out as soon as "
+               "we have the width and height"),
+        "zh": ("具体的屏体尺寸", "拿到宽高后就能算出箱体数量和最终屏体尺寸"),
+    },
+    "width": {
+        "en": ("the target screen width",
+               "the cabinet layout can be finalised once we have the width"),
+        "zh": ("目标屏幕宽度", "有宽度后就能确定箱体排布"),
+    },
+    "height": {
+        "en": ("the target screen height",
+               "the cabinet layout can be finalised once we have the height"),
+        "zh": ("目标屏幕高度", "有高度后就能确定箱体排布"),
+    },
+    "environment": {
+        "en": ("the indoor/outdoor setup",
+               "an outdoor install would need a brighter, weatherproofed model"),
+        "zh": ("室内还是室外", "如果改成室外需要更亮、防护等级更高的型号"),
+    },
+    "purpose": {
+        "en": ("the exact application",
+               "the feature set can be tuned once we know how the screen will be used"),
+        "zh": ("具体使用场景", "明确场景后功能配置还能再优化"),
+    },
+    "brightness": {
+        "en": ("the required brightness level",
+               "a different brightness option can be quoted if the site needs more"),
+        "zh": ("亮度要求", "如果现场需要更高亮度可以再换型号"),
+    },
+    "pixel_pitch": {
+        "en": ("the preferred pixel pitch",
+               "we can move to a finer or coarser pitch whenever you decide"),
+        "zh": ("偏好的点间距", "确定后可以在更细或更粗的点间距之间切换"),
+    },
+}
+
+_UNKNOWN_ITEM_FALLBACK = {
+    "en": ("one of the details", "I can fine-tune the recommendation once we have it"),
+    "zh": ("其中一项细节", "拿到后可以再把推荐调得更准"),
+}
+
+_DEGRADED_TEMPLATES = {
+    "en": (
+        "One thing to flag: {items} {verb} not confirmed yet, so this is the best match "
+        "for what you've told me — {impacts}.",
+        "Just so it's clear: I've based this on your confirmed requirements, as {items} "
+        "{verb} still open. {impacts_cap}.",
+    ),
+    "zh": (
+        "有一点先说明：{items}还没确认，所以这是基于您已提供信息的最佳匹配 —— {impacts}。",
+        "补充一句：目前是按您已确认的信息来选的，{items}还在待定，{impacts}。",
+    ),
+}
+
+
+def missing_impact(slot: str, language: Optional[str] = None) -> Tuple[str, str]:
+    """某个未确认槽位 → （"缺的是什么", "可能影响什么"）。"""
+    lang = _lang(language)
+    table = _UNKNOWN_IMPACT.get(slot)
+    if not table:
+        table = {"en": _UNKNOWN_ITEM_FALLBACK["en"], "zh": _UNKNOWN_ITEM_FALLBACK["zh"]}
+    return tuple(table.get(lang) or table["en"])  # type: ignore[return-value]
+
+
+def degraded_note(
+    slots: Sequence[str],
+    language: Optional[str] = None,
+    seed: int = 0,
+) -> str:
+    """Phase 15：存在 unknown 字段时，给推荐话术补一句"缺什么 + 影响什么"。"""
+    wanted = [str(slot) for slot in (slots or []) if str(slot).strip()]
+    if not wanted:
+        return ""
+    lang = _lang(language)
+    items = [missing_impact(slot, lang)[0] for slot in wanted]
+    impacts = [missing_impact(slot, lang)[1] for slot in wanted]
+    if lang == "zh":
+        item_text = "、".join(items)
+        impact_text = "；".join(impacts)
+        verb = "还没确认"
+    else:
+        item_text = " and ".join(items)
+        impact_text = " Also, ".join(impacts)
+        verb = "is" if len(items) == 1 else "are"
+    templates = _DEGRADED_TEMPLATES.get(lang) or _DEGRADED_TEMPLATES["en"]
+    template = templates[seed % len(templates)]
+    return template.format(
+        items=item_text,
+        verb=verb,
+        impacts=impact_text,
+        impacts_cap=impact_text[:1].upper() + impact_text[1:] if impact_text else "",
+    ).strip()
+
+
 def acknowledge(
     message: str,
     *,
@@ -769,8 +880,10 @@ __all__ = [
     "acknowledge",
     "availability_answer",
     "compose_requirement_reply",
+    "degraded_note",
     "has_no_product_phrase",
     "is_price_question",
+    "missing_impact",
     "price_policy_answer",
     "relaxation_answer",
     "reply_language",

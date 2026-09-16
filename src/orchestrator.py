@@ -263,7 +263,8 @@ class DualAgentOrchestrator:
             history = self._load_history(session_id)
             solution_result = self.solution_agent.run(
                 message=message,
-                history=history
+                history=history,
+                session_id=session_id,
             )
             perf.solution_route = solution_result.get("route", "agent")
             perf.llm_calls += 1
@@ -289,7 +290,8 @@ class DualAgentOrchestrator:
             history = self._load_history(session_id)
             solution_result = self.solution_agent.run(
                 message=message,
-                history=history
+                history=history,
+                session_id=session_id,
             )
             perf.solution_route = solution_result.get("route", "agent")
             perf.llm_calls += 1

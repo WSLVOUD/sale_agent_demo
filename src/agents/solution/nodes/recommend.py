@@ -250,6 +250,7 @@ def _express_recommendation(
     customer_text,
     need_size_question=False,
     language: str = "en",
+    degraded_slots=(),
 ):
     """用一次 LLM 调用把确定性结论表达成销售话术；失败时退化为模板。"""
     top = recommendations[0]
@@ -282,6 +283,21 @@ def _express_recommendation(
         else "4. Finish with one short follow-up question about the next step.\n"
     )
 
+    # ── Phase 15：部分需求客户不知道 → Best-effort 推荐 + 自然说明 ───────────
+    from ....rag.reply_composer import degraded_note, missing_impact
+
+    degraded_slots = [str(slot) for slot in (degraded_slots or []) if str(slot).strip()]
+    degraded_note_text = degraded_note(degraded_slots, language) if degraded_slots else ""
+    degraded_rule = ""
+    if degraded_note_text:
+        impacts = "; ".join(missing_impact(slot, language)[1] for slot in degraded_slots)
+        degraded_rule = (
+            "4b. The customer could not confirm some details. Recommend anyway, based on the "
+            "confirmed requirements, and work in ONE natural sentence explaining what is "
+            "still open and what it may affect: " + impacts + ". "
+            "Never say the recommendation cannot be made or that information is insufficient.\n"
+        )
+
     # v2.0 Phase 14：回复语言由策略决定（默认英语，auto 时跟随客户语言）
     from ....rag.query_understanding import response_language_rule
 
@@ -299,7 +315,8 @@ def _express_recommendation(
         "1. Mention the selected model with its full model code — it does not have to be the very first words.\n"
         "2. Add 1-2 concrete selling points using ONLY the verified data above.\n"
         "3. If a calculated configuration is given, include the cabinet count and actual size.\n"
-        + next_step_rule +
+        + next_step_rule
+        + degraded_rule +
         f"5. Plain text only, no markdown, no bullets, max 90 words.\n"
         "6. Vary your wording and sentence structure between replies — avoid any fixed template.\n"
         f"7. {language_rule}\n"
@@ -334,6 +351,8 @@ def _express_recommendation(
             f"({calculation['total_modules']} modules), actual size "
             f"{calculation['actual_width_m']}m x {calculation['actual_height_m']}m."
         )
+    if degraded_note_text:
+        fallback += " " + degraded_note_text
     if need_size_question and not calculation:
         fallback += " Could you share the target screen width and height so I can work out the cabinet and module configuration?"
     else:
@@ -355,6 +374,37 @@ def _ensure_size_question(answer: str, question: str) -> str:
     if not text:
         return question
     return f"{text}\n\n{question}"
+
+
+def _ensure_degraded_note(answer: str, slots, language: str = "en") -> str:
+    """Phase 15：客户不知道某字段时，回复里**一定**带一句"缺什么 + 影响什么"。
+
+    不依赖 LLM 是否听话：模型漏说就由这里确定性补上。
+    """
+    wanted = [str(slot) for slot in (slots or []) if str(slot).strip()]
+    if not wanted:
+        return answer
+    from ....rag.reply_composer import degraded_note, missing_impact
+
+    text = (answer or "").strip()
+    # 只要已经提到"缺的那一项"或"可能的影响"，就认为说明到位了
+    mentioned = False
+    lowered = text.lower()
+    for slot in wanted:
+        item, impact = missing_impact(slot, language)
+        for phrase in (item, impact):
+            words = [w for w in re.split(r"[\s,，、]+", str(phrase).lower()) if len(w) > 3]
+            if words and all(word in lowered for word in words):
+                mentioned = True
+                break
+        if mentioned:
+            break
+    if mentioned:
+        return text
+    note = degraded_note(wanted, language)
+    if not text:
+        return note
+    return f"{text}\n\n{note}"
 
 
 def recommend_node(state: SolutionState) -> SolutionState:
@@ -466,6 +516,7 @@ def recommend_node(state: SolutionState) -> SolutionState:
     products = _evidence_products(recommendations, ranked_evidence or raw_products)
 
     # ── 5. 一次 LLM 表达 ────────────────────────────────────────────────
+    degraded_slots = list(selection.get("unknown_requirements") or [])
     answer = _express_recommendation(
         recommendations=recommendations,
         profile=profile,
@@ -474,12 +525,20 @@ def recommend_node(state: SolutionState) -> SolutionState:
         customer_text=customer_text,
         need_size_question=not calc_decision.ready,
         language=state.get("understood_language") or "en",
+        degraded_slots=degraded_slots,
     )
 
     # 缺尺寸时必须追问（确定性兜底：模型若没问，就补一句尺寸追问，
     # 保证"没尺寸一定问、有尺寸才算"，不依赖 LLM 是否听话）
     if not calc_decision.ready and calc_decision.next_question:
         answer = _ensure_size_question(answer, calc_decision.next_question)
+
+    # Phase 15：客户不知道的字段必须在话术里说明（缺什么 + 影响什么），
+    # 且绝不说"信息不足无法推荐"
+    if degraded_slots:
+        answer = _ensure_degraded_note(
+            answer, degraded_slots, state.get("understood_language") or "en"
+        )
 
     return {
         "products": products,

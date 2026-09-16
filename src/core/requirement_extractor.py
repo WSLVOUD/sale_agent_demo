@@ -47,6 +47,7 @@ class RequirementExtractor:
         previous_profile: Optional[RequirementProfile] = None,
         semantic_override: Optional[Dict[str, Any]] = None,
         use_llm: bool = True,
+        session_id: str = "",
     ) -> RequirementProfile:
         """
         从客户消息中提取需求。
@@ -57,6 +58,10 @@ class RequirementExtractor:
             semantic_override: 上游（Sales Agent 的同一次 LLM 调用）已经产出的
                 语义结果；给了它就不再单独调 LLM（Phase 13：同一轮只理解一次）
             use_llm: 是否允许调用 LLM 做语义补充
+            session_id: 当前会话 ID。语义结果是**结合本会话上下文**得出的，
+                缓存必须按会话隔离 —— 否则上一个对话框的内容会串到新对话里
+                （实测：新会话说 "5m" 却拿到旧会话的 purpose=church）。
+                不传 session_id 时既不写缓存也不读缓存。
 
         Returns:
             RequirementProfile - 结构化需求档案
@@ -88,12 +93,12 @@ class RequirementExtractor:
         # Step 3: LLM 语义理解（低确定性场景、歧义解析）
         if semantic_override:
             llm_result = {k: v for k, v in semantic_override.items() if v is not None}
-            self._cache_semantic(message, llm_result)
+            self._cache_semantic(message, llm_result, session_id)
             logger.info("RequirementExtractor: 复用上游语义结果（不再调用 LLM）")
         elif not use_llm:
-            llm_result = self._cached_semantic(message) or {}
+            llm_result = self._cached_semantic(message, session_id) or {}
         else:
-            llm_result = self._llm_semantic_extract(message, rule_slots)
+            llm_result = self._llm_semantic_extract(message, rule_slots, session_id)
         logger.debug(f"LLM extraction: {llm_result}")
 
         # Step 4: 合并结果（规则优先，LLM 作补充）
@@ -178,27 +183,52 @@ class RequirementExtractor:
 
     # ── Phase 13：同一轮对话内语义结果缓存（避免 Sales/Solution 重复调 LLM）──
     _semantic_cache: Dict[str, Dict[str, Any]] = {}
-    _SEMANTIC_CACHE_LIMIT = 32
+    _SEMANTIC_CACHE_LIMIT = 64
 
     @staticmethod
-    def _cache_key(message: str) -> str:
-        return " ".join(str(message or "").lower().split())
+    def _cache_key(message: str, session_id: str = "") -> str:
+        """缓存键 = 会话 + 消息。
 
-    def _cache_semantic(self, message: str, semantic: Dict[str, Any]) -> None:
-        key = self._cache_key(message)
+        **必须带 session_id**：语义理解是结合"当前对话上下文 + 已收集需求"
+        由 LLM 得出的，同一条文字在不同对话里含义不同。只按文字缓存会让
+        新对话凭空继承上一个对话框的 purpose / environment（实测过）。
+        没有 session_id 时返回空串 → 不缓存、不复用。
+        """
+        session = str(session_id or "").strip()
+        text = " ".join(str(message or "").lower().split())
+        if not session or not text:
+            return ""
+        return f"{session}::{text}"
+
+    def _cache_semantic(
+        self, message: str, semantic: Dict[str, Any], session_id: str = ""
+    ) -> None:
+        key = self._cache_key(message, session_id)
         if not key:
             return
         self._semantic_cache[key] = dict(semantic or {})
         while len(self._semantic_cache) > self._SEMANTIC_CACHE_LIMIT:
             self._semantic_cache.pop(next(iter(self._semantic_cache)))
 
-    def _cached_semantic(self, message: str) -> Optional[Dict[str, Any]]:
-        return self._semantic_cache.get(self._cache_key(message))
+    def _cached_semantic(self, message: str, session_id: str = "") -> Optional[Dict[str, Any]]:
+        key = self._cache_key(message, session_id)
+        if not key:
+            return None
+        return self._semantic_cache.get(key)
+
+    def clear_session_semantics(self, session_id: str) -> None:
+        """清掉某个会话的语义缓存（会话内需求重置时调用，避免用旧上下文理解新需求）。"""
+        prefix = f"{str(session_id or '').strip()}::"
+        if prefix == "::":
+            return
+        for key in [k for k in self._semantic_cache if k.startswith(prefix)]:
+            self._semantic_cache.pop(key, None)
 
     def _llm_semantic_extract(
         self,
         message: str,
         rule_slots: Dict[str, Any],
+        session_id: str = "",
     ) -> Dict[str, Any]:
         """
         使用 LLM 进行语义理解。
@@ -216,7 +246,7 @@ class RequirementExtractor:
             return {}
 
         # Phase 13：同一轮已经理解过这条消息 → 直接复用，不再调 LLM
-        cached = self._cached_semantic(message)
+        cached = self._cached_semantic(message, session_id)
         if cached is not None:
             logger.debug("Semantic extraction cache hit, skipping LLM")
             return dict(cached)
@@ -254,7 +284,7 @@ class RequirementExtractor:
                 result = json.loads(response.content.strip())
                 # 过滤 null 值
                 semantic = {k: v for k, v in result.items() if v is not None}
-                self._cache_semantic(message, semantic)
+                self._cache_semantic(message, semantic, session_id)
                 return semantic
             except json.JSONDecodeError:
                 logger.warning(f"LLM response not valid JSON: {response.content}")
@@ -288,17 +318,28 @@ class RequirementExtractor:
             if key.endswith("_evidence"):
                 continue
             if key in merged:
-                # 规则已提取 → 规则优先；但如果两边都明确且互相矛盾，记录冲突（Phase 18）
+                # 规则已提取 → 一般规则优先；但要看规则的来源：
+                # 如果规则值只是"场景默认"（例如会议室默认固装），客户明说的语义（rental）
+                # 应该直接覆盖它 —— 那不是冲突，而是客户的明确事实（优先级更高）。
                 if (
                     key in ("environment", "installation")
                     and merged.get(key)
                     and value
                     and merged.get(key) != value
                 ):
-                    semantic_conflicts.append(
-                        f"{key}_conflict: rule={merged.get(key)} vs semantic={value}"
-                    )
-                    logger.warning("Semantic conflict on %s: %s vs %s", key, merged.get(key), value)
+                    rule_is_default = key in (rule_slots.get("_default_slots") or [])
+                    if rule_is_default:
+                        logger.info(
+                            "LLM 语义 %s=%s 覆盖规则的场景默认值 %s（客户明说优先）",
+                            key, value, merged.get(key),
+                        )
+                        merged[key] = value
+                        merged.setdefault("_explicit_keys", set()).add(key)
+                    else:
+                        semantic_conflicts.append(
+                            f"{key}_conflict: rule={merged.get(key)} vs semantic={value}"
+                        )
+                        logger.warning("Semantic conflict on %s: %s vs %s", key, merged.get(key), value)
                 continue
             if key in ("environment", "installation"):
                 evidence = llm_result.get(f"{key}_evidence")

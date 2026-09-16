@@ -101,7 +101,7 @@ class TestInferParametersNode:
         assert result.get("inferred_brightness_max_nit") == 800
 
     def test_infer_distance_pitch(self):
-        """视距 4 米 → 统一规则表给出 P1.5~P3.0（Phase 5 统一后口径）"""
+        """视距 4 米（室内）→ 业务规则：3m 以上用 P3 及以上，区间 3.0~10.0mm"""
         state: SolutionState = {
             "requirement": {
                 "indoor": True,
@@ -109,8 +109,8 @@ class TestInferParametersNode:
             }
         }
         result = infer_parameters_node(state)
-        assert result.get("inferred_pixel_pitch_min_mm") == 1.5
-        assert result.get("inferred_pixel_pitch_max_mm") == 3.0
+        assert result.get("inferred_pixel_pitch_min_mm") == 3.0
+        assert result.get("inferred_pixel_pitch_max_mm") == 10.0
 
     def test_explicit_pitch_wins_over_inference(self):
         """客户指定 P2.5 时，推断值不得覆盖客户明确值"""

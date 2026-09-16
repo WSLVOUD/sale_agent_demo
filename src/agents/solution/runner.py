@@ -88,6 +88,39 @@ def _extract_requirements(message: str, existing: Dict = None) -> Dict[str, Any]
     return extract_requirements(message, existing or {})
 
 
+def merge_fast_path_constraints(
+    inferred: Dict[str, Any] | None,
+    requirements: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    """把 Sales 累加需求里的硬约束并进 fast path 的约束里。
+
+    实测 bug：客户前面已经说了"室外 + 租赁"，后面只回一句 "P3" 时，fast path
+    只用"本条消息"抽到的点间距约束 → 给室外租赁推荐了室内型号
+    （TW11-3216 / TW21-3216），随后又被回复清洗器删掉，最后退化成
+    "请放宽某个条件"的兜底话术。
+    """
+    constraints = dict(inferred or {})
+    accumulated = requirements or {}
+
+    if accumulated.get("display_type") and not constraints.get("display_type"):
+        constraints["display_type"] = accumulated["display_type"]
+
+    location = str(accumulated.get("location_type") or "")
+    if accumulated.get("outdoor") is True or location in ("室外", "户外", "露天"):
+        constraints.setdefault("outdoor", True)
+        constraints.setdefault("indoor", False)
+    elif accumulated.get("indoor") is True or location in ("室内", "户内"):
+        constraints.setdefault("indoor", True)
+        constraints.setdefault("outdoor", False)
+
+    if accumulated.get("is_rental") is True:
+        constraints.setdefault("is_rental", True)
+    elif accumulated.get("is_rental") is False:
+        constraints.setdefault("is_rental", False)
+
+    return constraints
+
+
 class SolutionAgentRunner:
     """Runner class for the Solution Agent.
     
@@ -132,6 +165,7 @@ class SolutionAgentRunner:
         requirements: Dict[str, Any] = None,
         additional_requirements: List[str] = None,
         profile: Any = None,
+        session_id: str = "",
     ) -> SolutionState:
         """Build the initial state for the agent."""
         # Normalize history
@@ -197,6 +231,7 @@ class SolutionAgentRunner:
             current_intent = detect_intent(message)
 
         return {
+            "session_id": session_id,
             "messages": history + [{"role": "user", "content": message}],
             "requirement": merged_requirement,
             # 【M7】Sales 的 RequirementProfile 直接进入 Solution state，
@@ -242,6 +277,7 @@ class SolutionAgentRunner:
         requirements: Dict[str, Any] = None,
         additional_requirements: List[str] = None,
         profile: Any = None,
+        session_id: str = "",
     ) -> Dict[str, Any]:
         """Run the agent with a user message.
 
@@ -276,9 +312,15 @@ class SolutionAgentRunner:
         if routing.route == QueryRoute.FAST:
             from src.config import config as _cfg
 
+            # 【修复】fast path 不能只用"本条消息里抽到的约束"，必须并上 Sales
+            # 已经收集的环境 / 安装方式 / 屏类型（见 merge_fast_path_constraints 注释）
+            fast_constraints = merge_fast_path_constraints(
+                routing.inferred_constraints, requirements
+            )
+
             fast_result = fast_path_handle(
                 query=message,
-                constraints=routing.inferred_constraints,
+                constraints=fast_constraints,
                 template_type=None,
                 data_dir=_cfg.DATA_DIR,
             )
@@ -294,7 +336,7 @@ class SolutionAgentRunner:
 
         # ── Step 2b: Agent Path ────────────────────────────────────────
         initial_state = self._build_initial_state(
-            message, history, requirements, additional_requirements, profile
+            message, history, requirements, additional_requirements, profile, session_id
         )
 
         # 将路由层提取的约束注入 agent state（避免 LLM 重复推理）
@@ -382,6 +424,7 @@ class SolutionAgentRunner:
         message: str,
         history: List[Dict[str, Any]] = None,
         profile: Any = None,
+        session_id: str = "",
     ):
         """Stream the agent response.
         
@@ -393,7 +436,9 @@ class SolutionAgentRunner:
             Response chunks
         """
         history = history or []
-        initial_state = self._build_initial_state(message, history, profile=profile)
+        initial_state = self._build_initial_state(
+            message, history, profile=profile, session_id=session_id
+        )
 
         for event in self.graph.stream(initial_state):
             for node_name, node_result in event.items():

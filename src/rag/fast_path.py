@@ -219,6 +219,7 @@ def fast_path_handle(
         template_used = True
 
     # 2. 如果有参数约束，查找匹配产品
+    search_attempted = False
     if constraints and any([
         constraints.get("pixel_pitch"),
         constraints.get("brightness_min"),
@@ -236,11 +237,15 @@ def fast_path_handle(
         constraints.get("hdr"),
     ]):
         try:
+            search_attempted = True
             matched = _find_models(constraints, data_dir, top_k=3)
             if matched:
                 products = matched
                 if not template_used:
                     answer_parts.append(_build_product_summary(matched))
+            elif not template_used:
+                # 约束下没有匹配 → 不说"没有产品"，改成邀请客户放宽某个条件
+                answer_parts.append(_build_product_summary(matched))
         except Exception as exc:
             logger.warning("Fast path product search failed: %s", exc)
 

@@ -53,8 +53,30 @@ class RecommendationService:
             }
 
         result = self.engine.recommend(profile=profile, top_k=top_k, require_ready=True)
-        result["recommendation_status"] = "RECOMMENDED"
+        # ── Phase 14：推荐依据（Best-effort 时标记 degraded）──────────────────
+        # 客户"不知道"的字段不再阻塞推荐，但推荐结果必须能说清：
+        #   - 依据了哪些已确认信息
+        #   - 哪些字段是系统推断的
+        #   - 哪些字段客户不知道（可能影响最终选型）
+        degraded = gate.status == "DEGRADED_READY"
+        unknown_slots = list(gate.unknown_slots)
+        try:
+            basis = profile.requirement_basis()
+        except Exception:  # pragma: no cover - 防御式
+            basis = {"confirmed": [], "inferred": [], "unknown": unknown_slots}
+        for slot in unknown_slots:
+            if slot not in basis.get("unknown", []):
+                basis.setdefault("unknown", []).append(slot)
+
+        result["recommendation_status"] = "DEGRADED" if degraded else "RECOMMENDED"
         result["missing_fields"] = []
+        result["recommendation_basis"] = {
+            "recommendation_status": result["recommendation_status"],
+            "confirmed_requirements": list(basis.get("confirmed") or []),
+            "inferred_requirements": list(basis.get("inferred") or []),
+            "unknown_requirements": list(basis.get("unknown") or []),
+        }
+        result["unknown_requirements"] = list(basis.get("unknown") or [])
         result["gate"] = gate.to_dict()
         return result
 

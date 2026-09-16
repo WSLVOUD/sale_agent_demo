@@ -166,6 +166,7 @@ class RecommendationEngine:
 
         # 第二道保险：调用方显式要求时，必须先过 Recommendation Ready Gate。
         # 统一入口 RecommendationService 会传 require_ready=True。
+        gate = None
         if require_ready:
             from src.rag.readiness import check_recommendation_ready
 
@@ -219,6 +220,12 @@ class RecommendationEngine:
             "violations": violations,
             "relaxed_model": relaxed.model if relaxed else None,
             "original_model": constraints.model,
+            # Phase 11/14：READY 或 DEGRADED_READY（部分字段客户不知道）
+            "recommendation_status": (
+                "DEGRADED" if gate is not None and gate.status == "DEGRADED_READY"
+                else "RECOMMENDED"
+            ),
+            "unknown_requirements": list(gate.unknown_slots) if gate is not None else [],
         }
         logger.info(
             "RecommendationEngine: candidates=%d top=%s violations=%d",

@@ -389,6 +389,13 @@ async def chat(request: ChatRequest, http_request: Request, api_key: str = Depen
 async def clear_memory(request: ClearMemoryRequest, api_key: str = Depends(_verify_api_key)):
     """清除指定会话的内存。"""
     memory.clear(request.session_id)
+    # 语义缓存是按会话隔离的，清会话时必须一起清（否则同名消息会复用旧上下文）
+    try:
+        from src.core.requirement_extractor import get_requirement_extractor
+
+        get_requirement_extractor().clear_session_semantics(request.session_id)
+    except Exception as error:  # pragma: no cover - 防御式
+        logger.warning("Clear semantic cache failed for %s: %s", request.session_id, error)
     return {
         "message": "Memory cleared",
         "session_id": request.session_id
@@ -505,6 +512,15 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
         # 【客户口径】没有匹配结果时不说"找不到"，改成邀请客户放宽某个条件
         from src.rag.reply_composer import relaxation_answer, reply_language
 
+        if result.get("products"):
+            # 有产品但清洗后为空：说明回复里全是"不该出现的内容"（例如给室外推荐了
+            # 室内型号被过滤掉）。这种情况要把日志留清楚，不要静默换成兜底话术。
+            logger.warning(
+                "Response was emptied by sanitizer while %d products were returned; "
+                "falling back to the relaxation request (session=%s)",
+                len(result.get("products") or []),
+                request.session_id,
+            )
         response_text = relaxation_answer(reply_language(request.question))
 
     logger.info("Response: %s...", response_text[:100])

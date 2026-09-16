@@ -71,8 +71,9 @@ class TestLlmBudget:
         result = pi.parameter_inference_node(_state())
 
         assert fake.calls == 0
-        assert result["inferred_pixel_pitch_min_mm"] == 1.5
-        assert result["inferred_pixel_pitch_max_mm"] == 3.0
+        # 业务规则：室内 >3m → P3 及以上（点间距区间 3.0~10.0mm）
+        assert result["inferred_pixel_pitch_min_mm"] == 3.0
+        assert result["inferred_pixel_pitch_max_mm"] == 10.0
 
     def test_reflection_never_calls_llm(self, monkeypatch):
         """Reflection 已改为确定性校验，不应再调用 LLM"""
@@ -144,6 +145,7 @@ class TestLlmBudget:
         result = recommend.recommend_node(state)
 
         # 未指定预算 → 默认最便宜 → TW11-3216 系列（low 档）
-        assert "TW11-3216-P2.5" in result["recommendation"]
+        # 室内 5m 按业务规则首选 P3
+        assert "TW11-3216-P3.0" in result["recommendation"]
         assert result["screen_calculation"]["cabinet_count"] == 56
         assert "56" in result["recommendation"]

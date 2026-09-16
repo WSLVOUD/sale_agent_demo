@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 MAX_MEMORY_SIZE = 50  # 每个会话最多保留的消息条数（短期记忆上限）
 
+# 进程内最多保留多少个会话。客户刷新页面 / 开新标签页都会新建 session_id，
+# 不设上限的话长期运行的服务会一直堆积（内存只增不减，只有重启才释放）。
+MAX_SESSIONS = 200
+
 
 def _normalize_role(role: str) -> str:
     """将 LangChain 的消息类型 (human/ai/system) 归一化为 user/assistant/system。"""
@@ -315,6 +319,13 @@ class MemoryStore:
                 "suppress_sales_greeting": False,
                 "recommendation": None,
             }
+            # LRU 淘汰：超出上限时丢掉最久未使用的会话，避免长时间运行内存无限增长
+            while len(self._sessions) > MAX_SESSIONS:
+                evicted, _ = self._sessions.popitem(last=False)
+                logger.info("Evicted least-recently-used session: %s", evicted)
+        else:
+            # 被访问过 → 移到队尾（OrderedDict 的 LRU 语义）
+            self._sessions.move_to_end(session_id)
 
     def _set(self, session_id: str, value: Any) -> None:
         """统一处理旧的 dict-like 赋值，使数据格式归一。"""

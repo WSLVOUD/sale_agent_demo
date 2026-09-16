@@ -199,18 +199,86 @@ QUESTION_VARIANTS: Dict[str, Dict[str, tuple[str, ...]]] = {
     },
 }
 
+# ── Phase 7：第二次追问的"降低门槛"问法 ─────────────────────────────────
+# 客户第一次说"不知道"之后，第二次要给区间 / 二选一，让他更容易回答；
+# 客户可以用"大概/大约/更远/更近/10 米以上"这种模糊说法回答。
+EASIER_QUESTIONS: Dict[str, Dict[str, tuple[str, ...]]] = {
+    "viewing_distance": {
+        "en": (
+            "That's okay — even a rough idea helps. Will viewers be fairly close to the screen, "
+            "or more than about 10 metres away?",
+            "No problem at all. Roughly speaking, is the audience within about 5 metres, "
+            "5–10 metres, or further than 10 metres?",
+            "Even an approximation is fine — closer than 5 m, around 5–10 m, or more than 10 m?",
+        ),
+        "zh": (
+            "没关系，大概范围就行 —— 观众离屏幕是 5 米以内、5~10 米，还是 10 米以上？",
+            "不清楚也没关系，给个大概：观众是坐得比较近，还是 10 米开外？",
+        ),
+    },
+    "installation": {
+        "en": (
+            "That's fine — is this going to stay put permanently, or is it something you rent "
+            "for events?",
+            "If you are not sure, just tell me: long-term fixed install, or short-term rental?",
+        ),
+        "zh": (
+            "不确定也没关系 —— 是长期固定安装，还是短期租赁使用？",
+        ),
+    },
+    "size": {
+        "en": (
+            "No problem if you have not measured it — do you have a rough idea of the width, "
+            "even approximately?",
+            "Even an approximate width is helpful — is it closer to 3 m, 5 m, or wider?",
+        ),
+        "zh": (
+            "没量过也没关系 —— 大概宽度是多少？3 米左右、5 米左右，还是更宽？",
+        ),
+    },
+    "environment": {
+        "en": (
+            "That's okay — most installations are indoors. Will this one be indoors, or outside?",
+        ),
+        "zh": (
+            "没关系 —— 大多数项目是室内，这一块装在室内还是室外？",
+        ),
+    },
+    "purpose": {
+        "en": (
+            "No problem — even the general setting helps. Is it more like a meeting room / "
+            "classroom, a retail space, or an advertising venue?",
+        ),
+        "zh": (
+            "没关系，说个大概就行 —— 更像会议室/教室、门店零售，还是广告类场景？",
+        ),
+    },
+}
 
-def question_for(slot: Optional[str], language: str = "en", seed: int = 0) -> Optional[str]:
+
+def question_for(
+    slot: Optional[str],
+    language: str = "en",
+    seed: int = 0,
+    easier: bool = False,
+) -> Optional[str]:
     """按槽位取一句问法；同一槽位的不同问法语义完全一致。
 
     ``seed`` 用于轮换：同一次会话里每问一次就换一种说法，
     保证"问的内容不变、措辞不重复"。
+
+    ``easier=True``：第二次问同一个槽位时"降低回答门槛"（给区间 / 二选一），
+    不允许机械重复第一遍的问法（Phase 7）。
     """
     if not slot:
         return None
-    variants = (QUESTION_VARIANTS.get(slot) or {}).get(language) or ()
-    if not variants:
-        variants = (QUESTION_VARIANTS.get(slot) or {}).get("en") or ()
+    table = EASIER_QUESTIONS if easier else QUESTION_VARIANTS
+    variants = (table.get(slot) or {}).get(language) or (table.get(slot) or {}).get("en") or ()
+    if not variants and easier:
+        # 没有专门的"降门槛"说法 → 退回普通问法
+        variants = (QUESTION_VARIANTS.get(slot) or {}).get(language) or (
+            QUESTION_VARIANTS.get(slot) or {}
+        ).get("en") or ()
     if not variants:
         label = MISSING_LABELS.get(slot, slot)
         return f"Could you tell me {label}?"
@@ -226,6 +294,9 @@ class GateDecision:
     missing: List[str] = field(default_factory=list)
     reason: str = ""
     next_question: Optional[str] = None
+    # Phase 11：READY / CONTINUE_ASKING / DEGRADED_READY
+    status: str = ""
+    unknown_slots: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -234,6 +305,8 @@ class GateDecision:
             "missing": list(self.missing),
             "reason": self.reason,
             "next_question": self.next_question,
+            "status": self.status or ("READY" if self.ready else "CONTINUE_ASKING"),
+            "unknown_slots": list(self.unknown_slots),
         }
 
 
@@ -356,6 +429,7 @@ def check_recommendation_ready(
         return GateDecision(
             ready=True, gate="recommendation",
             reason="客户已点名型号/系列",
+            status="READY",
         )
 
     # 2) 客户明确给出技术规格（点间距 / 亮度）
@@ -364,6 +438,7 @@ def check_recommendation_ready(
         return GateDecision(
             ready=True, gate="recommendation",
             reason="客户已明确给出技术规格（点间距/亮度）",
+            status="READY",
         )
 
     # 3) 场景充分：室内外 + 场景 + 安装方式 + 观看距离
@@ -396,22 +471,50 @@ def check_recommendation_ready(
     elif not _is_confirmed(profile, "viewing_distance_m"):
         missing.append("viewing_distance")
 
-    if missing:
-        first = _first_missing(missing)
+    # ── Phase 11/12：字段级 Unknown 容错 ────────────────────────────────
+    # 已经问满两次（或客户明确跳过）仍然没有值的字段 → unknown，不再阻塞推荐。
+    unknown_slots = [slot for slot in missing if profile.is_unknown(slot)]
+    blocking = [slot for slot in missing if slot not in unknown_slots]
+
+    if blocking:
+        first = _first_missing(blocking)
+        # Phase 7：同一个字段第二次提问时要降低回答门槛（给区间 / 二选一）
+        easier = profile.ask_count(first) >= 1
         question = (
             _size_axis_question(profile, language, variant_seed)
             if first == "size_axis"
             else None
-        ) or question_for(first, language, variant_seed)
+        ) or question_for(first, language, variant_seed, easier=easier)
         return GateDecision(
-            ready=False, gate="recommendation", missing=missing,
-            reason="信息不足以做可靠选型：" + ", ".join(missing),
-            next_question=question,
+            ready=False, gate="recommendation", missing=blocking,
+            reason="信息不足以做可靠选型：" + ", ".join(blocking),
+            next_question=question, status="CONTINUE_ASKING",
+            unknown_slots=unknown_slots,
+        )
+
+    if unknown_slots:
+        # 核心信息（场景 / 环境）至少要有其一，否则没有选型依据
+        has_basis = bool(getattr(profile, "purpose", None)) or bool(
+            getattr(profile, "environment", None)
+        )
+        if has_basis:
+            return GateDecision(
+                ready=True, gate="recommendation",
+                reason="按已确认信息做 Best-effort 推荐（部分字段客户不知道："
+                       + ", ".join(unknown_slots) + "）",
+                status="DEGRADED_READY", unknown_slots=unknown_slots,
+            )
+        return GateDecision(
+            ready=False, gate="recommendation", missing=unknown_slots,
+            reason="核心信息（场景/室内外）客户也未确认，暂时没有选型依据",
+            next_question=question_for("purpose", language, variant_seed, easier=True),
+            status="CONTINUE_ASKING", unknown_slots=unknown_slots,
         )
 
     return GateDecision(
         ready=True, gate="recommendation",
         reason="环境 + 场景 + 安装方式 + 观看距离齐备",
+        status="READY",
     )
 
 

@@ -20,9 +20,15 @@ class LEDChatApp {
     }
     
     init() {
-        // 获取或创建会话ID
-        this.sessionId = localStorage.getItem('led_session_id') || this.generateSessionId();
-        localStorage.setItem('led_session_id', this.sessionId);
+        // 会话 ID 放在 sessionStorage：**每个标签页一个独立会话**。
+        //  - 新开标签页 → 全新对话（不会跟别的对话框共用上下文）
+        //  - 刷新当前标签页 → 还是本标签页的对话，并会把历史渲染回来
+        // 旧实现用 localStorage，导致所有标签页共用一个 session_id：
+        // 在一个对话框里聊的内容会出现在另一个对话框里。
+        this.sessionId = sessionStorage.getItem('led_session_id') || this.generateSessionId();
+        sessionStorage.setItem('led_session_id', this.sessionId);
+        // 清掉历史遗留的 localStorage 键，避免旧版本继续复用同一个会话
+        localStorage.removeItem('led_session_id');
         
         // 绑定事件
         this.sendBtn.addEventListener('click', () => this.sendMessage());
@@ -51,6 +57,10 @@ class LEDChatApp {
         
         // 检查API状态
         this.checkApiStatus();
+
+        // 刷新后恢复本会话的历史（否则界面空白、但服务端还在这个会话里，
+        // 看起来就像"AI 还记得别的对话"）
+        this.restoreHistory();
         
         // 聚焦输入框
         this.messageInput.focus();
@@ -107,22 +117,60 @@ class LEDChatApp {
                 this.sendMessage();
             });
         });
+        // 上面的 innerHTML 重建了欢迎界面，引用要重新取（旧节点已经脱离文档）
+        this.welcomeScreen = document.getElementById('welcome-screen');
         
         // 创建新会话
+        const previousSessionId = this.sessionId;
         this.sessionId = this.generateSessionId();
-        localStorage.setItem('led_session_id', this.sessionId);
+        sessionStorage.setItem('led_session_id', this.sessionId);
         this.clearMemory();
+        // 旧会话也从服务端清掉，避免长时间运行后内存里堆积一堆没人用的会话
+        if (previousSessionId && previousSessionId !== this.sessionId) {
+            this.clearMemoryFor(previousSessionId);
+        }
     }
     
     async clearMemory() {
+        await this.clearMemoryFor(this.sessionId);
+    }
+
+    async clearMemoryFor(sessionId) {
+        if (!sessionId) return;
         try {
             await fetch(`${this.apiBase}/memory/clear`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: this.sessionId })
+                body: JSON.stringify({ session_id: sessionId })
             });
         } catch (error) {
             console.error('清除记忆失败:', error);
+        }
+    }
+
+    async restoreHistory() {
+        if (!this.sessionId) return;
+        try {
+            const response = await fetch(
+                `${this.apiBase}/memory/${encodeURIComponent(this.sessionId)}`
+            );
+            if (!response.ok) return;
+            const data = await response.json();
+            const messages = data.messages || [];
+            if (!messages.length) return;
+
+            const welcome = document.getElementById('welcome-screen');
+            if (welcome) welcome.remove();
+            this.welcomeScreen = null;
+            for (const msg of messages) {
+                if (msg.role === 'user') {
+                    this.addMessage('user', msg.content);
+                } else if (msg.role === 'assistant') {
+                    this.addMessage('ai', msg.content);
+                }
+            }
+        } catch (error) {
+            console.error('恢复会话历史失败:', error);
         }
     }
     
@@ -131,9 +179,9 @@ class LEDChatApp {
         if (!question || this.isLoading) return;
         
         // 移除欢迎界面
-        if (this.welcomeScreen) {
-            this.welcomeScreen.remove();
-        }
+        const welcome = document.getElementById('welcome-screen');
+        if (welcome) welcome.remove();
+        this.welcomeScreen = null;
         
         // 添加用户消息
         this.addMessage('user', question);
