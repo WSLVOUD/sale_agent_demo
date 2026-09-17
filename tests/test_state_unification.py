@@ -36,7 +36,11 @@ class TestCase1InsufficientRequirements:
 
 
 class TestCase2Church:
-    """Case 2：church → environment=indoor，来源 scenario_derived，不再问室内外。"""
+    """Case 2：church → environment=indoor（来源 scenario_derived），并主动确认一次。
+
+    客户口径（2026-09-17）：场景只是"系统推断"，不等于客户说过 ——
+    所以先跟客户确认一次室内/室外（确认型问法），问过一次就沿用场景默认值。
+    """
 
     def test_church_settles_indoor(self):
         profile = _profile("We need a display for a church.")
@@ -45,8 +49,15 @@ class TestCase2Church:
         assert profile.status["environment"] == "confirmed"
 
         decision = check_recommendation_ready(profile)
-        assert "environment" not in decision.missing
+        # 只推断没确认 → 主动跟客户核对一次
+        assert "environment" in decision.missing
+        assert "indoor" in (decision.next_question or "").lower()
         assert not decision.ready  # 还缺安装方式 / 观看距离
+
+        # 问过一次之后就不再拦流程，直接沿用场景默认值
+        profile.record_ask("environment")
+        decision = check_recommendation_ready(profile)
+        assert "environment" not in decision.missing
 
 
 class TestCase3Stadium:
@@ -111,6 +122,21 @@ class TestCase6MultiTurnProfileAccumulates:
         assert profile.environment == "indoor"
         assert profile.installation == "fixed"
         assert profile.viewing_distance_m == pytest.approx(5.0)
+        # 客户口径：推荐前还要知道内容类型与"价格/质量"取向
+        assert check_recommendation_ready(profile).ready is False
+        profile = profile.merge(
+            RequirementProfile.from_slots(
+                {"content_type": "mixed", "price_preference": "price"},
+                explicit_keys={"content_type", "price_preference"},
+            )
+        )
+        # 环境是场景推断来的 → 还要跟客户确认一次（确认型问法），问过一次才放行
+        decision = check_recommendation_ready(profile)
+        assert decision.ready is False
+        assert decision.missing == ["environment"]
+        assert "indoor" in (decision.next_question or "").lower()
+
+        profile.record_ask("environment")
         assert check_recommendation_ready(profile).ready is True
 
     def test_merge_slots_keeps_provenance_markers(self):

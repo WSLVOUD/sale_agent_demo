@@ -24,6 +24,7 @@ def _confirmed(slots: dict) -> RequirementProfile:
 
 RECOMMEND_READY = {
     "environment": "indoor", "purpose": "church",
+    "content_type": "mixed", "price_preference": "price",
     "installation": "fixed", "viewing_distance_m": 5,
 }
 

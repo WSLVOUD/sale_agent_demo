@@ -383,6 +383,10 @@ class LEDChatApp {
             } else {
                 // 普通回复
                 this.addMessage('ai', data.answer);
+                // 追加的独立气泡（例如推荐完产品后单独再发一条询问联系方式）
+                for (const extra of (data.extra_messages || [])) {
+                    if (extra) this.addMessage('ai', extra);
+                }
             }
             
         } catch (error) {

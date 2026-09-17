@@ -66,3 +66,52 @@ class TestFastPathReturnsModels:
         index = canonical_model_index(config.DATA_DIR)
         for item in waterproof.get("products") or []:
             assert index[item["model"]].waterproof is True
+
+
+class TestFastPathDoesNotBypassSceneContext:
+    """回归：已采集到场景需求的会话，不能被判成 FAST。
+
+    实测 bug：客户已经说了"教堂 + 室内 + 5m"，后面回一句
+    "video mainly. we care about price"（命中 price 参数词）被判成 FAST，
+    绕过"环境 + 观看距离 → 点间距"规则表，把室内 5m 推成 P0.7H，
+    而且 fast path 不会追问屏体尺寸。
+    """
+
+    @staticmethod
+    def _profile():
+        from src.models.requirement import RequirementProfile
+
+        slots = {
+            "display_type": "LED", "environment": "indoor", "purpose": "church",
+            "installation": "fixed", "viewing_distance_m": 5,
+        }
+        return RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+
+    def test_bare_param_query_still_fast_without_context(self):
+        """没有场景上下文时，"纯参数词"仍然是 FAST（保持老行为）。"""
+        assert classify_complexity("we care about price").route.value == "fast"
+
+    def test_scene_context_never_takes_fast_path(self):
+        from src.models.legacy_adapter import profile_to_legacy
+
+        requirements = profile_to_legacy(self._profile())
+        routing = classify_complexity(
+            "video mainly. we care about price", existing_requirements=requirements
+        )
+        assert routing.route.value != "fast", routing
+        assert routing.route.value == "normal", routing
+
+    def test_solution_runner_derives_requirements_from_profile(self):
+        """Orchestrator 只传 profile 时，路由也必须看到场景上下文。"""
+        from src.agents.solution.runner import routing_requirements
+
+        assert routing_requirements(None, None) is None
+
+        derived = routing_requirements(None, self._profile())
+        assert derived, "应当从 profile 派生出一份 legacy 需求视图"
+        assert derived.get("usage") == "church"
+        assert derived.get("location_type") == "室内"
+
+        # 调用方已经传了 requirements → 原样使用，不被 profile 覆盖
+        explicit = {"usage": "showroom"}
+        assert routing_requirements(explicit, self._profile()) is explicit

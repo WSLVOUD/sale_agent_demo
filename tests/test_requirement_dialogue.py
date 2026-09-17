@@ -102,7 +102,8 @@ class TestInferredValuesMustNotTriggerRecommendation:
         assert turn["should_generate_solution"] is False
 
     def test_explicit_installation_and_distance_do_recommend(self, sales_llm):
-        turn = _run_turn(sales_llm, "室内会议室，固定安装，5米视距")
+        # 客户口径：推荐前还要知道"内容类型"与"价格/质量取向"
+        turn = _run_turn(sales_llm, "室内会议室，固定安装，5米视距，放视频为主，价格优先")
         assert turn["should_generate_solution"] is True
         profile = turn["requirement_profile"]
         assert profile.sources.get("installation") == "explicit"
@@ -151,8 +152,11 @@ class TestScenario1NotTooEarly:
             )
         )
         assert decision.ready is False
-        # 客户口径：点间距 / 观看距离都不知道时，先问点间距
-        assert set(decision.missing) == {"installation", "pixel_pitch", "viewing_distance"}
+        # 客户口径：场景之后问内容类型；点间距 / 观看距离都不知道时，先问点间距
+        assert set(decision.missing) == {
+            "content_type", "installation", "pixel_pitch", "viewing_distance", "price_preference",
+        }
+        assert decision.missing.index("content_type") < decision.missing.index("installation")
         assert decision.missing.index("pixel_pitch") < decision.missing.index("viewing_distance")
 
     def test_missing_is_asked_in_priority_order(self):
@@ -168,7 +172,8 @@ class TestScenario2Recommend:
         """v2.0 Case 3"""
         slots = {
             "environment": "indoor", "purpose": "conference",
-            "installation": "fixed", "viewing_distance_m": 5,
+            "content_type": "mixed", "installation": "fixed", "viewing_distance_m": 5,
+            "price_preference": "price",
         }
         decision = check_recommendation_ready(
             RequirementProfile.from_slots(slots, explicit_keys=set(slots))
@@ -177,9 +182,10 @@ class TestScenario2Recommend:
         assert decision.missing == []
 
     def test_explicit_specs_are_ready_without_distance(self):
-        """v2.0 Case 4：客户直接给出点间距即可推荐"""
+        """v2.0 Case 4：客户直接给出点间距（+ 价格/质量取向）即可推荐"""
         slots = {
             "environment": "indoor", "installation": "fixed", "pixel_pitch_mm": 2.5,
+            "price_preference": "price",
         }
         decision = check_recommendation_ready(
             RequirementProfile.from_slots(slots, explicit_keys=set(slots))
@@ -251,6 +257,9 @@ class TestScenario5bSizeDoesNotChangeSelection:
             slots = dict(case.get("slots") or {})
             if not slots:
                 continue
+            # 客户口径：推荐前还需要"内容类型"与"价格/质量取向"（都不改变本断言的结论）
+            slots.setdefault("content_type", "mixed")
+            slots.setdefault("price_preference", "price")
             profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
             if not check_recommendation_ready(profile).ready:
                 continue
@@ -299,24 +308,46 @@ class TestScenario6MultiTurn:
         requirements = dict(turn["requirements"])
         messages = list(turn["messages"])
 
-        # 第 3 轮：给出安装方式 → 仍缺观看距离，继续追问
+        # 第 3 轮：客户口径 —— 场景之后先问"放视频还是放图片"
+        turn = _run_turn(sales_llm, "Both video and images", requirements, messages)
+        assert turn["should_generate_solution"] is False
+        assert turn["requirement_profile"].content_type == "mixed"
+        asked.append(turn.get("pending_question"))
+        requirements = dict(turn["requirements"])
+        messages = list(turn["messages"])
+
+        # 第 4 轮：给出安装方式 → 仍缺点间距/观看距离，继续追问
         turn = _run_turn(sales_llm, "Fixed installation", requirements, messages)
         assert turn["should_generate_solution"] is False
         asked.append(turn.get("pending_question"))
         requirements = dict(turn["requirements"])
         messages = list(turn["messages"])
 
-        # 第 4 轮：补观看距离 → Gate 放行
+        # 第 5 轮：点间距不知道 → 只问一次，转问观看距离
+        turn = _run_turn(sales_llm, "I don't know", requirements, messages)
+        assert turn["should_generate_solution"] is False
+        asked.append(turn.get("pending_question"))
+        requirements = dict(turn["requirements"])
+        messages = list(turn["messages"])
+
+        # 第 6 轮：补观看距离 → 还差"价格/质量"取向
         turn = _run_turn(sales_llm, "Viewing distance is about 5 meters", requirements, messages)
+        assert turn["should_generate_solution"] is False
+        asked.append(turn.get("pending_question"))
+        requirements = dict(turn["requirements"])
+        messages = list(turn["messages"])
+
+        # 第 7 轮：价格/质量取向 → Gate 放行
+        turn = _run_turn(sales_llm, "Price matters more to me", requirements, messages)
         assert turn["should_generate_solution"] is True, (
-            f"四类信息齐备后应触发推荐；已问过: {asked}"
+            f"信息齐备后应触发推荐；已问过: {asked}"
         )
 
     def test_explicit_specs_shortcut_the_dialogue(self, sales_llm):
         """客户一上来就给足规格 → 第一轮即推荐"""
         turn = _run_turn(
             sales_llm,
-            "I need an indoor fixed LED screen, P2.5, for a conference room",
+            "I need an indoor fixed LED screen, P2.5, for a conference room, price matters more",
             {},
             [],
         )
@@ -388,7 +419,9 @@ class TestCloseAnswerIsNotClosing:
             "display_type": "LED",
             "environment": "indoor",
             "purpose": "conference",
+            "content_type": "mixed",
             "installation": "fixed",
+            "price_preference": "price",
             "viewing_distance_m": 3,
         }
         return RequirementProfile.from_slots(slots, explicit_keys=set(slots))
@@ -439,8 +472,9 @@ class TestPitchAskedBeforeDistance:
     """
 
     def _profile_without_pitch(self):
+        # 只缺点间距与观看距离（其它都已确认，这样"先问点间距"才看得出来）
         slots = {"display_type": "LED", "environment": "indoor", "purpose": "conference",
-                 "installation": "fixed"}
+                 "content_type": "mixed", "installation": "fixed", "price_preference": "price"}
         return RequirementProfile.from_slots(slots, explicit_keys=set(slots))
 
     def _turn(self, module, message, profile):
@@ -549,7 +583,9 @@ class TestAfterRecommendationMustAnswer:
             "display_type": "LED",
             "environment": "indoor",
             "purpose": "conference",
+            "content_type": "mixed",
             "installation": "fixed",
+            "price_preference": "price",
             "viewing_distance_m": 5,
             "target_width_mm": 3000,
             "target_height_mm": 5000,
@@ -593,9 +629,9 @@ class TestAfterRecommendationMustAnswer:
             "requirement_profile": profile or self._ready_profile(),
         }
 
-    def test_agent_question_is_not_re_recommended(self, sales_llm):
+    def test_agent_question_is_not_re_recommended(self, no_usage_llm):
         state = self._state("你们在肯尼亚有代理商吗？")
-        out = sales_llm.requirement_mining(state)
+        out = no_usage_llm.requirement_mining(state)
 
         assert out["should_generate_solution"] is False, "客户在提问，不该又推荐一遍"
         assert out["intent"] == "others", "提问必须留给回答问题的路径"
@@ -606,12 +642,12 @@ class TestAfterRecommendationMustAnswer:
         out = no_usage_llm.requirement_mining(state)
         assert out["intent"] != "need_query"
 
-    def test_company_question_gets_company_answer(self, sales_llm):
+    def test_company_question_gets_company_answer(self, no_usage_llm):
         """端到端（节点级）：代理商问题必须由公司信息回答，含"自有工厂 + 成本"。"""
         from src.agents.sales.nodes.script_generator import script_generator
 
         state = self._state("你们在肯尼亚有代理商吗？")
-        state = sales_llm.requirement_mining(state)
+        state = no_usage_llm.requirement_mining(state)
         state = script_generator(state)
 
         assert state["next_action"] == "ask"
@@ -723,7 +759,11 @@ class TestReplayOfReportedConversation:
 
         # 第 1 轮：客户发图 + "i need a display like this"
         # （图片结果由视觉模块合并进档案：LED / indoor / conference）
-        vision_slots = {"display_type": "LED", "environment": "indoor", "purpose": "conference"}
+        # 另外照新流程把"内容类型 / 价格取向"也当作已确认（这两项不影响本用例要看的行为）
+        vision_slots = {
+            "display_type": "LED", "environment": "indoor", "purpose": "conference",
+            "content_type": "mixed", "price_preference": "price",
+        }
         profile = RequirementProfile.from_slots(vision_slots, explicit_keys=set(vision_slots))
 
         turn = self._turn(sales_req, "i need a display like this", profile)
@@ -793,8 +833,8 @@ class TestSolutionGraphGate:
         result = recommendation_gate_node({
             "requirement": {},
             # Gate 只信"客户原话"：把事实放进用户消息，而不是 requirement
-            "messages": [{"role": "user", "content": "室内会议室5米视距，固定安装"}],
-            "current_message": "室内会议室5米视距，固定安装",
+            "messages": [{"role": "user", "content": "室内会议室5米视距，固定安装，放视频为主，价格优先"}],
+            "current_message": "室内会议室5米视距，固定安装，放视频为主，价格优先",
         })
         assert result["next_action"] == "retrieve"
         assert result["recommendation_gate"]["ready"] is True
@@ -853,7 +893,9 @@ class TestObviousSceneSettlesEnvironment:
     """实测反馈：客户说了 "It for church"，系统还在追问"室内还是室外"。
 
     规则：会议室 / 教室 / 教堂 / 展厅 / 机场… = 室内，户外广告 / 体育场 = 室外，
-    这类"一眼就能定"的场景直接落定环境；舞台 / 演唱会 / 租赁仍然要问。
+    这类"一眼就能定"的场景直接把环境**填好**（scenario_derived）；但因为这是
+    系统推断的，客户口径（2026-09-17）要求**再主动确认一次**，问过一次就放行；
+    舞台 / 演唱会 / 租赁这类室内外都可能的场景仍然要问。
     """
 
     def _fake_llm(self, monkeypatch, usage: str):
@@ -890,7 +932,12 @@ class TestObviousSceneSettlesEnvironment:
         }
         return sales_req.requirement_mining(state)
 
-    def test_church_fills_indoor_and_moves_on(self, monkeypatch):
+    def test_church_fills_indoor_then_asks_to_confirm(self, monkeypatch):
+        """客户口径（2026-09-17）：场景推断出的环境要先确认一次。
+
+        客户只说了 church，环境是**系统推断**的（scenario_derived，不再算"客户明说"），
+        所以这一轮先跟客户核对室内/室外；客户答了就以客户为准，没答就沿用场景默认值。
+        """
         sales_req = self._fake_llm(monkeypatch, "church")
         result = self._turn(
             sales_req, "It for church", {"display_type": "LED", "size": "10米x5米"}
@@ -898,19 +945,20 @@ class TestObviousSceneSettlesEnvironment:
 
         profile = result["requirement_profile"]
         assert profile.environment == "indoor"
-        assert profile.sources.get("environment") == "explicit"
-        # 不再问室内外，改问下一个关键项（安装方式）
-        assert result["pending_slot"] == "installation"
-        assert "indoor" not in result["pending_question"].lower()
+        assert profile.sources.get("environment") == "scenario_derived"
+        assert result["pending_slot"] == "environment"
+        assert "indoor" in result["pending_question"].lower()
         assert result["should_generate_solution"] is False
 
-    def test_outdoor_advertising_fills_outdoor(self, monkeypatch):
+    def test_outdoor_advertising_fills_outdoor_then_confirms(self, monkeypatch):
         sales_req = self._fake_llm(monkeypatch, "outdoor advertising")
-        result = self._turn(sales_req, "outdoor advertising screen", {"display_type": "LED"})
+        # 注意：客户这轮没有直接说 "outdoor" 这个词，环境是系统从场景推断的
+        result = self._turn(sales_req, "advertising screen", {"display_type": "LED"})
 
         profile = result["requirement_profile"]
         assert profile.environment == "outdoor"
-        assert result["pending_slot"] != "environment"
+        assert profile.sources.get("environment") == "scenario_derived"
+        assert result["pending_slot"] == "environment"
 
     def test_stage_still_asks_environment(self, monkeypatch):
         """舞台 / 演唱会室内外都可能 → 必须继续问。"""

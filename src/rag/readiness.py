@@ -29,9 +29,11 @@ MISSING_LABELS: Dict[str, str] = {
     "display_type": "the display type (LED, LCD or IFP)",
     "environment": "whether it will be installed indoors or outdoors",
     "purpose": "the application scenario (meeting room, retail, advertising ...)",
+    "content_type": "whether the screen will play video, show images, or both",
     "installation": "whether it is a fixed installation or for rental/events",
     "pixel_pitch": "the pixel pitch you have in mind (P2.5, P3, P5 ...)",
     "viewing_distance": "roughly how far viewers will stand from the screen",
+    "price_preference": "whether the price or the quality matters more to you",
     "width": "the target screen width",
     "height": "the target screen height",
     "size_axis": "whether that measurement is the width, the height or the diagonal",
@@ -44,6 +46,8 @@ MISSING_ORDER: tuple[str, ...] = (
     "size_axis",
     "environment",
     "purpose",
+    # 客户口径：问完场景，紧接着问"放视频还是放图片"（只记录，不影响选型）
+    "content_type",
     "installation",
     # 点间距先于观看距离：客户知道自己要什么 P 值就听客户的；
     # 客户不知道再用观看距离反推（客户口径）。
@@ -52,6 +56,8 @@ MISSING_ORDER: tuple[str, ...] = (
     "display_type",
     "width",
     "height",
+    # 推荐前最后一问：最看重价格还是质量（客户已说过预算就不问）
+    "price_preference",
 )
 
 # ── 提问话术：同一件事的多种自然说法 ─────────────────────────────────────────
@@ -92,6 +98,21 @@ QUESTION_VARIANTS: Dict[str, Dict[str, tuple[str, ...]]] = {
             "方便说下主要的使用场景吗？",
             "这块屏主要用在什么场合？",
             "使用场景是哪一类，会议室、教室、门店还是广告？",
+        ),
+    },
+    # 问完场景紧接着问内容类型（视频 / 图片 / 两者都有）——只记录，不影响选型
+    "content_type": {
+        "en": (
+            "Will the screen mainly play video, show images, or a mix of both?",
+            "Is it mainly for video content, for images, or both?",
+            "What will you mostly show on it — video, images, or a bit of both?",
+            "Will you be playing video, displaying images, or doing both on this screen?",
+        ),
+        "zh": (
+            "这块屏主要是放视频、放图片，还是两者都有？",
+            "内容上主要是播放视频、显示图片，还是两种都有？",
+            "平时主要放视频、放图片，还是两种都有？",
+            "视频、图片，还是两者都有？",
         ),
     },
     "installation": {
@@ -218,12 +239,86 @@ QUESTION_VARIANTS: Dict[str, Dict[str, tuple[str, ...]]] = {
             "为了排箱体，{value} 是宽、高还是对角线？",
         ),
     },
+    # 推荐前最后一问：最看重价格还是质量（不问数字，只问取向）
+    "price_preference": {
+        "en": (
+            "Before I lock in a model — which matters more to you, price or quality?",
+            "One quick question: do you care more about the price, or about the quality?",
+            "Should I optimise for the best price, or for the best quality?",
+            "What matters more for this project — keeping the price down, or getting the best quality?",
+        ),
+        "zh": (
+            "推荐之前问一句：您更看重价格，还是质量？",
+            "选型前确认一下：您更在意价格，还是更在意效果质量？",
+            "您更希望我优先控制价格，还是优先保证质量？",
+            "价格和质量，哪个对您更重要？",
+        ),
+    },
 }
+
+# ── 环境"确认"问法 ──────────────────────────────────────────────────────
+# 客户只说了场景（教堂 / 会议室 / 商场 / 广告牌…）时，环境是**系统从场景推断**的，
+# 不等于客户说过。这时主动跟客户确认一次，问法要带上"我在跟你核对"的语气，
+# 而不是像什么都没听到一样重新问一遍。
+CONFIRM_QUESTION_VARIANTS: Dict[str, Dict[str, tuple[str, ...]]] = {
+    "environment": {
+        "en": (
+            "Just to double-check — will this be an indoor or an outdoor setup?",
+            "Before I pick a model, let me confirm the setting: indoors or outdoors?",
+            "Quick check on my side — is this going indoors, or outdoors?",
+            "So I don't guess wrong — indoor installation, or outdoor?",
+        ),
+        "zh": (
+            "先跟您核对一下 —— 这块屏是装在室内还是室外？",
+            "选型前确认一下使用环境：室内还是室外？",
+            "我这边先确认一句：是室内安装还是室外安装？",
+            "别搞错了方向 —— 室内用还是室外用？",
+        ),
+    },
+}
+
+
+def environment_confirm_question(
+    language: str = "en",
+    variant_seed: int = 0,
+):
+    """场景推断出环境时用的"确认型"问法（意思与普通环境问题一致）。"""
+    variants = (
+        CONFIRM_QUESTION_VARIANTS["environment"].get(language)
+        or CONFIRM_QUESTION_VARIANTS["environment"]["en"]
+    )
+    return variants[variant_seed % len(variants)]
+
 
 # ── Phase 7：第二次追问的"降低门槛"问法 ─────────────────────────────────
 # 客户第一次说"不知道"之后，第二次要给区间 / 二选一，让他更容易回答；
 # 客户可以用"大概/大约/更远/更近/10 米以上"这种模糊说法回答。
 EASIER_QUESTIONS: Dict[str, Dict[str, tuple[str, ...]]] = {
+    # 第二次问内容类型：给三个选项（视频 / 图片 / 两者都有）
+    "content_type": {
+        "en": (
+            "No problem if it's not decided yet — will it be video, images, or both?",
+            "Just roughly: mostly video, mostly images, or a mix of both?",
+            "Either way is fine — does the content lean towards video, images, or both?",
+        ),
+        "zh": (
+            "还没定也没关系 —— 是视频、图片，还是两者都有？",
+            "给个大概就行：以视频为主、以图片为主，还是两种都有？",
+            "哪种都行 —— 内容是偏视频、偏图片，还是两者都有？",
+        ),
+    },
+    # 第二次问价格/质量取向
+    "price_preference": {
+        "en": (
+            "No problem if it's hard to choose — just tell me: keep the price down, "
+            "or go for better quality?",
+            "Either answer is fine — should I pick the best value, or the higher-quality option?",
+        ),
+        "zh": (
+            "不好选也没关系 —— 是需要帮我控制价格，还是要更好的质量？",
+            "哪种都行 —— 我按性价比来选，还是按质量优先来选？",
+        ),
+    },
     "pixel_pitch": {
         "en": (
             "No problem if you're not sure — would you prefer a finer image (P1.5–P2.5) "
@@ -511,8 +606,16 @@ def check_recommendation_ready(
         )
 
     # 2) 客户明确给出技术规格（点间距 / 亮度）
-    if getattr(profile, "pixel_pitch_mm", None) is not None or \
-            getattr(profile, "brightness_min_nit", None) is not None:
+    #    客户口径：推荐前还要问过"最看重价格还是质量"（客户自己说过预算的就不用再问），
+    #    所以这里只有在该取向也明确时才直接放行。
+    preference_settled = (
+        getattr(profile, "price_preference", None) not in (None, "", [], {})
+        or getattr(profile, "budget_level", None) not in (None, "", [], {})
+    )
+    if preference_settled and (
+        getattr(profile, "pixel_pitch_mm", None) is not None
+        or getattr(profile, "brightness_min_nit", None) is not None
+    ):
         return GateDecision(
             ready=True, gate="recommendation",
             reason="客户已明确给出技术规格（点间距/亮度）",
@@ -532,14 +635,29 @@ def check_recommendation_ready(
     # 客户报了一个裸尺寸（"129,2cm"）但没说方向 → 先确认，绝不替他猜
     if getattr(profile, "screen_size_hint_mm", None) and not getattr(profile, "has_target_size", False):
         missing.append("size_axis")
-    if not getattr(profile, "environment", None):
+    environment_value = getattr(profile, "environment", None)
+    environment_source = profile.slot_source("environment") if environment_value else ""
+    # 客户明说（explicit/confirmed）或图片里明确可见（vision_explicit）→ 不必再问；
+    # 只是从场景推断出来的（scenario_derived）→ 先确认一次。
+    environment_confirmed_by_customer = (
+        _is_confirmed(profile, "environment") and environment_source != "scenario_derived"
+    )
+    if not environment_value:
+        missing.append("environment")
+    elif not environment_confirmed_by_customer and profile.ask_count("environment") == 0:
+        # 【客户口径】客户只说了场景（教堂 / 会议室 / 商场 / 广告牌…）时，环境是
+        # 系统**从场景推断**的，不等于客户说过 —— 先主动确认一次（确认型问法），
+        # 客户答了就用客户的，客户没答就沿用场景默认值继续往下问。
+        # 只问一次：这样既不会"客户说了教堂还傻问室内外"，也不会完全不问。
         missing.append("environment")
     elif not _environment_settled(profile):
-        # 环境要么客户明说，要么场景本身就能确定（会议室/教堂/户外广告…）；
-        # 舞台 / 演唱会 / 租赁这类室内外都可能，仍需追问
+        # 舞台 / 演唱会 / 租赁这类室内外都可能 → 仍需追问
         missing.append("environment")
     if not getattr(profile, "purpose", None):
         missing.append("purpose")
+    # 客户口径：问完场景紧接着问"放视频还是放图片"（只记录，不影响选型）
+    if not getattr(profile, "content_type", None):
+        missing.append("content_type")
     if not getattr(profile, "installation", None):
         missing.append("installation")
     elif not _is_confirmed(profile, "installation"):
@@ -547,14 +665,22 @@ def check_recommendation_ready(
     # 点间距 / 观看距离：两者都不知道时**先问点间距**（客户口径）——
     # 客户知道自己要什么 P 值就按客户的选型；不知道再问观看距离、用规则反推。
     # 客户已经给了观看距离时就不用再问点间距了（距离能推 P 值）。
-    pitch_missing = getattr(profile, "pixel_pitch_mm", None) is None
-    distance_missing = getattr(profile, "viewing_distance_m", None) is None
-    if pitch_missing and distance_missing:
+    pitch_known = getattr(profile, "pixel_pitch_mm", None) is not None
+    distance_present = getattr(profile, "viewing_distance_m", None) is not None
+    distance_confirmed = _is_confirmed(profile, "viewing_distance_m")
+    if not pitch_known and not distance_present:
         missing.append("pixel_pitch")
-    if distance_missing:
+    # 客户已经给了点间距 → 不再问观看距离（按客户要的 P 值选型）
+    if not pitch_known and (not distance_present or not distance_confirmed):
         missing.append("viewing_distance")
-    elif not _is_confirmed(profile, "viewing_distance_m"):
-        missing.append("viewing_distance")
+
+    # 推荐前最后一问：最看重价格还是质量
+    # （客户已经直接说过预算 → 不再问，直接用他说的）
+    if (
+        getattr(profile, "price_preference", None) in (None, "", [], {})
+        and getattr(profile, "budget_level", None) in (None, "", [], {})
+    ):
+        missing.append("price_preference")
 
     # ── Phase 11/12：字段级 Unknown 容错 ────────────────────────────────
     # 已经问满两次（或客户明确跳过）仍然没有值的字段 → unknown，不再阻塞推荐。
@@ -568,6 +694,8 @@ def check_recommendation_ready(
         question = (
             _size_axis_question(profile, language, variant_seed)
             if first == "size_axis"
+            else environment_confirm_question(language, variant_seed)
+            if first == "environment" and environment_value
             else None
         ) or question_for(first, language, variant_seed, easier=easier)
         # 图片给过尺寸估计 → 问尺寸时带上，让客户只需确认
@@ -644,12 +772,14 @@ def check_calculation_ready(
 
 
 __all__ = [
+    "CONFIRM_QUESTION_VARIANTS",
     "GateDecision",
     "MISSING_LABELS",
     "MISSING_ORDER",
     "QUESTION_VARIANTS",
     "check_calculation_ready",
     "check_recommendation_ready",
+    "environment_confirm_question",
     "first_missing_slot",
     "format_measurement",
     "question_for",

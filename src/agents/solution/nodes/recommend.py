@@ -296,24 +296,18 @@ def _express_recommendation(
             "4. Finish by asking for the target screen width and height so you can work out "
             "the cabinet and module configuration.\n"
             if need_size_question and not calculation
-            else "4. Finish with one short follow-up question about the next step.\n"
+            else (
+                # 尺寸已经有了、箱体也算了 → 不许再问尺寸 / 提"尺寸还没定"
+                "4. The screen size is already confirmed and the cabinet/module layout has been "
+                "calculated — never ask for the size or dimensions again, and never say the size is "
+                "still open. Finish with one short next-step question (for example preparing the "
+                "quotation).\n"
+            )
         )
     )
 
-    # ── Phase 15：部分需求客户不知道 → Best-effort 推荐 + 自然说明 ───────────
-    from ....rag.reply_composer import degraded_note, missing_impact
-
-    degraded_slots = [str(slot) for slot in (degraded_slots or []) if str(slot).strip()]
-    degraded_note_text = degraded_note(degraded_slots, language) if degraded_slots else ""
+    # 客户口径：不再在推荐话术里写"某项还没确认 / 可能有偏差"这类说明（只给结论）。
     degraded_rule = ""
-    if degraded_note_text:
-        impacts = "; ".join(missing_impact(slot, language)[1] for slot in degraded_slots)
-        degraded_rule = (
-            "4b. The customer could not confirm some details. Recommend anyway, based on the "
-            "confirmed requirements, and work in ONE natural sentence explaining what is "
-            "still open and what it may affect: " + impacts + ". "
-            "Never say the recommendation cannot be made or that information is insufficient.\n"
-        )
 
     # v2.0 Phase 14：回复语言由策略决定（默认英语，auto 时跟随客户语言）
     from ....rag.query_understanding import response_language_rule
@@ -379,8 +373,6 @@ def _express_recommendation(
             f"({calculation['total_modules']} modules), actual size "
             f"{calculation['actual_width_m']}m x {calculation['actual_height_m']}m."
         )
-    if degraded_note_text:
-        fallback += " " + degraded_note_text
     if follow_up:
         fallback += (
             " If you have any other requirements — the target screen size, brightness, delivery or "
@@ -394,42 +386,10 @@ def _express_recommendation(
 
 
 def _alternative_difference(top: dict, other: dict) -> str:
-    """备选款与首选款的差别（说成"你要什么就选它"，不提价格）。"""
-    bits = []
-    top_pitch = float(top.get("pixel_pitch_mm") or 0)
-    other_pitch = float(other.get("pixel_pitch_mm") or 0)
-    if top_pitch and other_pitch and abs(other_pitch - top_pitch) > 0.01:
-        bits.append(
-            f"a finer {other_pitch:g}mm pitch" if other_pitch < top_pitch
-            else f"a wider {other_pitch:g}mm pitch"
-        )
+    """备选款与首选款的差别（实现见 src/rag/alternatives.py，两处共用一份）。"""
+    from ....rag.alternatives import alternative_difference
 
-    top_brightness = int(top.get("brightness_nit") or 0)
-    other_brightness = int(other.get("brightness_nit") or 0)
-    if other_brightness and top_brightness and other_brightness > top_brightness:
-        bits.append(f"higher brightness ({other_brightness}nit vs {top_brightness}nit)")
-    elif other_brightness and top_brightness and other_brightness < top_brightness:
-        bits.append(f"a lower brightness option ({other_brightness}nit)")
-
-    top_features = set(top.get("features") or [])
-    other_features = set(other.get("features") or [])
-    for token, phrase in (
-        ("cob", "COB packaging"),
-        ("hdr", "HDR"),
-        ("waterproof", "waterproofing"),
-        ("gob", "GOB protection"),
-        ("flexible", "a flexible / curved build"),
-    ):
-        if token in other_features and token not in top_features:
-            bits.append(phrase)
-
-    if int(other.get("warranty_years") or 0) > int(top.get("warranty_years") or 0):
-        bits.append(f"a longer {other['warranty_years']}-year warranty")
-    if other.get("installation") and other.get("installation") != top.get("installation"):
-        bits.append(f"a {other['installation']} version")
-    if not bits:
-        bits.append("a different cabinet / pitch combination")
-    return ", ".join(bits[:2])
+    return alternative_difference(top, other)
 
 
 # 客户在问"还有没有别的推荐"（这种轮次说备选，而不是重讲首选 + 催尺寸）
@@ -619,12 +579,8 @@ def recommend_node(state: SolutionState) -> SolutionState:
     if not follow_up and not calc_decision.ready and calc_decision.next_question:
         answer = _ensure_size_question(answer, calc_decision.next_question)
 
-    # Phase 15：客户不知道的字段必须在话术里说明（缺什么 + 影响什么），
-    # 且绝不说"信息不足无法推荐"
-    if degraded_slots:
-        answer = _ensure_degraded_note(
-            answer, degraded_slots, state.get("understood_language") or "en"
-        )
+    # 客户口径：推荐话术里不再追加"某项还没确认 / 可能有偏差"的说明，
+    # 只给结论（缺的信息在系统内部照旧记录，用于打分与排查）。
 
     return {
         "products": products,

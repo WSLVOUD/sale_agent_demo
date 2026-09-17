@@ -94,8 +94,10 @@ class TestGateQuestionVaries:
             tuple(check_recommendation_ready(profile, variant_seed=seed).missing)
             for seed in range(6)
         }
-        # 客户口径：点间距 / 观看距离都不知道时，先问点间距
-        assert missing == {("installation", "pixel_pitch", "viewing_distance")}
+        # 客户口径：场景之后问内容类型；点间距 / 观看距离都不知道时先问点间距；最后问价格/质量
+        assert missing == {(
+            "content_type", "installation", "pixel_pitch", "viewing_distance", "price_preference",
+        )}
 
 
 class TestInstallationQuestionIsNaturalAndRotates:

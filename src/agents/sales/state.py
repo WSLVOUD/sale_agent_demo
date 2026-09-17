@@ -76,5 +76,8 @@ class SalesState(TypedDict):
     # ── 本轮是否带了图片（图片识别结果要跟客户确认一次）──────────────────
     vision_applied: bool
 
+    # ── 本轮客户说的是与需求无关的话（只"接住"这句话，再继续问需求）──────
+    offtopic_turn: bool
+
     # 本轮"回应客户这句话"的口语回应（LLM 生成，只影响措辞，不参与 Gate 判定）
     acknowledgement: str

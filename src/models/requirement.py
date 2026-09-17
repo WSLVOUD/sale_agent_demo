@@ -42,6 +42,7 @@ SLOT_TO_FIELD: Dict[str, str] = {
     "display_type": "display_type",
     "environment": "environment",
     "purpose": "purpose",
+    "content_type": "content_type",
     "installation": "installation",
     "viewing_distance": "viewing_distance_m",
     "size": "target_size",          # 派生属性（宽+高）
@@ -50,6 +51,7 @@ SLOT_TO_FIELD: Dict[str, str] = {
     "pixel_pitch": "pixel_pitch_mm",
     "brightness": "brightness_min_nit",
     "budget": "budget_level",
+    "price_preference": "price_preference",
 }
 
 # 同一字段最多主动询问次数（Phase 5：超过就不再问）
@@ -63,6 +65,7 @@ SINGLE_ASK_SLOTS: frozenset[str] = frozenset({"pixel_pitch"})
 SLOT_PRIORITY: Dict[str, str] = {
     "environment": "HIGH",
     "purpose": "HIGH",
+    "content_type": "MEDIUM",
     "installation": "HIGH",
     "size": "HIGH",
     "display_type": "HIGH",
@@ -72,6 +75,7 @@ SLOT_PRIORITY: Dict[str, str] = {
     "width": "MEDIUM",
     "height": "MEDIUM",
     "budget": "LOW",
+    "price_preference": "LOW",
 }
 
 # 来源强度（M2 四态）：合并时强度高者胜，同强度时新值覆盖旧值。
@@ -104,6 +108,7 @@ _SLOT_ALIASES: Dict[str, tuple[str, ...]] = {
     "display_type": ("display_type",),
     "environment": ("environment", "indoor", "outdoor", "semi_outdoor"),
     "purpose": ("purpose",),
+    "content_type": ("content_type",),
     "installation": ("installation", "is_rental"),
     "viewing_distance_m": ("viewing_distance_m", "viewing_distance", "distance"),
     "target_width_m": ("target_width_mm", "target_width", "size"),
@@ -111,6 +116,7 @@ _SLOT_ALIASES: Dict[str, tuple[str, ...]] = {
     "screen_size_hint_mm": ("screen_size_hint_mm",),
     "size_axis": ("size_axis",),
     "budget_level": ("budget_level",),
+    "price_preference": ("price_preference",),
     "pixel_pitch_mm": ("pixel_pitch_mm", "pixel_pitch"),
     "brightness_min_nit": ("brightness_min", "brightness_min_nit"),
     "brightness_max_nit": ("brightness_max", "brightness_max_nit"),
@@ -157,7 +163,11 @@ class RequirementProfile(BaseModel):
     display_type: Optional[DisplayType] = None
     environment: Optional[Environment] = None
     purpose: Optional[str] = None
+    # 内容类型：video / image / mixed —— 只记录，不参与选型（客户口径）
+    content_type: Optional[str] = None
     installation: Optional[Installation] = None
+    # 推荐前的取向：price / both / quality（决定价位档；price 与 both 都用默认档）
+    price_preference: Optional[str] = None
 
     # ── 尺寸 / 视距事实 ─────────────────────────────────────────────────
     viewing_distance_m: Optional[float] = Field(None, gt=0, le=200)
@@ -266,9 +276,20 @@ class RequirementProfile(BaseModel):
         put("display_type", slots.get("display_type"))
         put("environment", slots.get("environment"))
         put("purpose", slots.get("purpose"))
+        put("content_type", slots.get("content_type"))
         put("installation", slots.get("installation"))
+        put("price_preference", slots.get("price_preference"))
         put("viewing_distance_m", _coerce_distance(slots.get("viewing_distance_m") or slots.get("distance")))
         put("budget_level", _normalize_budget(slots.get("budget_level")))
+        # 价格 / 质量取向 → 价位档（客户已经直接说了预算时不覆盖）：
+        #   只看价格 / 价格与质量都看重 → 默认档（最便宜档优先）
+        #   只看质量、不在乎价格        → 中等价位款
+        preference = str(slots.get("price_preference") or "").strip().lower()
+        if preference and data.get("budget_level") in (None, ""):
+            mapped_tier = {"price": "low", "both": "low", "quality": "medium"}.get(preference)
+            if mapped_tier:
+                data["budget_level"] = mapped_tier
+                sources["budget_level"] = "explicit"
         put("pixel_pitch_mm", slots.get("pixel_pitch_mm") or slots.get("pixel_pitch"))
         put("brightness_min_nit", slots.get("brightness_min") or slots.get("brightness_min_nit"))
         put("brightness_max_nit", slots.get("brightness_max") or slots.get("brightness_max_nit"))
@@ -356,6 +377,11 @@ class RequirementProfile(BaseModel):
                 slots["purpose"] = purpose_text
         if req.get("pixel_pitch") is not None:
             slots["pixel_pitch"] = req["pixel_pitch"]
+        # 内容类型 / 价格质量取向（跨轮传递）
+        if req.get("content_type"):
+            slots["content_type"] = req["content_type"]
+        if req.get("price_preference"):
+            slots["price_preference"] = req["price_preference"]
         if req.get("brightness_min") is not None:
             slots["brightness_min"] = req["brightness_min"]
         if req.get("series_id"):
@@ -378,6 +404,7 @@ class RequirementProfile(BaseModel):
             slots["size_axis"] = req["size_axis"]
 
         # 环境缺失时用场景推断（会议室/教室 → 室内，体育场/广告 → 室外）
+        derived_environment = False
         if "environment" not in slots and slots.get("purpose"):
             try:
                 from src.rag.query_understanding import environment_from_purpose
@@ -388,10 +415,17 @@ class RequirementProfile(BaseModel):
                 derived = environment_from_purpose(slots["purpose"])
                 if derived:
                     slots["environment"] = derived
+                    derived_environment = True
             except Exception:  # pragma: no cover - 防御式
                 pass
 
-        return cls.from_slots(slots, explicit_keys=set(slots) - inferred_fields)
+        explicit_keys = set(slots) - inferred_fields
+        if derived_environment:
+            # 推断出来的环境不能算"客户明说"：来源记为 scenario_derived，
+            # 这样 Gate 才会先跟客户确认一次室内/室外。
+            explicit_keys.discard("environment")
+            slots.setdefault("_scenario_derived", []).append("environment")
+        return cls.from_slots(slots, explicit_keys=explicit_keys)
 
     @property
     def target_width_mm(self) -> Optional[float]:
@@ -714,7 +748,9 @@ class RequirementProfile(BaseModel):
         for key, value in incoming.model_dump().items():
             if key == "sources":
                 continue
-            if value in (None, "", [], {}):
+            # 注意把 0 也当作"没有值"：否则新建档案里的 0（计数类字段）
+            # 会把已经记下的计数冲掉。
+            if value in (None, "", [], {}, 0):
                 continue
             current = data.get(key)
             current_strength = _EXPLICIT_STRENGTH.get(sources.get(key, "default"), 1)

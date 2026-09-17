@@ -115,7 +115,6 @@ class RequirementExtractor:
                 logger.info(f"Normalized purpose: {canonical_purpose.value} (confidence: {confidence})")
 
         # Step 6: Environment 统一解析
-        explicit_env = merged_slots.get("environment")
         purpose_enum = None
         if "purpose" in merged_slots:
             try:
@@ -123,10 +122,28 @@ class RequirementExtractor:
             except ValueError:
                 pass
 
+        # 【修复】只有"客户原话里真的出现了室内/室外关键词"才算客户明说。
+        # 语义模型从场景推出来的环境（church → indoor、广告牌 → outdoor）如果被
+        # 记成 explicit，会同时污染两件事：
+        #   ① sources 看起来像"客户明说"，冲突检测/埋点都会误判；
+        #   ② "环境要不要跟客户确认一次"的判断失效 —— 客户只是提了教堂，
+        #      系统就当成"室内已经问过了"，于是再也不主动问室内/室外。
+        rule_env_markers = {
+            str(x)
+            for marker in ("_inferred_slots", "_default_slots", "_scenario_derived")
+            for x in (rule_slots.get(marker) or [])
+        }
+        rule_env_is_explicit = "environment" in rule_slots and "environment" not in rule_env_markers
+        explicit_env = merged_slots.get("environment")
+
         resolved_env, env_priority = EnvironmentResolver.resolve(
-            explicit_environment=explicit_env,
+            explicit_environment=explicit_env if rule_env_is_explicit else None,
             purpose=purpose_enum,
         )
+        if resolved_env is None and explicit_env and not rule_env_is_explicit:
+            # 规则没判定、语义模型给了环境 → 算"系统推断"，之后仍要跟客户确认
+            resolved_env = explicit_env
+            env_priority = EnvironmentResolver.PRIORITY_INFERRED
         if resolved_env:
             merged_slots["environment"] = resolved_env
             # 标记来源
@@ -136,6 +153,8 @@ class RequirementExtractor:
                 merged_slots.setdefault("_scenario_derived", []).append("environment")
             elif env_priority == EnvironmentResolver.PRIORITY_DEFAULT:
                 merged_slots.setdefault("_default_slots", []).append("environment")
+            else:
+                merged_slots.setdefault("_inferred_slots", []).append("environment")
 
         # Step 7: Installation 统一解析
         explicit_inst = merged_slots.get("installation")

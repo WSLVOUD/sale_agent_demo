@@ -58,9 +58,17 @@ class TestRecommendationServiceGate:
         assert "installation" in result["missing_fields"]
 
     def test_shortcuts_allow_recommendation(self, service):
+        # 客户口径：点间距/亮度这类规格 + 价格质量取向 → 直接推荐
+        # （只给规格还不够，推荐前要问过"最看重价格还是质量"）
         for slots in (
-            {"pixel_pitch_mm": 2.5},
-            {"brightness_min_nit": 600},
+            {"pixel_pitch_mm": 2.5, "price_preference": "price"},
+            {"brightness_min_nit": 600, "price_preference": "price"},
+        ):
+            result = service.recommend(_profile(slots))
+            assert result["recommendation_status"] == "RECOMMENDED", slots
+            assert result["recommendations"]
+        # 客户直接点名型号 / 系列 → 不需要这一问
+        for slots in (
             {"model": "TW21-3216-P2.5"},
             {"series_id": "TW11-OD"},
         ):
@@ -71,6 +79,7 @@ class TestRecommendationServiceGate:
     def test_full_combo_allows_recommendation(self, service):
         result = service.recommend(_profile({
             "environment": "indoor", "purpose": "conference",
+            "content_type": "mixed", "price_preference": "price",
             "installation": "fixed", "viewing_distance_m": 5,
         }))
         assert result["recommendation_status"] == "RECOMMENDED"

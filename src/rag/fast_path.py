@@ -146,19 +146,33 @@ def _find_models(constraints: dict, data_dir: str, top_k: int = 3) -> list[dict]
 
 
 def _build_product_summary(products: list[dict]) -> str:
-    """把匹配到的 **Model** 列表格式化成话术（含点间距/亮度/箱体）。"""
+    """把匹配到的型号**直接推荐**（客户口径：不要"Matching models:"那种罗列）。
+
+    首选按点间距排序后的第一款直接推荐；其余型号只作为条件式备选
+    （"If you want 更亮的，选 XXX"），不罗列、不提价格。
+    """
     if not products:
         # 【客户口径】不说"没有匹配的产品"，改成邀请客户放宽某个条件
         from src.rag.reply_composer import relaxation_answer
 
         return relaxation_answer()
 
-    parts = [
-        f"{item['model']} ({item['pixel_pitch_mm']}mm, {item['brightness_nit']}nit, "
-        f"cabinet {item['cabinet_size_mm']})"
-        for item in products
-    ]
-    return "Matching models: " + "; ".join(parts)
+    from src.rag.alternatives import alternative_difference
+
+    top = products[0]
+    reply = (
+        f"For what you described, {top['model']} is the closest match — "
+        f"{top['pixel_pitch_mm']:g}mm pixel pitch, {top['brightness_nit']}nit brightness, "
+        f"cabinet {top['cabinet_size_mm']}."
+    )
+    used_diffs: set[str] = set()
+    for item in products[1:3]:
+        diff = alternative_difference(top, item)
+        if diff in used_diffs:
+            continue      # 差别说法一样就不再重复（避免两句备选一模一样）
+        used_diffs.add(diff)
+        reply += f" If you want {diff}, {item['model']}."
+    return reply
 
 
 # ── 销售模板 ────────────────────────────────────────────────────────────────

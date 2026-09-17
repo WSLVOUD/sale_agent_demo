@@ -137,7 +137,8 @@ class TestLlmAcknowledgement:
             llm_ack="Happy to help with your smart classroom project.",
         )
         assert text.startswith("Happy to help with your smart classroom project.")
-        assert text.endswith("Is the installation going to be indoors or outdoors?")
+        # 客户口径：接话和提问之间必须有过渡（英文过渡后问句首字母小写）
+        assert text.lower().endswith("is the installation going to be indoors or outdoors?")
 
 
 class TestPriceQuestion:
@@ -201,7 +202,7 @@ class TestNoSelfContradiction:
         # 前面不能再出现"确认视距"的说法
         assert "100 feet" not in text
         assert "100 ft" not in text
-        assert text.endswith("About how many metres away will people be sitting?")
+        assert text.lower().endswith("about how many metres away will people be sitting?")
 
     def test_ack_kept_when_it_does_not_touch_the_pending_slot(self):
         text = compose_requirement_reply(
@@ -212,7 +213,9 @@ class TestNoSelfContradiction:
             llm_ack="Got it, about 100 feet viewing distance.",
         )
         assert "100 feet" in text
-        assert text.endswith("Is it a fixed installation, or do you need it for rental or events?")
+        assert text.lower().endswith(
+            "is it a fixed installation, or do you need it for rental or events?"
+        )
 
     @pytest.mark.parametrize("ack,slot,expected", [
         ("Got it, indoor.", "environment", True),
@@ -396,7 +399,9 @@ class TestSalesGraphAcksThenAsks:
         assert result["pending_question"]
         # 先接住客户这句话（复述场景），再问同一个 Gate 问题
         assert "church" in result["response"]
-        assert result["response"].endswith(result["pending_question"])
+        # 有过渡语时，回复结尾是"问句本体"（模板里的固定铺垫会被过渡语替换掉）
+        tail = result["pending_question"].rsplit("—", 1)[-1].strip().lower()
+        assert result["response"].lower().endswith(tail)
 
     def test_product_question_keeps_question_for_orchestrator(self, fake_llm, monkeypatch):
         """product_question 由 orchestrator 拼接：Sales 侧只负责准备好待问项。"""
@@ -505,7 +510,8 @@ class TestSalesGraphAcksThenAsks:
         assert result["solutions"] == []
         assert result["pending_slot"] == "size_axis"
         assert "129.2 cm" in result["pending_question"]
-        assert result["response"].endswith(result["pending_question"])
+        tail = result["pending_question"].rsplit("—", 1)[-1].strip().lower()
+        assert result["response"].lower().endswith(tail)
 
 
 class TestBareMeasurementEndToEnd:

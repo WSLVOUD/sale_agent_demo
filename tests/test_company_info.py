@@ -139,8 +139,8 @@ class TestComposedCompanyReply:
         )
         assert any(bridge in text for bridge in _BRIDGES["en"]), text
 
-    def test_echo_of_requirement_needs_no_bridge(self):
-        """复述客户刚说的需求（Got it — a church.）不需要过渡语。"""
+    def test_echo_of_requirement_also_gets_a_bridge(self):
+        """客户口径：接话（复述需求）和提问之间也必须有过渡，不能两句硬拼。"""
         from src.rag.reply_composer import _BRIDGES
 
         text = compose_requirement_reply(
@@ -150,7 +150,7 @@ class TestComposedCompanyReply:
             language="en",
             seed=0,
         )
-        assert not any(bridge in text for bridge in _BRIDGES["en"]), text
+        assert any(bridge in text for bridge in _BRIDGES["en"]), text
 
     def test_company_answer_plus_next_requirement_question(self):
         question = "Is this a permanent installation or a rental setup?"

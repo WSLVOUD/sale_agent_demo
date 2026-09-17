@@ -19,6 +19,7 @@ from typing import Any, Dict
 # Adapter 负责的键（重建视图时先清掉这些键，防止旧值残留）
 LEGACY_ADAPTER_KEYS: tuple[str, ...] = (
     "display_type", "usage", "purpose", "location_type", "indoor", "outdoor",
+    "content_type", "price_preference",
     "is_rental", "distance", "viewing_distance", "viewing_distance_m", "size",
     "pixel_pitch", "brightness_min", "screen_size_hint_mm", "size_axis",
     "model", "series_id",
@@ -36,6 +37,11 @@ def profile_to_legacy(profile: Any) -> Dict[str, Any]:
     if getattr(profile, "purpose", None):
         legacy["usage"] = profile.purpose
         legacy["purpose"] = profile.purpose
+    # 客户口径：内容类型（视频/图片/两者都有）与"价格/质量取向"也要跨轮传递
+    if getattr(profile, "content_type", None):
+        legacy["content_type"] = profile.content_type
+    if getattr(profile, "price_preference", None):
+        legacy["price_preference"] = profile.price_preference
     environment = getattr(profile, "environment", None)
     if environment:
         legacy["location_type"] = "室外" if environment in ("outdoor", "semi_outdoor") else "室内"

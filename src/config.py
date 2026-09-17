@@ -75,6 +75,16 @@ class Config:
     VISION_MAX_IMAGES   = int(os.getenv("VISION_MAX_IMAGES", "3"))
     VISION_MAX_IMAGE_MB = float(os.getenv("VISION_MAX_IMAGE_MB", "5"))
 
+    # ── 接话话术（客户说了与需求无关的话时）────────────────────────────
+    # 需求抽取仍然是 temperature=0（保证稳定），只有"接住客户这句话"的那一次
+    # 调用用较高温度，让措辞更自然、不重复。
+    ACK_TEMPERATURE = float(os.getenv("ACK_TEMPERATURE", "0.7"))
+
+    # ── 需求提问话术（把"要问什么"改写成一段自然的话）──────────────────
+    # 问什么由 Gate 决定（模板=意思基准），这里只做**措辞**改写：
+    # 温度低一点，保证不跑题、不多问也不少问。
+    QUESTION_TEMPERATURE = float(os.getenv("QUESTION_TEMPERATURE", "0.2"))
+
 
 def resolve_embedding_model_path() -> str:
     """Return the on-disk BGE-M3 directory. Raises if the local model is missing."""

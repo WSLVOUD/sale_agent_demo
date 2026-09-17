@@ -71,7 +71,9 @@ VIEWING_DISTANCE_PITCH_TABLE: Tuple[Tuple[float, float, float], ...] = (
 _INDOOR_PITCH_TABLE: Tuple[Tuple[float, float, float, float], ...] = (
     # (距离上限, 下限, 上限, 首选)
     (3.0, 0.6, 2.5, 2.5),
-    (float("inf"), 3.0, 10.0, 3.0),
+    # 客户口径：特别远的（>30m）一律 P10 —— 室内外一样，不能因为"室内"就一直按 P3 推
+    (30.0, 3.0, 10.0, 3.0),
+    (float("inf"), 8.0, 10.0, 10.0),
 )
 _OUTDOOR_PITCH_TABLE: Tuple[Tuple[float, float, float, float], ...] = (
     (4.0, 3.9, 5.0, 4.0),        # ≤4m  → P4

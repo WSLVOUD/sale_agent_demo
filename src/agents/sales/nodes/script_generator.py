@@ -110,6 +110,126 @@ def _answer_company_question(state: SalesState) -> str:
     )
 
 
+_QUESTION_POLISH_PROMPT = """你是 LED 显示屏产品的销售，正在微信上和客户聊天。
+下面这行"草稿"是系统已经决定要问客户的问题（问什么由系统定，不能改）。
+请把它说得自然、口语化，并让它和"接住客户这句话"自然地连成一段（最多两句），
+像真人销售一口气说出来的话。
+
+草稿：{draft}
+客户刚说：{message}
+已知需求（仅供判断语气，不要复述、不要新增）：{requirement}
+最近已经发出去的话（**不要**再用它们的说法、开头和过渡词）：
+{recent}
+
+硬性规则：
+1. 询问的意思必须和草稿**完全一致**：不能换成别的问题，不能多问，也不能少问。
+2. 整段话里只能有**一个问句**（问号最多一个）。
+3. **必须有自然的过渡**：先接住客户这句话，再用一个过渡（例如 So / By the way / That said /
+   Now / 那么 / 顺便 / 话说回来）接到这一问上，读起来是**一段连贯的话**，
+   不能像两句话硬拼在一起。
+4. **必须换一种说法**（这是重点）：不要照抄草稿的句式和用词 ——
+   用同义词替换、把否定/疑问换个说法、把语序调一调，
+   也可以换成同样意思的另一种问法（例如 "Will it be indoors or outdoors?"
+   → "Is this an indoor job or an outdoor one?" / "Are we going indoors or outdoors?"）。
+   意思一模一样，但读起来不能是同一句话。
+5. **过渡词也要换着用**：不要每轮都用同一个（例如老用 "So" / "By the way"）；
+   最近用过的开头和过渡必须避开，从第 1 条里挑别的或者用别的自然说法。
+6. **不要**新增任何参数、型号、价格、方案、承诺或建议；不要解释任何知识；
+   不要提"数据库/资料/检索"之类内部说法。
+7. 不要保留草稿里那种固定铺垫（例如 "That's okay —"、
+   "While we're at it,"、"Meanwhile —"），换成人话过渡；但不要跑题。
+8. 语言要求：{language_rule}
+9. 直接输出这段话，不要 JSON、不要引号、不要解释。"""
+
+
+def _recent_question_texts(state: SalesState, limit: int = 3) -> str:
+    """最近几轮已经发给客户的话（给改写作"不要重复"的参考）。"""
+    lines: list[str] = []
+    for item in reversed(state.get("messages") or []):
+        role = ""
+        content = ""
+        if isinstance(item, dict):
+            role = str(item.get("role") or item.get("type") or "")
+            content = str(item.get("content") or "")
+        else:  # pragma: no cover - LangChain 消息对象
+            role = str(getattr(item, "type", "") or "")
+            content = str(getattr(item, "content", "") or "")
+        if role not in ("assistant", "ai"):
+            continue
+        text = content.strip()
+        if not text:
+            continue
+        lines.append(f"- {text[:160]}")
+        if len(lines) >= limit:
+            break
+    return "\n".join(reversed(lines)) or "（暂无）"
+
+
+def _question_temperature() -> float:
+    from ....config import config as _config
+
+    try:
+        return float(getattr(_config, "QUESTION_TEMPERATURE", 0.2))
+    except (TypeError, ValueError):  # pragma: no cover - 防御式
+        return 0.2
+
+
+_MODEL_CODE_RE = re.compile(r"\bTW\s*\d{2}\s*-", re.IGNORECASE)
+_PRICE_WORD_RE = re.compile(r"price|cost|报价|价格|多少钱|美元|\$", re.IGNORECASE)
+
+
+def _polish_question_message(
+    draft: str,
+    *,
+    state: SalesState,
+) -> str:
+    """把"要问的问题"改写成一段自然的话（不照抄模板），失败则返回空串。
+
+    问什么完全由 Gate/模板决定；这里只改措辞，并保证：
+      - 与"接住客户这句话"衔接成一段（不是两个画风）；
+      - 只有一个问句；
+      - 不新增参数 / 型号 / 价格 / 建议。
+    """
+    draft = str(draft or "").strip()
+    if not draft:
+        return ""
+    try:
+        from ....rag.query_understanding import response_language_rule
+    except Exception:  # pragma: no cover - 防御式
+        return ""
+    try:
+        message = str(state.get("current_message") or "")
+        language = reply_language(message)
+        llm = get_llm(temperature=_question_temperature())
+        prompt = _QUESTION_POLISH_PROMPT.format(
+            draft=draft,
+            message=message[:200],
+            requirement=state.get("requirements") or {},
+            recent=_recent_question_texts(state),
+            language_rule=response_language_rule(language),
+        )
+        response = llm.invoke(prompt)
+        text = response.content if hasattr(response, "content") else str(response)
+        text = re.sub(r"```[a-zA-Z]*", "", str(text)).replace("```", "").strip()
+        text = text.strip('"\'“”').replace("**", "").replace("__", "").strip()
+
+        if not text or "{" in text or "}" in text:
+            return ""
+        if len(text) > 320:
+            return ""
+        if text.count("?") + text.count("？") != 1:
+            # 多问 / 没问 → 说明改跑偏了，退回模板
+            logger.info("Polished question dropped (question count != 1): %r", text[:80])
+            return ""
+        if _MODEL_CODE_RE.search(text) or _PRICE_WORD_RE.search(text):
+            logger.info("Polished question dropped (mentions model/price): %r", text[:80])
+            return ""
+        return text
+    except Exception as exc:
+        logger.warning("Question polish failed: %s", exc)
+        return ""
+
+
 def _vision_confirmation(state: SalesState) -> str:
     """带图的那一轮：把"图片里看到了什么"跟客户核一遍（客户口径：识别完要确认）。
 
@@ -150,6 +270,28 @@ def script_generator(state: SalesState) -> SalesState:
     
     # 检查是否需要抑制问候语（首次接待刚完成后）
     suppress_greeting = state.get("suppress_greeting", False)
+
+    # ── 客户说了与需求无关的话：只"接住这句" + 继续问需求 ─────────────────
+    # （接话话术由较高温度单独生成；这里绝不去回答无关问题、也不倒产品）
+    if state.get("offtopic_turn"):
+        ack = str(state.get("acknowledgement") or "")
+        pending = str(state.get("pending_question") or "")
+        if pending:
+            draft = compose_requirement_reply(
+                question=pending,
+                slot=str(state.get("pending_slot") or ""),
+                message=str(state.get("current_message") or ""),
+                seed=_turn_seed(state),
+                requirement=state.get("requirements") or {},
+                llm_ack=ack,
+            )
+            polished = _polish_question_message(draft, state=state)
+            state["response"] = _strip_markdown(polished or draft)
+        else:
+            state["response"] = _strip_markdown(ack)
+        state["next_action"] = "ask"
+        logger.info("Off-topic turn — reply: %s", state["response"])
+        return state
 
     # ── 交付时间 / 安装档期（客户口径）──────────────────────────────────────
     # 客户问交期 → 从下单付款开始计算，常规交付约 15–30 天；
@@ -200,19 +342,22 @@ def script_generator(state: SalesState) -> SalesState:
         and not state.get("should_generate_solution")
         and not state.get("response")
     ):
-        state["response"] = _strip_markdown(
-            compose_requirement_reply(
-                question=pending_question,
-                slot=str(state.get("pending_slot") or ""),
-                message=str(state.get("current_message") or ""),
-                seed=_turn_seed(state),
-                requirement=state.get("requirements") or {},
-                llm_ack=str(state.get("acknowledgement") or ""),
-                # 需求重置时 runner 已经加过"我们重新来一遍"的确认语，这里不重复
-                include_ack=not state.get("requirements_reset"),
-                vision_confirmation=_vision_confirmation(state),
-            )
+        # 先按模板合成一版（问什么由 Gate 决定，这版是"意思基准"，也是兜底）
+        draft = compose_requirement_reply(
+            question=pending_question,
+            slot=str(state.get("pending_slot") or ""),
+            message=str(state.get("current_message") or ""),
+            seed=_turn_seed(state),
+            requirement=state.get("requirements") or {},
+            llm_ack=str(state.get("acknowledgement") or ""),
+            # 需求重置时 runner 已经加过"我们重新来一遍"的确认语，这里不重复
+            include_ack=not state.get("requirements_reset"),
+            vision_confirmation=_vision_confirmation(state),
         )
+        # 客户口径：不要原封不动发模板，也不要是"接话 + 提问"两个画风 ——
+        # 用低温度（默认 0.2）围绕这版草稿改写成一段自然的话（意思不变）。
+        polished = _polish_question_message(draft, state=state)
+        state["response"] = _strip_markdown(polished or draft)
         state["next_action"] = "ask"
         logger.info(
             "Requirement mining continues — reply: %s", state["response"]

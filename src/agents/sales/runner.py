@@ -255,6 +255,25 @@ class SalesAgentRunner:
                 if hasattr(self.memory_store, "get_recommendation"):
                     preserved_recommendation = self.memory_store.get_recommendation(session_id) or {}
 
+                # 【修复】"一个项目下多条屏"的状态同样必须跨轮保留：
+                # clear() 之后如果丢掉 project_items / active_item_index，
+                # 多屏流程每轮都会回到"第 1 块屏"，第二块屏永远开不出来。
+                preserved_project_items = (
+                    self.memory_store.get_project_items(session_id)
+                    if hasattr(self.memory_store, "get_project_items")
+                    else []
+                )
+                preserved_active_item = (
+                    self.memory_store.get_active_item_index(session_id)
+                    if hasattr(self.memory_store, "get_active_item_index")
+                    else 0
+                )
+                preserved_item_flags = (
+                    self.memory_store.get_item_flags(session_id)
+                    if hasattr(self.memory_store, "get_item_flags")
+                    else {}
+                )
+
                 self.memory_store.clear(session_id)
                 self.memory_store.extend(session_id, final_messages)
                 self.memory_store.set_requirements(session_id, result.get("requirements", {}))
@@ -275,6 +294,18 @@ class SalesAgentRunner:
 
                 if current_display_type and hasattr(self.memory_store, "set_previous_display_type"):
                     self.memory_store.set_previous_display_type(session_id, current_display_type)
+
+                # 恢复"一个项目下多条屏"的状态（见上面 preserved_project_items）
+                if preserved_project_items and hasattr(
+                    self.memory_store, "set_project_items"
+                ):
+                    self.memory_store.set_project_items(session_id, preserved_project_items)
+                if preserved_active_item and hasattr(
+                    self.memory_store, "set_active_item_index"
+                ):
+                    self.memory_store.set_active_item_index(session_id, preserved_active_item)
+                if preserved_item_flags and hasattr(self.memory_store, "set_item_flags"):
+                    self.memory_store.set_item_flags(session_id, preserved_item_flags)
 
                 # 记录"本轮已经给过推荐"：下一轮客户说"想换个产品"时，
                 # 系统据此判断需要在同一会话里清空旧需求、重新采集。

@@ -707,6 +707,74 @@ def _extract_target_size(text: str) -> tuple[Optional[float], Optional[float]]:
     return None, None
 
 
+# 内容类型（视频 / 图片 / 两者都有）：只记录，不参与选型
+_CONTENT_MIXED_KEYWORDS = (
+    "两种都有", "两个都有", "两者都有", "都要", "都放", "都会用", "都用到", "混合", "both", "a mix", "mixed",
+)
+_CONTENT_VIDEO_KEYWORDS = ("视频", "影片", "动态画面", "视频素材", "video", "videos", "motion")
+_CONTENT_IMAGE_KEYWORDS = (
+    "图片", "照片", "静态画面", "静图", "图文", "幻灯片", "image", "images", "photo", "photos",
+    "picture", "pictures", "static",
+)
+
+# 价格 / 质量取向（推荐前那一问）
+_PREFERENCE_BOTH_KEYWORDS = (
+    # 强信号：本身就是"权衡"的说法
+    "都看重", "都看中", "都重要", "都要好", "both matter", "either is fine", "both are important",
+)
+_PREFERENCE_BOTH_WEAK_KEYWORDS = (
+    # 弱信号：需要上下文里出现价格/质量才算
+    "两个都", "两者都", "都要", "both",
+)
+_PREFERENCE_QUALITY_KEYWORDS = (
+    "质量优先", "看重质量", "看中质量", "质量为主", "不在乎价格", "不看价格", "价格无所谓", "品质", "要最好的",
+    "效果更好", "高端", "quality", "best quality", "premium", "top quality", "not about price",
+)
+_PREFERENCE_PRICE_KEYWORDS = (
+    "价格优先", "看重价格", "看中价格", "价格为主", "要便宜", "便宜的", "省钱", "预算有限", "性价比",
+    "价格", "price", "cheaper", "budget", "cost", "affordable", "economical",
+)
+
+
+def _extract_content_type(text: str) -> Optional[str]:
+    """客户回答"放视频还是放图片" → video / image / mixed（只记录）。"""
+    lowered = str(text or "").lower()
+    if any(keyword in lowered for keyword in _CONTENT_MIXED_KEYWORDS):
+        return "mixed"
+    has_video = any(keyword in lowered for keyword in _CONTENT_VIDEO_KEYWORDS)
+    has_image = any(keyword in lowered for keyword in _CONTENT_IMAGE_KEYWORDS)
+    if has_video and has_image:
+        return "mixed"
+    if has_video:
+        return "video"
+    if has_image:
+        return "image"
+    return None
+
+
+def _extract_price_preference(text: str) -> Optional[str]:
+    """客户回答"最看重价格还是质量" → price / both / quality。"""
+    lowered = str(text or "").lower()
+    has_quality = any(keyword in lowered for keyword in _PREFERENCE_QUALITY_KEYWORDS)
+    has_price = any(keyword in lowered for keyword in _PREFERENCE_PRICE_KEYWORDS)
+    if any(keyword in lowered for keyword in _PREFERENCE_BOTH_KEYWORDS):
+        return "both"
+    # 弱信号："都要 / both" 这类要确认是在说价格与质量（避免"视频和图片都要"误判）
+    if any(keyword in lowered for keyword in _PREFERENCE_BOTH_WEAK_KEYWORDS) and (
+        has_price
+        or has_quality
+        or any(word in lowered for word in ("价格", "价钱", "质量", "品质", "price", "quality"))
+    ):
+        return "both"
+    if has_quality and has_price:
+        return "both"
+    if has_quality:
+        return "quality"
+    if has_price:
+        return "price"
+    return None
+
+
 def _extract_pixel_pitch(text: str) -> Optional[float]:
     match = re.search(r"(?<![A-Za-z0-9])[Pp](\d+(?:\.\d+)?)(?![A-Za-z0-9])", text)
     if match:
@@ -954,6 +1022,16 @@ def extract_slots(message: str) -> Dict[str, Any]:
     budget = _extract_budget_level(lowered)
     if budget:
         slots["budget_level"] = budget
+
+    # 7c) 内容类型（视频 / 图片 / 两者都有）—— 只记录，不参与选型
+    content_type = _extract_content_type(text)
+    if content_type:
+        slots["content_type"] = content_type
+
+    # 7d) 价格 / 质量取向（推荐前那一问；客户已说预算时不问）
+    preference = _extract_price_preference(text)
+    if preference:
+        slots["price_preference"] = preference
 
     # 7b) 交互需求（IFP 场景的关键卖点）
     if _any(lowered, ("手写", "书写", "触控", "触摸", "白板", "touch", "whiteboard", "annotation", "interactive")):

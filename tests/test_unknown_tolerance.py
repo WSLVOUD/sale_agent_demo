@@ -83,11 +83,19 @@ def _reach_viewing_distance_question(sales_req, first_message="we need an indoor
     """
     turn = _turn(sales_req, first_message, None, {})
     guard = 0
-    while turn["pending_slot"] != "viewing_distance" and guard < 4:
+    # 客户口径：场景之后先问内容类型，再问安装方式，然后点间距，最后才是观看距离；
+    # 这里按当前问到的槽位给一个像样的回答，把前面的问题走完。
+    answers = {
+        "content_type": "both videos and images",
+        "installation": "it's a fixed installation",
+        "pixel_pitch": "I don't know",
+    }
+    while turn["pending_slot"] != "viewing_distance" and guard < 6:
         guard += 1
+        slot = str(turn.get("pending_slot") or "")
         turn = _turn(
             sales_req,
-            "it's a fixed installation",
+            answers.get(slot, "it's a fixed installation"),
             turn["requirement_profile"],
             {},
         )
@@ -215,9 +223,15 @@ class TestPlanTestCases:
         assert profile.ask_count("viewing_distance") == MAX_ASKS_PER_SLOT
         # 不再追问同一个字段
         assert third["pending_slot"] != "viewing_distance"
-        # 问满两次后按已有信息继续（DEGRADED_READY），不再卡在需求收集
-        assert third["recommendation_gate"]["status"] == "DEGRADED_READY"
-        assert "viewing_distance" in third["recommendation_gate"]["unknown_slots"]
+        # 观看距离问满两次就不问了，转去问还没问过的"价格/质量取向"
+        assert third["pending_slot"] == "price_preference"
+        fourth = _turn(
+            sales_llm, "price matters more", third["requirement_profile"], {},
+            last_asked="price_preference",
+        )
+        # 之后按已有信息继续（DEGRADED_READY），不再卡在需求收集
+        assert fourth["recommendation_gate"]["status"] == "DEGRADED_READY"
+        assert "viewing_distance" in fourth["recommendation_gate"]["unknown_slots"]
 
     def test_4_answer_other_information_while_not_knowing(self, sales_llm):
         first = _reach_viewing_distance_question(sales_llm)
@@ -285,7 +299,9 @@ class TestDegradedRecommendation:
             "display_type": "LED",
             "environment": "indoor",
             "purpose": "conference",
+            "content_type": "mixed",
             "installation": "fixed",
+            "price_preference": "price",
             "target_width_mm": 5000,
             "target_height_mm": 3000,
         }
@@ -373,7 +389,9 @@ def _degraded_profile():
         "display_type": "LED",
         "environment": "indoor",
         "purpose": "church",
+        "content_type": "mixed",
         "installation": "fixed",
+        "price_preference": "price",
         "target_width_mm": 5000,
         "target_height_mm": 3000,
     }
@@ -439,7 +457,9 @@ class TestPhase14RecommendationBasis:
             "display_type": "LED",
             "environment": "indoor",
             "purpose": "church",
+            "content_type": "mixed",
             "installation": "fixed",
+            "price_preference": "price",
             "viewing_distance_m": 5,
         }
         profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
@@ -505,8 +525,9 @@ class TestPhase16DegradedRecommendationEndToEnd:
 
         assert out["products"], "客户不知道视距时仍应给出产品"
         answer = out["recommendation"]
-        # Phase 15：话术必须点出缺失项及其影响
-        assert "viewing distance" in answer.lower()
+        # 客户口径：推荐话术只给结论，不再写"某项还没确认 / 可能有偏差"
+        assert "not confirmed" not in answer.lower()
+        assert "tell me if" not in answer.lower()
         # Phase 16：尺寸齐备 → 箱体/模组必须照常计算
         assert out["screen_calculation"], "视距 unknown 不应阻塞箱体计算"
         assert out["screen_calculation"]["cabinet_count"] > 0
@@ -521,7 +542,7 @@ class TestPhase16DegradedRecommendationEndToEnd:
 
         answer = out["recommendation"].lower()
         assert "tw11" in answer
-        assert "viewing distance" in answer
+        assert "not confirmed" not in answer
         assert not any(
             phrase in answer
             for phrase in ("cannot recommend", "insufficient", "not enough information")

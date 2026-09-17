@@ -106,6 +106,12 @@ _ACK_ECHO_LEADS = {
         "Noted: {echo}.",
         "Alright, {echo}.",
         "Thanks for that — {echo}.",
+        # 客户口径：不要每轮都是 "Got it / Understood"，下面这些换着用
+        "That makes sense — {echo}.",
+        "Good to know — {echo}.",
+        "Right, {echo} — that helps.",
+        "Appreciate you sharing that — {echo}.",
+        "Okay, {echo}, got it noted.",
     ),
     "zh": (
         "好的，{echo}。",
@@ -113,6 +119,9 @@ _ACK_ECHO_LEADS = {
         "收到，{echo}。",
         "了解，{echo}。",
         "记下了，{echo}。",
+        "这个信息有用，{echo}。",
+        "好，{echo}，我记一下。",
+        "清楚，{echo}。",
     ),
 }
 
@@ -141,11 +150,12 @@ _CONNECTORS = {
 # 直接硬接问句会很生硬（实测反馈："…from there. Is this a permanent installation…?"）
 _BRIDGES = {
     "en": (
-        "Meanwhile —",
         "By the way —",
         "On that note —",
         "While we're at it —",
         "So I can point you to the right model —",
+        "That said —",
+        "Now —",
     ),
     "zh": (
         "另外，",
@@ -175,6 +185,13 @@ _ACK_GENERIC = {
 
 _CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
+# 只有一句空泛客套、完全没有客户内容的"接话"（客户口径：这种不要发）
+_CLICHE_ACK_RE = re.compile(
+    r"^(?:(?:got it|ok|okay|understood|sure|noted|thanks|thank you|thanks for that|alright|fine|"
+    r"noted thanks|好的|收到|了解|明白|知道了|嗯|行|可以)[.。！!,，、\s]*)+$",
+    re.IGNORECASE,
+)
+
 
 def _clean_llm_ack(text: str, language: str = "en") -> str:
     """清洗 LLM 生成的回应：去换行 / 去引号 / 丢弃含问句的内容 / 语言纠偏。"""
@@ -188,6 +205,10 @@ def _clean_llm_ack(text: str, language: str = "en") -> str:
     if _lang(language) == "en" and _CJK_RE.search(ack):
         # 策略要求全英文时，模型偶尔仍会用中文回一句
         # （实测 "Sello 你好，很高兴认识你。" + 英文追问），这里直接丢弃
+        return ""
+    if _CLICHE_ACK_RE.match(ack):
+        # 只有 "Got it / 好的" 这种没有任何客户内容的空话 → 丢弃，
+        # 交给带客户内容的 echo 兜底（客户口径：接话要顺着客户说）
         return ""
     return ack[:240].rstrip()
 
@@ -892,14 +913,39 @@ def _already_asks(answer: str, slot: str, language: str) -> bool:
     return False
 
 
+# 问句模板里的"固定铺垫"（纯过渡话术，没有实际信息）——接了过渡语之后就该去掉；
+# 而 "Fixed installation or rental —" 这种是**问句内容**，必须保留。
+_CANNED_PREAMBLES = (
+    "that's okay", "that is okay", "that's fine", "that is fine", "no problem",
+    "just so i quote", "just so i use it correctly", "just so i match", "just so i plan",
+    "just so i can point you", "quick check", "quick one", "one quick question",
+    "while we're at it", "if you're not sure", "if you are not sure",
+    "so i plan this properly", "in the meantime",
+    "没关系", "不确定也没关系", "顺便", "另外",
+)
+
+
 def _tail_question(question: str) -> str:
-    """取问句本体：去掉 "Just so I match the right models —" 这类前置铺垫。"""
+    """取问句本体：只去掉"固定铺垫"，保留问句本身的内容。
+
+    例：
+      "Just so I match the right models — is this a fixed install or a rental?"
+        → "is this a fixed install or a rental?"          （铺垫是固定话术 → 去掉）
+      "Fixed installation or rental — which one is it for you?"
+        → 原样保留（"Fixed installation or rental" 是问句内容，不能砍）
+    """
+    text = str(question or "").strip()
     for dash in ("—", "–"):
-        if dash in question:
-            tail = question.rsplit(dash, 1)[-1].strip()
-            if tail:
-                return tail
-    return question
+        if dash not in text:
+            continue
+        head, tail = text.rsplit(dash, 1)
+        head_clean = head.strip().lower()
+        tail = tail.strip()
+        if not tail:
+            continue
+        if head_clean.startswith(_CANNED_PREAMBLES) or len(head_clean.split()) <= 3:
+            return tail
+    return text
 
 
 def _lower_first_word(text: str) -> str:
@@ -1011,16 +1057,15 @@ def compose_requirement_reply(
             # 中文不加空格，英文加空格
             separator = "" if lang == "zh" else " "
             return f"{lead}{separator}{bridges[seed % len(bridges)]}{full_question}".strip()
-        # 回应是"回答客户的问题"时，加一句自然过渡再接需求问题，避免生硬
-        if _ack_is_customer_answer(message, data_dir):
-            bridges = _BRIDGES[lang]
-            tail = _tail_question(question)
-            if lang == "en":
-                tail = _lower_first_word(tail)
-            if ack and not vision_confirmation:
-                return f"{ack} {bridges[seed % len(bridges)]} {tail}".strip()
-            return f"{lead} {tail}".strip()
-        return f"{lead} {question}".strip()
+        # 【客户口径】只要既有"接话"又有"追问"，就必须有一个过渡把它们连起来，
+        # 不能两句硬拼（"…enjoy a good walk. Where's it going to be used?"）。
+        # 过渡语按轮次轮换，英文还会把问句首字母小写，读起来是一段话。
+        bridges = _BRIDGES[lang]
+        tail = _tail_question(question)
+        if lang == "en":
+            tail = _lower_first_word(tail)
+        separator = "" if lang == "zh" else " "
+        return f"{lead}{separator}{bridges[seed % len(bridges)]} {tail}".strip()
     return question
 
 

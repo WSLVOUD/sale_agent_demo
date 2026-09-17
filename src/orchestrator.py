@@ -344,6 +344,10 @@ class DualAgentOrchestrator:
             self.memory_store, session_id, vision_results, vision_metrics
         )
 
+        # ── 一个项目多条屏：客户这句话是不是在说"另一块屏"？────────────────
+        # （客户口径 2026-09-18：教堂一块室内屏 + 门口一块室外屏 → 两条需求档案）
+        self._maybe_start_new_item(session_id, message)
+
         # Step 1: Sales Agent processes message
         sales_result = self.sales_agent.run(
             session_id=session_id,
@@ -463,10 +467,151 @@ class DualAgentOrchestrator:
         )
 
         result["_perf"] = perf.summary()
+        # 客户口径（2026-09-18）：**不再**在推荐后追问"个人还是公司 / 姓名 / 邮箱"。
+        # 实测：客户后面问"我能定制产品吗""交付日期多久"时，这些话被联系方式收集
+        # 当成回答吞掉，回了 "Got it <客户原话>, thanks — I've passed your details on…"，
+        # 客户真正的问题没有任何回答。联系信息改由销售人工在后端获取。
+        # ── 一个项目多条屏：第二块（及以后）的推荐要标清楚是哪一块 ────────────
+        # 实测：客户开了第二块屏之后，推荐话术里仍会出现 "For your church indoor
+        # screen …"（历史里的第一块屏），客户分不清在说哪一块。
+        if perf.route == "trigger_solution" and result.get("response"):
+            from .rag.project_items import screen_label
+            from .rag.reply_composer import reply_language
+
+            active_index = (
+                self.memory_store.get_active_item_index(session_id)
+                if self.memory_store and hasattr(self.memory_store, "get_active_item_index")
+                else 0
+            )
+            if active_index >= 1 and self._stored_profile(session_id) is not None:
+                label = screen_label(
+                    active_index, self._stored_profile(session_id), reply_language(message)
+                )
+                if label and not str(result["response"]).lstrip().startswith(label.strip()):
+                    result["response"] = f"{label}{result['response']}"
+
+        # ── 一个项目多条屏：记录这一块屏的推荐 + 追问"还有其他位置吗" ────────
+        multi_extra = self._multi_item_follow_up(session_id, result, message)
+        if multi_extra:
+            result.setdefault("extra_messages", []).append(multi_extra)
         if vision_metrics:
             result["vision"] = vision_metrics
         return result
     
+    # ── 一个项目多条屏（客户口径 2026-09-18）─────────────────────────────
+    def _maybe_start_new_item(self, session_id: str, message: str) -> str:
+        """客户这句话如果在说"另一块屏" → 归档当前这块，开一条新需求档案。
+
+        客户口径："教堂里一块室内屏，门口再来一块室外屏" —— 一个项目、两块屏，
+        各自收集需求、各自推荐、各自算箱体，最后给一份汇总。
+        """
+        from .rag.project_items import detect_new_item
+
+        memory_store = self.memory_store
+        if memory_store is None or not hasattr(memory_store, "get_project_items"):
+            return ""
+
+        profile = self._stored_profile(session_id)
+        if profile is None:
+            return ""
+
+        items = memory_store.get_project_items(session_id)
+        index = memory_store.get_active_item_index(session_id)
+        already = bool(
+            getattr(memory_store, "has_recommendation", lambda *_: False)(session_id)
+        ) or bool((items[index] if index < len(items) else {}).get("model"))
+
+        should_start, reason = detect_new_item(
+            message, profile, already_recommended=already
+        )
+        if not should_start:
+            return ""
+
+        # 归档第 N 块屏（保留需求档案，最后汇总要用）
+        while len(items) <= index:
+            items.append({})
+        archived = dict(items[index] or {})
+        archived["profile"] = profile.model_dump()
+        items[index] = archived
+        memory_store.set_project_items(session_id, items)
+        memory_store.set_active_item_index(session_id, index + 1)
+
+        # 新的一块屏从零开始收集需求（旧需求不能带过去）
+        memory_store.clear_requirement_profile(session_id)
+        memory_store.clear_requirements(session_id)
+        if hasattr(memory_store, "clear_recommendation"):
+            memory_store.clear_recommendation(session_id)
+        memory_store.set_item_flag(session_id, "multi_item_declined", False)
+        memory_store.set_item_flag(session_id, "asked_for_more_at", -1)
+        logger.info(
+            "[%s] Multi-item: 开始收集第 %d 块屏的需求（%s）", session_id, index + 2, reason
+        )
+        return reason
+
+    def _multi_item_follow_up(
+        self, session_id: str, result: Dict[str, Any], message: str = ""
+    ) -> Optional[str]:
+        """推荐完之后：先问"还有别的屏吗"，第二块推荐完就给整份汇总。"""
+        from .rag.project_items import (
+            combined_summary,
+            detect_more_items_answer,
+            multi_item_ask,
+            product_model,
+        )
+        from .rag.reply_composer import reply_language
+
+        memory_store = self.memory_store
+        if memory_store is None or not hasattr(memory_store, "get_project_items"):
+            return None
+
+        products = result.get("products") or []
+        profile = self._stored_profile(session_id)
+        index = memory_store.get_active_item_index(session_id)
+
+        # 只有真的走了推荐路径才算"这一块屏推荐完了"（自由问答里的检索片段不算）
+        route = str((result.get("_perf") or {}).get("route") or "")
+        if route != "trigger_solution":
+            return None
+
+        # 客户明确说"就这一块 / 没有别的" → 不再追问
+        customer_message = str(message or "")
+        if customer_message and detect_more_items_answer(customer_message):
+            memory_store.set_item_flag(session_id, "multi_item_declined", True)
+
+        # 这一轮没有推荐出产品 → 不改动项目状态
+        if not products:
+            return None
+
+        model = product_model(products[0])
+        if not model:
+            return None
+
+        memory_store.record_item_recommendation(
+            session_id,
+            {
+                "model": model,
+                "profile": profile.model_dump() if profile is not None else {},
+            },
+        )
+        items = memory_store.get_project_items(session_id)
+        language = reply_language(customer_message)
+
+        # 第二块（及以后）都推荐完了 → 给"两份推荐 + 两份计算"的汇总
+        if index >= 1 and len(items) > 1:
+            summary = combined_summary(items, language)
+            if summary:
+                logger.info("[%s] Multi-item: 输出 %d 块屏汇总", session_id, len(items))
+                return summary
+
+        # 第一块推荐完 → 问一句还有没有别的位置（只问一次；客户说没有就不再问）
+        if memory_store.get_item_flag(session_id, "multi_item_declined"):
+            return None
+        asked_at = int(memory_store.get_item_flag(session_id, "asked_for_more_at", -1) or -1)
+        if asked_at == index:
+            return None
+        memory_store.set_item_flag(session_id, "asked_for_more_at", index)
+        return multi_item_ask(language, seed=index)
+
     def _stored_profile(self, session_id: str):
         """取本会话已收集的需求档案（转发给 Solution Agent，避免它重新问一遍）。"""
         if not self.memory_store or not hasattr(self.memory_store, "get_requirement_profile"):

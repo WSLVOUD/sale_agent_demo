@@ -481,7 +481,9 @@ class TestMultiTurnSwitchProductEndToEnd:
             # 提问记账 —— 那是"同一字段最多问两次"状态机跨轮必需的状态）。
             persisted = memory.get_requirement_profile(session_id)
             if persisted is not None:
-                bookkeeping = ("sources", "ask_counts", "unknown_reasons", "last_asked_slot", "conflicts")
+                bookkeeping = (
+                    "sources", "ask_counts", "unknown_reasons", "last_asked_slot", "conflicts",
+                )
                 facts = {k: v for k, v in persisted.items() if k not in bookkeeping}
                 assert all(v in (None, "", [], {}) for v in facts.values()), facts
             assert not memory.has_recommendation(session_id)

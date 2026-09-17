@@ -26,6 +26,10 @@
 | **首次客户固定工作流（First Contact）** | ✅ 已完成 |
 | **全量需求捕获 + Unknown 容错（最多问两次）** | ✅ 已完成 |
 | **智谱视觉需求提取（客户发图片识别需求）** | ✅ 已完成 |
+| **需求采集扩展三问（内容类型 / 价格取向 / 联系方式）** | ✅ 已完成 |
+| **推荐后联系方式延后到尺寸确认之后** | ✅ 已完成 |
+| **一个项目多条屏体需求（多块屏 / 多品类）** | ✅ 已完成 |
+| **联系方式收集已按客户口径删除**（改为人工获取） | ✅ 已移除 |
 | **Memory 持久化（SQLite）** | 🚧 规划中 |
 
 ---
@@ -671,6 +675,310 @@ Solution 的意图节点也不再自己重判意图（只在没有上游意图�
 | `src/agents/sales/question_planner.py` | 采集顺序同步插入点间距 |
 
 > 回归测试：`tests/test_requirement_dialogue.py::TestPitchAskedBeforeDistance`（7 条）。
+
+---
+
+## 调整：客户说无关话时的"接话"话术（2026-09-16）
+
+客户口径：客户说了与需求无关的话（闲聊 / 题外话），AI 要**接住这句话**再继续问需求；
+接话的措辞不能死板，要发散；**绝不能**回答我们没有依据的知识。
+
+### 做法
+
+| 项 | 说明 |
+|----|------|
+| 需求抽取 | 仍然是 `temperature=0`（稳定、不编参数） |
+| 接话话术 | **单独一次调用**，`temperature=config.ACK_TEMPERATURE`（**默认 0.7**，可用 `.env` 调） |
+| 触发条件 | 本轮客户没提供任何需求信息、且不是在提问（提问走正常回答路径） |
+| 硬约束 | 提示词明确：只接住这句话；**绝对不要**回答知识性问题、不要解释概念、不要给参数/型号/价格/方案/建议；不要提问；每次换说法 |
+| 兜底 | 万一模型返回的不是自然句子（JSON 等），这句直接丢弃，不会发出去 |
+| 路由 | 该轮强制走"接话 + 继续问需求"，不会绕到自由问答去倒产品 |
+
+### 实测（真实 DeepSeek）
+
+```text
+客户：i need a display
+→ Sure, happy to help you find the right display. Should I look at indoor or outdoor displays for you?
+
+客户：haha i am in nairobi and the weather is really nice today
+→ Haha nice, enjoy it while it lasts! That's okay — most installations are indoors.
+  Will this one be indoors, or outside?          ← 只接话 + 继续问需求，没有回答无关知识、没有倒产品
+
+客户：by the way my cousin also runs a shop there
+→ Thanks for that — a retail store. Is it mainly for video content, for images, or both?
+```
+
+> 同时修掉两个连带问题：① 无关话不会再被路由到自由问答倒型号；
+> ② 只有真正走了推荐路径才会触发"推荐后收集联系方式"（检索片段不算推荐过）。
+> 回归测试：`tests/test_new_questions.py::TestOffTopicAckUsesHigherTemperature`（4 条）。
+
+---
+
+## 调整：提问话术改写 + 闲聊问句不再倒产品（2026-09-17）
+
+### 一、询问需求的话术不再"原封不动发模板"
+
+问什么由 Gate 决定（模板=意思基准），但**发送前会用一次低温度调用改写**：
+
+| 项 | 值 |
+|----|----|
+| 改写温度 | `QUESTION_TEMPERATURE`（默认 **0.2**，`.env` 可调） |
+| 要求 | 意思与草稿完全一致、只保留一个问句、不新增参数/型号/价格/建议、不照抄固定句式 |
+| 衔接 | 必须把"接住客户这句话"和这一问**连成一段**（不是两个画风） |
+| 兜底 | 改写结果不合格（多问/没问/出现型号或价格字眼/不是自然句子）→ 自动退回模板 |
+
+实测：
+
+```text
+客户：i need an LED display for a church
+→ Got it, an LED display for a church. Just need to confirm a couple of key details so I can put
+  together the right option for you — will you be playing video, displaying images, or both on this screen?
+
+客户：viewing distance is about 5 meters
+→ Got it — about 5 meters viewing distance, that helps a lot. Should I optimise for the best price,
+  or for the best quality?
+```
+
+### 二、闲聊式问句不再被当成"业务问题"倒产品
+
+实测问题：客户问 **"do u like watching TV serises?"**（闲聊式问句），系统把它当成产品提问走了自由
+问答，回了一大段 TW21-3216 / TW31-IRHD 的型号和参数 ✗。
+
+修复：改成用"**是不是产品/业务问题**"来判断——
+
+- 产品 / 规格 / 价格 / 交期 / 公司 / 质保 → 正常正面回答；
+- 其它（包括**闲聊式问句**）→ 只接住这句话 + 继续问需求，绝不到处倒产品。
+
+修复后同一句：
+
+```text
+客户：do u like watching TV serises?
+→ I do enjoy a good series now and then, but let's keep our eyes on getting your church display sorted.
+  Either way works for me — will your content be mostly video, images, or a mix of both?
+```
+
+> 回归测试：`tests/test_new_questions.py::TestOffTopicVsBusinessQuestion`。
+
+---
+
+## 新增：需求采集扩展三问 + 联系方式延后到尺寸之后（2026-09-17）
+
+客户口径：需求采集除"室内外 / 场景 / 安装方式 / 点间距或观看距离"之外，
+还要多问三项，并且**联系方式不能跟推荐正文连着问**。
+
+### 一、问完场景紧接着问"放视频还是图片"
+
+| 项 | 说明 |
+|----|------|
+| 槽位 | `content_type`（`video` / `image` / `mixed`） |
+| 位置 | `MISSING_ORDER` 里排在 `purpose` 之后、`installation` 之前 |
+| 作用 | **只记录，不参与选型** —— 同一份需求换内容类型，推荐结果必须完全一致 |
+| 问法 | 每种语言的每个问法都必须带"两者都有"这一选项，且多种说法轮换 |
+
+### 二、推荐前问一句"最看重价格还是质量"
+
+| 客户回答 | 落到 `budget_level` | 选型 |
+|----------|--------------------|------|
+| 价格优先（`price`） | `low` | 默认档（最便宜档优先） |
+| 价格和质量都看重（`both`） | `low` | 默认档 |
+| 只看质量、不在乎价格（`quality`） | `medium` | 中等价位款 |
+| 客户自己已经说过预算 | 直接用客户说的 | **不再问这一句** |
+| 两次都答不上来 | `low`（默认档） | 照常推荐，不再追问 |
+
+问法里**不出现任何价格 / 金额 / 数字**（与"推荐话术不提价格"的口径一致）。
+
+### 三、推荐完之后单独一条消息收集联系方式
+
+| 项 | 说明 |
+|----|------|
+| 时机 | **单独一条消息**开始问"个人还是公司"，不和推荐正文挤在一起 |
+| 公司 | 一轮问完 姓名 + 邮箱 + 职位 |
+| 个人 | 一轮问完 姓名 + 邮箱 |
+| 跳过 | 首轮接待已经给过邮箱（名片 / 邮箱）→ 这一问直接跳过 |
+| 存储 | **只进短期记忆，不落库** |
+| 上限 | 同样"最多问两次"：两次都没给全 → 存下已拿到的部分，不再追问 |
+
+#### 顺序规则：不跟第一轮推荐连着问
+
+```text
+① 推荐产品（此时如果还没有屏体尺寸）
+        ↓
+② 同一轮追问屏体宽高（只推荐产品，先不做箱体 / 模组计算）
+        ↓
+③ 客户给了尺寸 → 再推荐一次（这次带箱体 / 模组 / 实际尺寸）
+        ↓
+④ **然后**才单独发一条问"个人还是公司" → 姓名 / 邮箱（公司再加职位）
+```
+
+- 尺寸缺失时，联系方式这一问会先**压住**（日志：`Contact step deferred (size ask #N)`）。
+- 但压是有上限的：尺寸**问过两次**仍拿不到 → 按"客户不知道"跳过，直接进入联系方式环节，
+  不会因为客户给不出尺寸就永远收不到这一问。
+- 只有**真的走了推荐路径**（`perf.route == "trigger_solution"`）才算"推荐过"；
+  自由问答里的检索片段不算，不会因此提前问联系方式。
+
+> 回归测试：`tests/test_new_questions.py`（33 条：`TestContentTypeQuestion` /
+> `TestPricePreferenceQuestion` / `TestContactInfoCollection` / `TestContactStepInOrchestrator`）。
+
+---
+
+## 修复：已有场景上下文时不再走 fast path（推荐绕过点间距规则）（2026-09-17）
+
+真实多轮实测（DeepSeek）发现：客户已经说过 **教堂 + 室内 + 5m 观看距离**，下一轮回一句
+
+```text
+客户：video mainly. we care about price
+```
+
+系统给出 **TW31-COB-P0.7H**（0.78mm 点间距）—— 室内 5m 按业务规则应该是 **P3**，
+而且这条回复**没有追问屏体尺寸**。
+
+### 根因
+
+| 环节 | 问题 |
+|------|------|
+| 路由 | 这句话里出现 `price`，命中"纯参数查询"模式 → 判成 **FAST** |
+| 上下文 | Orchestrator 只把 `profile` 传给 Solution Agent，**没传** `requirements`；路由层因此看不到"本会话已经说了场景/室内外" |
+| fast path | `_find_models` 没有点间距约束时按点间距**升序**排序 → 返回最细的那一款（P0.7H） |
+| 连带后果 | fast path 不经过 Calculation Ready Gate，所以也不会追问屏体尺寸 |
+
+### 修复
+
+| 文件 | 改动 |
+|------|------|
+| `src/agents/solution/runner.py` | 新增 `routing_requirements(requirements, profile)`：调用方只给 `profile` 时，派生一份 legacy 需求视图交给路由（与 fast path 合并约束） |
+| `src/rag/router.py` | `classify_complexity` 第 1 步加 `and not has_structured_scene`：本会话已有场景级需求 → 不再当"裸参数查询"，走 NORMAL → 确定性选型引擎 |
+
+修复后同一段对话：
+
+```text
+客户：video mainly. we care about price
+→ For your church install with about 5m viewing distance and video content, TW11-3216-P3.0 fits well:
+  its 3.076mm pitch suits that distance … What screen width and height do you need?
+   （点间距回到规则表 → P3；并且补上了"追问屏体尺寸"）
+```
+
+> 回归测试：`tests/test_fast_path_models.py::TestFastPathDoesNotBypassSceneContext`
+> （3 条：无上下文仍是 FAST / 有场景上下文 → NORMAL / profile → requirements 派生）。
+
+---
+
+## 变更：删除推荐后的联系方式收集 + 中文业务问题必须正面回答（2026-09-18）
+
+### 一、删掉"推荐后问个人还是公司 / 姓名 / 邮箱"
+
+实测问题（日志）：推荐完之后系统单独发一条问联系方式，客户接着问别的事情时，
+这句话被当成"在回答联系方式"吞掉：
+
+```text
+INFO: Contact info still incomplete after 2 asks (['email']) — stop asking
+客户：我能定制产品吗
+AI  ：Got it 我能定制产品吗, thanks — I've passed your details on and we'll be in touch shortly.
+```
+
+客户真正的问题没有任何回答。**这一整块已删除**（不再问个人/公司、姓名/邮箱/职位，
+也不再有 "I've passed your details on…" 这类回复），联系信息由销售人工获取。
+
+| 改动 | 说明 |
+|------|------|
+| `src/orchestrator.py` | 删除 `_contact_turn_reply` / `_contact_follow_up` 与相关调用 |
+| `src/rag/contact_info.py` | 整文件删除（已无引用） |
+| `src/models/requirement.py` | 删除 `contact_stage/contact_type/contact_name/contact_email/contact_title/contact_ask_count` 字段 |
+
+### 二、中文业务问题不许被当成"无关话"吞掉
+
+实测：客户问 **"你们的交付日期是多久"**、**"我能定制产品吗"** 时，被当成"与需求无关的话"，
+只回一句 `Got it, I hear you on the timing.` —— 已经写好的交期话术（下单付款起 15–30 天）
+根本没发出去。
+
+根因有两处，都已修：
+
+| 根因 | 修复 |
+|------|------|
+| 交期问法正则不认"交付**日期**是多久 / 下单多久" | `src/rag/delivery_info.py` 补中文口语问法 |
+| 业务问题判定表基本只有英文 | `src/agents/sales/nodes/requirement.py` 新增 `_ZH_BUSINESS_TERMS_RE`（定制/质保/代理/工厂/付款/发货/交期…） |
+
+修复后：
+
+```text
+客户：你们的交付日期是多久
+AI  ：Counting from when the order is placed and paid, our usual delivery time is about 15–30 days
+      … While we're at it, will the screen mainly play video, show images, or a mix of both?
+
+客户：我能定制产品吗
+AI  ：Absolutely, customization is something we can look at for church screens — just let me know
+      what you have in mind … And so I can point you to the right model, will you be showing video,
+      images, or both?
+```
+
+---
+
+## 调整：接话话术要发散，但问句不能丢（2026-09-18）
+
+客户口径：客户每说完一件事，AI 只会 `Got it / Understood`，太死板。要求——
+
+1. **顺着客户这句话的内容说**（说场地就聊场地、说距离就聊距离）；
+2. **每次换一种说法**，不许用烂开头；
+3. **问需求那一问不能丢**，而且接话与问句要自然连成一段，不能硬拼成两句。
+
+| 文件 | 改动 |
+|------|------|
+| `src/agents/sales/nodes/requirement.py` | 抽取提示词追加 `_ACK_STYLE_RULES`：禁用 `Got it/OK/Understood/Sure/好的/收到…` 开头；必须引用客户说到的点；把**最近 3 条已发出的接话**作为"不要重复"清单（`_recent_ack_hints`） |
+| `src/rag/reply_composer.py` | `_clean_llm_ack` 增加 `_CLICHE_ACK_RE`：只有一句空泛客套（"Got it." / "明白。"）直接丢弃，退回带客户内容的 echo；`_ACK_ECHO_LEADS` 增加多种说法 |
+| `src/agents/sales/nodes/script_generator.py` | 问句改写提示词加"必须换词换句式、避开最近用过的开头/过渡"，并继续保证**整段只有一个问句** |
+
+实测效果（同一段对话里的接话）：
+
+```text
+→ Church screens are definitely something we do all the time, so we'll find the right fit for your space.
+  Quick question though — is this going to be indoors or outdoors?
+→ Indoor fixed install at a 5m viewing distance, got it — that gives me a good starting point. Now,
+  just so I can match you with the right model, will this screen mainly be for playing video, showing
+  images, or a mix of both?
+→ Video-first content makes sense for a church setup, so I'll keep that in mind while we narrow things
+  down. That said — before I lock in a model — which matters more to you, price or quality?
+```
+
+---
+
+## 新增：一个项目下多条屏体需求（多块屏）（2026-09-18）
+
+客户："教堂里一块室内屏，门口再来一块室外屏" —— 这是一个项目、**两块屏**：
+各自收集需求、各自推荐、各自算箱体/模组，最后给一份汇总。
+顺带也覆盖 LED + LCD/IFP 混着要（屏类型切换同样开新条目）。
+
+### 流程
+
+```text
+① 第一块屏：正常采集 → 推荐 → 追问屏体尺寸 → 再次推荐（带箱体/模组计算）
+                     ↓
+        单独再发一条："这个项目就这一块屏，还是别的位置也要一起规划？"
+                     ↓
+② 客户说"门口再来一块室外的屏" → 归档第一块，**开一条全新的需求档案**
+   （旧的场景/室内外/尺寸不会带过来；推荐话术会带上 "Screen 2 (outdoor / advertising):"）
+                     ↓
+③ 第二块屏：采集 → 推荐 → 尺寸 → 带箱体/模组计算
+                     ↓
+④ 输出汇总（extra_messages）：
+   Summary for your project — 2 screens:
+   Screen 1 (indoor / church) — TW11-3216-P3.0
+   Screen 2 (outdoor / advertising) — TW11-OD-P5
+```
+
+| 文件 | 改动 |
+|------|------|
+| `src/rag/project_items.py` | 新增：`detect_new_item`（判断"另一块屏"，只在信号明确时开新条目）、`detect_more_items_answer`（客户说"就这一块"）、`multi_item_ask`、`screen_label`、`combined_summary`、`product_model` |
+| `src/memory/store.py` | 新增 `project_items` / `active_item_index` / `item_flags` 的读写接口 |
+| `src/orchestrator.py` | `_maybe_start_new_item`（归档 + 开新档案）、`_multi_item_follow_up`（记录本块推荐 / 追问 / 出汇总）、第二块起的推荐加屏幕标签 |
+| `src/agents/sales/runner.py` | **关键修复**：每轮结束的 `clear()` 之前先保存、之后恢复多屏状态 —— 否则每轮都会退回"第 1 块屏" |
+
+判定规则（避免把"改需求"误判成"第二块屏"）：
+
+- 显式说法 → 开新条目：`另一块 / 第二块 / 再要一块 / 门口 / 入口 / another screen / also need / two screens`…
+- 环境或屏类型冲突 → **只有同时出现方位词**（门口/入口/外面/entrance/outside…）才开新条目；
+  客户纠正自己说过的环境（"actually make it outdoor"）仍按"改需求"处理。
+- 客户说"就这一块 / 没有别的 / no thanks, that's all" → 不再追问。
+
+> 回归测试：`tests/test_multi_item.py`（13 条）。
 
 ---
 

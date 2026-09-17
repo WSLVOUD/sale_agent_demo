@@ -36,6 +36,8 @@ def _state(**overrides):
     slots = {
         "environment": "indoor",
         "purpose": "conference",
+        "content_type": "mixed",
+        "price_preference": "price",
         "viewing_distance_m": 5,
         "installation": "fixed",
     }
@@ -133,10 +135,12 @@ class TestLlmBudget:
         monkeypatch.setattr(recommend, "get_llm", lambda *a, **k: _FailingLLM())
 
         state = _state(
-            understood_slots={
-                "environment": "indoor",
-                "purpose": "conference",
-                "viewing_distance_m": 5,
+              understood_slots={
+                  "environment": "indoor",
+                  "purpose": "conference",
+                  "content_type": "mixed",
+                  "price_preference": "price",
+                  "viewing_distance_m": 5,
                 "installation": "fixed",
                 "target_width_mm": 5000,
                 "target_height_mm": 3000,

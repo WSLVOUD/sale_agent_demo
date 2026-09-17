@@ -215,6 +215,24 @@ _EXPLICIT_RECO_REQUEST_RE = re.compile(
 )
 
 # 判断"是否已经推荐过"时看的需求事实字段
+# 客户"这一轮在说需求"的槽位（用于区分"回答问题"还是"陈述需求"）
+_TURN_REQUIREMENT_KEYS = (
+    "environment",
+    "installation",
+    "viewing_distance_m",
+    "distance",
+    "target_width_mm",
+    "target_height_mm",
+    "screen_size_hint_mm",
+    "size",
+    "pixel_pitch_mm",
+    "purpose",
+    "content_type",
+    "price_preference",
+    "budget_level",
+)
+
+
 _FACT_FIELDS = (
     "display_type",
     "environment",
@@ -235,6 +253,163 @@ def _is_question_message(message: str) -> bool:
     from ....rag.query_understanding import looks_like_question
 
     return looks_like_question(message)
+
+
+_ACK_PROMPT = """你是 LED 显示屏产品的销售，正在微信上和客户聊天。
+客户刚说的这句话**与产品需求无关**（寒暄、闲聊、感叹、题外话、随口一提等）。
+请只回应这句话本身，像真人销售一样自然接一句（最多两句，口语化）。
+
+硬性规则：
+1. 只"接住"这句话：表示听到了 / 表示理解 / 顺着他的话头轻轻应一句。
+2. **绝对不要**回答任何知识性、技术性问题；不要解释任何概念；不要给参数、型号、价格、方案或建议；
+   不要输出任何我们没有依据的信息。
+3. **不要提问**（系统会另外接一个需求问题，避免一句话里出现两个问题）。
+4. 不要复述客户整句话；不要客套话堆砌；不要说"作为AI / 作为助手"。
+5. 每次换一种说法，不要固定句式，可以让语气自然一点。
+6. 语言要求：{language_rule}
+7. 直接输出这一句回应，不要 JSON、不要引号、不要解释。"""
+
+# 客户这句话是不是"我们该正面回答的"（产品/规格/价格/交期/公司信息）
+_PRODUCT_TERMS_RE = re.compile(
+    r"\bTW\s*\d{2}\b|\bP\s*\d(?:\.\d+)?\b|\b(?:led|lcd|ifp|cob|gob|hdr|ip6[56])\b|"
+    r"pixel\s*pitch|brightness|refresh|resolution|\bnit\b|specs?\b|models?\b|series\b|"
+    r"warrant(?:y|ies)|guarantee|certificat(?:e|ion)|"
+    r"显示屏|屏幕|大屏|单色屏|点间距|亮度|刷新率|分辨率|型号|规格|参数|防水|像素|屏体|屏",
+    re.IGNORECASE,
+)
+
+
+# ── 中文业务问题补充词表 ────────────────────────────────────────────────
+# 【修复】客户用中文问"能不能定制 / 交付日期多久 / 有质保吗 / 有代理商吗"这类
+# 业务问题时，上面的词表经常匹配不上，于是被当成"与需求无关的话"：
+# 只回一句 "Got it, …" 接话，客户真正的问题**没有任何回答**
+# （实测日志："我能定制产品吗"、"你们的交付日期是多久"）。
+_ZH_BUSINESS_TERMS_RE = re.compile(
+    r"定制|订制|定做|订做|改尺寸|加工|OEM|ODM|"
+    r"质保|保修|售后|维修|认证|证书|检测报告|"
+    r"代理|经销商|分销|工厂|厂家|"
+    r"付款|定金|订金|预付|发票|运费|发货|到货|交付|交货|工期|生产周期|"
+    r"亮度|分辨率|刷新|点间距|安装方式|"
+    r"能(?:不)?能做|可以(?:不)?可以|支持吗|有.{0,4}吗",
+    re.IGNORECASE,
+)
+
+
+def _is_product_or_business_question(message: str) -> bool:
+    """客户这句话是不是"我们该正面回答的问题"。
+
+    True = 产品/规格/价格/交期/公司信息（走正常回答路径）；
+    False = 与业务无关的闲聊、题外话（哪怕是问句，也只"接住"再继续问需求）。
+    """
+    text = str(message or "")
+    if _PRODUCT_TERMS_RE.search(text) or _ZH_BUSINESS_TERMS_RE.search(text):
+        return True
+    try:
+        from ....rag.company_info import is_company_question
+        from ....rag.delivery_info import is_delivery_question
+        from ....rag.reply_composer import is_price_question
+    except Exception:  # pragma: no cover - 防御式
+        return False
+    try:
+        return bool(
+            is_company_question(text) or is_delivery_question(text) or is_price_question(text)
+        )
+    except Exception:  # pragma: no cover - 防御式
+        return False
+
+
+def _ack_temperature() -> float:
+    from ....config import config as _config
+
+    try:
+        return float(getattr(_config, "ACK_TEMPERATURE", 0.7))
+    except (TypeError, ValueError):  # pragma: no cover - 防御式
+        return 0.7
+
+
+# ── 接话（ack）写法补充规则 ──────────────────────────────────────────────
+# 客户口径（2026-09-18）：客户每说完一件事，AI 只会 "Got it / Understood"，
+# 太死板。要求：顺着客户刚说的内容说、每次换一种说法、不许用烂开头，
+# 但仍**只准一句**，不许提问（问需求由系统另起一句，并且两句话要自然连成一段）。
+_ACK_STYLE_RULES = """
+
+【接话补充规则 · 客户口径】
+1. **禁止**用这些已经用烂的开头：Got it / Okay / OK / Understood / Sure / Thanks for that /
+   好的 / 收到 / 了解 / 明白。第一句就直接顺着客户的话说。
+2. **顺着客户这句话的具体内容说**：他提到场地就说场地、提到距离就说距离、
+   提到用途 / 担忧 / 问题就接那个点；不要只回一句空泛的"收到 / 明白了"。
+3. **每次换一种说法**：不能和下面这些最近已经发出去的接话雷同（开头、句式都要换）。
+最近已发出的接话：
+{recent}
+"""
+
+
+def _recent_ack_hints(state: SalesState, limit: int = 3) -> str:
+    """最近几轮已经发给客户的话（供 ack 参考，避免重复）。"""
+    lines: list[str] = []
+    for item in reversed(state.get("messages") or []):
+        if isinstance(item, dict):
+            role = str(item.get("role") or item.get("type") or "")
+            content = str(item.get("content") or "")
+        else:  # pragma: no cover - LangChain 消息对象
+            role = str(getattr(item, "type", "") or "")
+            content = str(getattr(item, "content", "") or "")
+        if role not in ("assistant", "ai"):
+            continue
+        text = " ".join(content.split())
+        if not text:
+            continue
+        lines.append(f"- {text[:160]}")
+        if len(lines) >= limit:
+            break
+    return "\n".join(reversed(lines)) or "（暂无）"
+
+
+def _generate_offtopic_ack(
+    message: str,
+    *,
+    requirement: str = "",
+    language: str = "en",
+) -> str:
+    """客户说了与需求无关的话时，用较高温度生成一句自然的"接住"话术。
+
+    与需求抽取分开调用：抽取仍是 temperature=0（稳定、不编参数），
+    这里用 ``config.ACK_TEMPERATURE``（默认 0.7）让措辞发散、不重复；
+    并且严格禁止回答知识性问题（见 _ACK_PROMPT）。
+    """
+    try:
+        from ....rag.query_understanding import response_language_rule
+        from ....rag.reply_composer import _clean_llm_ack
+    except Exception:  # pragma: no cover - 防御式
+        return ""
+    try:
+        llm = ChatOpenAI(
+            model=config.MODEL_NAME,
+            temperature=_ack_temperature(),
+            api_key=config.DEEPSEEK_API_KEY,
+            base_url="https://api.deepseek.com",
+        )
+        system = SystemMessage(
+            content=_ACK_PROMPT.format(language_rule=response_language_rule(language))
+        )
+        human = HumanMessage(
+            content=(
+                f"客户这句话：{message}\n"
+                f"（已知需求，仅供判断语气，不要复述）：{requirement or '{}'}"
+            )
+        )
+        response = llm.invoke([system, human])
+        text = response.content if hasattr(response, "content") else str(response)
+        cleaned = _clean_llm_ack(text, language)
+        # 模型没按要求给口语回应（返回了 JSON / 代码块之类）→ 宁可不加这一句，
+        # 也不能把内部结构或无关内容发出去。
+        if not cleaned or "{" in cleaned or "}" in cleaned or cleaned.startswith(("[", "(")):
+            logger.info("Off-topic ack dropped (not a natural sentence): %r", cleaned[:60])
+            return ""
+        return cleaned
+    except Exception as exc:
+        logger.warning("Off-topic ack generation failed: %s", exc)
+        return ""
 
 
 def _snapshot_facts(profile) -> dict:
@@ -353,6 +528,11 @@ ack 的写法（很重要，销售不能只会追问）：
 6. 只返回 JSON，不要任何解释。""")
     
     current_msg = HumanMessage(content=f"已有需求：{state['requirements']}\n\n当前对话：\n{conversation}")
+    # 【客户口径】把"接话要有变化"的规则追加进提示词（含最近已发出的接话，
+    # 避免每轮都回 "Got it / Understood"）。仍然只准一句、不许提问。
+    prompt = SystemMessage(
+        content=str(prompt.content) + _ACK_STYLE_RULES.format(recent=_recent_ack_hints(state))
+    )
     response = llm.invoke([prompt, current_msg])
     
     # 保存合并前的旧状态，用于上下文变化检测
@@ -404,6 +584,48 @@ ack 的写法（很重要，销售不能只会追问）：
     # 规则推断补充：即使LLM提取失败，也能从消息中推断基本需求
     current_msg_text = state.get("current_message", "")
     state["requirements"] = _rule_based_inference(current_msg_text, state["requirements"])
+
+    # ── 客户这句话与需求无关时：用较高温度单独生成"接住这句话"的口语回应 ──────
+    # 需求抽取仍然用 temperature=0（稳定、不编参数）；这里只生成措辞，
+    # 让"接话"不至于每次都是同一句死板的话（config.ACK_TEMPERATURE，默认 0.7）。
+    # 硬性约束：只接住这句话，绝不回答任何知识性问题、不给参数/型号/价格/建议。
+    try:
+        from ....rag.query_understanding import extract_slots
+
+        _this_turn_slots = {
+            k: v
+            for k, v in (extract_slots(current_msg_text) or {}).items()
+            if not str(k).startswith("_")
+        }
+        # 客户这一轮是不是在"说需求"（哪怕是重复一遍）——用于区分
+        # "回答问题"（走自由问答）和"陈述需求"（重新按需求推荐）。
+        turn_states_requirement = bool(
+            any(_this_turn_slots.get(key) for key in _TURN_REQUIREMENT_KEYS)
+        ) or bool(semantic_payload) or bool((extracted or {}).get("usage"))
+        _provides_requirement = bool(_this_turn_slots) or bool(semantic_payload) or bool(
+            (extracted or {}).get("usage")
+        )
+        # 只处理"与业务无关的话/闲聊"（哪怕它是问句，例如 "do u like watching TV series?"）。
+        # 客户如果问的是产品/规格/价格/交期/公司信息，交给正常路径正面回答，
+        # 不能当成无关话只回一句"接住"，也不能反过来倒一堆型号。
+        if not _provides_requirement and not _is_product_or_business_question(current_msg_text):
+            from ....rag.query_understanding import detect_language
+
+            _ack = _generate_offtopic_ack(
+                current_msg_text,
+                requirement=str(state.get("requirements") or ""),
+                language=detect_language(current_msg_text),
+            )
+            if _ack:
+                state["acknowledgement"] = _ack
+                logger.info("Off-topic ack (temp=%.1f): %s", _ack_temperature(), _ack)
+                # 客户只是说了句无关的话：这一轮就是"接住这句话 + 继续问需求"，
+                # 不能绕到 Solution 的自由问答（否则会倒一堆型号和参数）。
+                state["offtopic_turn"] = True
+                state["intent"] = "need_query"
+                logger.info("Off-topic turn → keep requirement mining (intent=need_query)")
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("Off-topic ack step failed: %s", exc)
 
     # 补充推断 usage 字段（_rule_based_inference 不推断 usage）
     if not state["requirements"].get("usage"):
@@ -666,6 +888,10 @@ ack 的写法（很重要，销售不能只会追问）：
                 state.get("already_recommended")
                 and not turn_added_facts
                 and not explicit_reco_request
+                # 客户这一轮如果是在**说需求**（哪怕是把视距/尺寸重复一遍、或改了个值），
+                # 就按需求重新走推荐，不能丢给自由问答 —— 否则会出现
+                # "推荐说 P3.9、回答却讲 around 5"这种自相矛盾（实测日志）。
+                and not turn_states_requirement
             ):
                 state["should_generate_solution"] = False
                 state["pending_question"] = ""

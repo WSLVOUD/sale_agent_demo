@@ -187,6 +187,38 @@ class RecommendationEngine:
         constraints = build_hard_constraints(profile)
 
         candidates, rejected = self._hard_filter(constraints, technical)
+        relaxed_environment = False
+        if not candidates and not constraints.model:
+            # 客户口径：点间距按"环境 + 距离"算出来（例如 >30m → P8~P10），
+            # 但库里可能没有该环境的对应型号（例如 P10 只有户外系列）——
+            # 这时放宽"环境"限制再筛一次，让最接近目标的型号能被选出来，
+            # 而不是直接"没有匹配产品"。
+            #
+            # 注意：只有"同环境本来有产品、是被距离区间卡掉"时才放宽；
+            # 如果该环境/安装方式在库里本来就一片空白（例如户外租赁），
+            # 那是数据边界，仍然按"没有匹配产品"处理。
+            from dataclasses import replace as _replace
+
+            probe_technical = {
+                key: value for key, value in technical.items()
+                if key not in ("pixel_pitch_min_mm", "pixel_pitch_max_mm")
+            }
+            probe_candidates, _ = self._hard_filter(constraints, probe_technical)
+            if probe_candidates:
+                relaxed_env_constraints = _replace(
+                    constraints, environment=None, sources=constraints.sources
+                )
+                alt_candidates, alt_rejected = self._hard_filter(
+                    relaxed_env_constraints, technical
+                )
+                if alt_candidates:
+                    logger.info(
+                        "环境/距离对应点间距（%s~%smm）在 %s 环境无匹配 → 放宽环境后命中 %d 个",
+                        technical.get("pixel_pitch_min_mm"), technical.get("pixel_pitch_max_mm"),
+                        constraints.environment, len(alt_candidates),
+                    )
+                    candidates, rejected = alt_candidates, alt_rejected
+                    relaxed_environment = True
         relaxed = None
         if not candidates and constraints.model:
             # 客户点名的型号在库里不存在时，退化为"同系列 + 同量级点间距"，

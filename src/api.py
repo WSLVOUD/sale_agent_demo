@@ -109,6 +109,7 @@ class ChatResponse(BaseModel):
     complexity: Optional[str] = None
     first_contact_intro: Optional[str] = None  # First contact self-introduction
     first_contact_messages: Optional[List[dict]] = None  # First contact generated messages (intro + assets)
+    extra_messages: Optional[List[str]] = None  # 追加的独立气泡（如推荐后的联系方式询问）
     vision: Optional[dict] = None  # 视觉需求提取指标（计划第二十二阶段）
 
 class ClearMemoryRequest(BaseModel):
@@ -579,6 +580,7 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
         complexity=result.get("complexity"),
         first_contact_intro=result.get("_perf", {}).get("first_contact_intro"),
         first_contact_messages=result.get("_perf", {}).get("first_contact_messages"),
+        extra_messages=result.get("extra_messages"),
         vision=result.get("vision"),
     )
 
@@ -610,6 +612,10 @@ async def _stream_chat(request: ChatRequest):
         answer = str(result.get("response") or "")
         if not answer:
             answer = _get_fallback_response(question)
+        # 追加的独立气泡（如推荐后的联系方式询问）在流式里也一并输出
+        extras = [str(item) for item in (result.get("extra_messages") or []) if item]
+        if extras:
+            answer = answer + "\n\n" + "\n\n".join(extras)
 
         ttft = (time.time() - start_time) * 1000
         yield f"data: {_json.dumps({'type': 'ttft', 'ms': round(ttft, 1)})}\n\n"

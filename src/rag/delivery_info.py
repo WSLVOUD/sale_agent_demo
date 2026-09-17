@@ -22,6 +22,12 @@ LEAD_TIME_DAYS = (15, 30)
 _DELIVERY_QUESTION_RE = re.compile(
     r"交期|交货期|交货时间|交付时间|发货时间|到货时间|多久(?:能)?(?:发货|到货|交付|交付|交货|生产)|"
     r"什么时候(?:能)?(?:发货|到货|交付|交货)|生产周期|备货时间|货期|"
+    # 【修复】中文口语问法：客户的"交付日期是多久 / 交付要多久 / 多久交货 /
+    # 什么时候能给我 / 下单多久能到"以前都没被识别成交期问题，
+    # 于是被当成"与需求无关的话"，只回一句接话就把问题吞了。
+    r"交付(?:日期|时间|周期)?(?:是|要)?(?:多久|多长时间|多长)|"
+    r"(?:多久|多长时间)能?(?:交货|发货|到货|送到|做好|生产完)|"
+    r"下单(?:后)?(?:多久|多长时间)|"
     r"\b(?:lead time|delivery time|delivery date|delivery lead|shipping time|time to deliver|"
     r"when (?:can|will|do) you (?:ship|deliver)|how long (?:does|will|would|to)|how soon)\b",
     re.IGNORECASE,

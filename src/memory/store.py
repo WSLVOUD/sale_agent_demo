@@ -171,6 +171,68 @@ class MemoryStore:
         if session_id in self._sessions:
             self._sessions[session_id]["requirement_profile"] = None
 
+    # ── 一个项目下的多条屏体需求（客户口径 2026-09-18）───────────────────
+    # 客户可能一次要两块屏（教堂里一块室内屏 + 门口一块室外屏，或 LED + LCD/IFP）。
+    # 每条记录 = 该块屏的需求档案 + 它自己的推荐结果；`active_item` 指向"当前正在
+    # 采集/推荐的那一块"。`requirement_profile` 始终是**当前这一块**的档案，
+    # 所有老逻辑（Gate / 推荐 / 计算）都不用改。
+    def get_project_items(self, session_id: str) -> List[Dict[str, Any]]:
+        if session_id not in self._sessions:
+            return []
+        items = self._sessions[session_id].get("project_items") or []
+        return [dict(item) for item in items]
+
+    def set_project_items(self, session_id: str, items: Optional[List[Dict[str, Any]]]) -> None:
+        self._ensure(session_id)
+        self._sessions[session_id]["project_items"] = [dict(item) for item in (items or [])]
+
+    def get_active_item_index(self, session_id: str) -> int:
+        if session_id not in self._sessions:
+            return 0
+        try:
+            return int(self._sessions[session_id].get("active_item_index") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def set_active_item_index(self, session_id: str, index: int) -> None:
+        self._ensure(session_id)
+        self._sessions[session_id]["active_item_index"] = max(0, int(index or 0))
+
+    def record_item_recommendation(self, session_id: str, item: Dict[str, Any]) -> None:
+        """把"当前这块屏"的推荐结果写进项目条目里（供最后汇总用）。"""
+        self._ensure(session_id)
+        items = list(self._sessions[session_id].get("project_items") or [])
+        index = self.get_active_item_index(session_id)
+        while len(items) <= index:
+            items.append({})
+        merged = dict(items[index] or {})
+        merged.update(item)
+        items[index] = merged
+        self._sessions[session_id]["project_items"] = items
+
+    def get_item_flag(self, session_id: str, key: str, default: Any = None) -> Any:
+        """多条屏流程的会话级开关（例如"已经问过还有没有别的屏"）。"""
+        if session_id not in self._sessions:
+            return default
+        flags = self._sessions[session_id].get("item_flags") or {}
+        return flags.get(key, default)
+
+    def set_item_flag(self, session_id: str, key: str, value: Any) -> None:
+        self._ensure(session_id)
+        flags = dict(self._sessions[session_id].get("item_flags") or {})
+        flags[key] = value
+        self._sessions[session_id]["item_flags"] = flags
+
+    def get_item_flags(self, session_id: str) -> Dict[str, Any]:
+        """取全部多条屏流程开关（供跨轮 clear() 前保存）。"""
+        if session_id not in self._sessions:
+            return {}
+        return dict(self._sessions[session_id].get("item_flags") or {})
+
+    def set_item_flags(self, session_id: str, flags: Optional[Dict[str, Any]]) -> None:
+        self._ensure(session_id)
+        self._sessions[session_id]["item_flags"] = dict(flags or {})
+
     def get_previous_display_type(self, session_id: str) -> Optional[str]:
         """取上一个已知的屏幕类型（LED/LCD/IFP/BOTH）。"""
         if session_id not in self._sessions:

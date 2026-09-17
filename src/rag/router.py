@@ -287,7 +287,14 @@ def classify_complexity(
 
     # 1. 纯参数查询（无场景意图 + 无强推理意图）→ FAST
     #    例："亮度是多少"、"P2.5"、"IP65防水等级"、"支持HDR吗"
-    if _is_param_only(q):
+    #
+    #    例外：本会话**已经采集到场景级需求**（purpose / environment / installation …）时，
+    #    这就不算"裸参数查询" —— 走 NORMAL 复用上下文，交给确定性选型引擎。
+    #    实测 bug：客户已经说了"教堂 + 室内 + 5m"，后面回一句
+    #    "video mainly. we care about price"（命中 price 参数词）被判成 FAST，
+    #    绕过了"环境 + 观看距离 → 点间距"规则表，把室内 5m 推成了 P0.7H，
+    #    而且 fast path 不会追问屏体尺寸。
+    if _is_param_only(q) and not has_structured_scene:
         inferred = _extract_parameter_constraints(q)
         return RoutingDecision(
             route=QueryRoute.FAST,

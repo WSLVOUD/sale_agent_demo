@@ -121,6 +121,29 @@ def merge_fast_path_constraints(
     return constraints
 
 
+def routing_requirements(
+    requirements: Dict[str, Any] | None,
+    profile: Any = None,
+) -> Dict[str, Any] | None:
+    """给路由层用的需求上下文。
+
+    Orchestrator 只传 ``profile``、不传 ``requirements``；路由层因此看不到
+    "本会话已经说了场景 / 室内外 / 安装方式"，会把一句长得像参数查询的话
+    （例如 "video mainly. we care about price"）判成 FAST，从而绕过确定性选型
+    引擎与屏体尺寸追问（实测：室内 5m 教堂被推成 P0.7H）。
+
+    这里补一份 legacy 视图；调用方已经传了 requirements 就原样使用。
+    """
+    if requirements:
+        return requirements
+    if profile is None:
+        return requirements
+
+    from ...models.legacy_adapter import profile_to_legacy
+
+    return profile_to_legacy(profile) or requirements
+
+
 class SolutionAgentRunner:
     """Runner class for the Solution Agent.
     
@@ -305,6 +328,10 @@ class SolutionAgentRunner:
 
         # ── Step 1: 三层业务路由 ────────────────────────────────────────
         from src.rag.router import QueryRoute
+
+        # 【修复】调用方（Orchestrator）只传了 profile，没传 requirements ——
+        # 这里补一份 legacy 视图给路由与 fast path 用（详见 routing_requirements）
+        requirements = routing_requirements(requirements, profile)
         routing = classify_complexity(message, existing_requirements=requirements)
         logger.info(
             "Routing: route=%s reason=%s inferred=%s",
