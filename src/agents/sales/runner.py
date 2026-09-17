@@ -268,11 +268,6 @@ class SalesAgentRunner:
                     if hasattr(self.memory_store, "get_active_item_index")
                     else 0
                 )
-                preserved_item_flags = (
-                    self.memory_store.get_item_flags(session_id)
-                    if hasattr(self.memory_store, "get_item_flags")
-                    else {}
-                )
 
                 self.memory_store.clear(session_id)
                 self.memory_store.extend(session_id, final_messages)
@@ -304,8 +299,6 @@ class SalesAgentRunner:
                     self.memory_store, "set_active_item_index"
                 ):
                     self.memory_store.set_active_item_index(session_id, preserved_active_item)
-                if preserved_item_flags and hasattr(self.memory_store, "set_item_flags"):
-                    self.memory_store.set_item_flags(session_id, preserved_item_flags)
 
                 # 记录"本轮已经给过推荐"：下一轮客户说"想换个产品"时，
                 # 系统据此判断需要在同一会话里清空旧需求、重新采集。

@@ -541,8 +541,6 @@ class DualAgentOrchestrator:
         memory_store.clear_requirements(session_id)
         if hasattr(memory_store, "clear_recommendation"):
             memory_store.clear_recommendation(session_id)
-        memory_store.set_item_flag(session_id, "multi_item_declined", False)
-        memory_store.set_item_flag(session_id, "asked_for_more_at", -1)
         logger.info(
             "[%s] Multi-item: 开始收集第 %d 块屏的需求（%s）", session_id, index + 2, reason
         )
@@ -551,13 +549,14 @@ class DualAgentOrchestrator:
     def _multi_item_follow_up(
         self, session_id: str, result: Dict[str, Any], message: str = ""
     ) -> Optional[str]:
-        """推荐完之后：先问"还有别的屏吗"，第二块推荐完就给整份汇总。"""
-        from .rag.project_items import (
-            combined_summary,
-            detect_more_items_answer,
-            multi_item_ask,
-            product_model,
-        )
+        """推荐完之后：记录这一块屏的结果；第二块（及以后）推荐完就给整份汇总。
+
+        客户口径（2026-09-18 二次确认）：**不要**在推荐后主动追问
+        "By the way — is this the only screen in the project…"。
+        多屏仍然支持 —— 客户自己提到第二块屏（"门口再来一块室外的屏" /
+        "another screen for the entrance"）时照常开新条目，最后出汇总。
+        """
+        from .rag.project_items import combined_summary, product_model
         from .rag.reply_composer import reply_language
 
         memory_store = self.memory_store
@@ -573,10 +572,7 @@ class DualAgentOrchestrator:
         if route != "trigger_solution":
             return None
 
-        # 客户明确说"就这一块 / 没有别的" → 不再追问
         customer_message = str(message or "")
-        if customer_message and detect_more_items_answer(customer_message):
-            memory_store.set_item_flag(session_id, "multi_item_declined", True)
 
         # 这一轮没有推荐出产品 → 不改动项目状态
         if not products:
@@ -603,14 +599,7 @@ class DualAgentOrchestrator:
                 logger.info("[%s] Multi-item: 输出 %d 块屏汇总", session_id, len(items))
                 return summary
 
-        # 第一块推荐完 → 问一句还有没有别的位置（只问一次；客户说没有就不再问）
-        if memory_store.get_item_flag(session_id, "multi_item_declined"):
-            return None
-        asked_at = int(memory_store.get_item_flag(session_id, "asked_for_more_at", -1) or -1)
-        if asked_at == index:
-            return None
-        memory_store.set_item_flag(session_id, "asked_for_more_at", index)
-        return multi_item_ask(language, seed=index)
+        return None
 
     def _stored_profile(self, session_id: str):
         """取本会话已收集的需求档案（转发给 Solution Agent，避免它重新问一遍）。"""

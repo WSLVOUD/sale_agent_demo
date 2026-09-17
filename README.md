@@ -951,8 +951,6 @@ AI  ：Absolutely, customization is something we can look at for church screens 
 ```text
 ① 第一块屏：正常采集 → 推荐 → 追问屏体尺寸 → 再次推荐（带箱体/模组计算）
                      ↓
-        单独再发一条："这个项目就这一块屏，还是别的位置也要一起规划？"
-                     ↓
 ② 客户说"门口再来一块室外的屏" → 归档第一块，**开一条全新的需求档案**
    （旧的场景/室内外/尺寸不会带过来；推荐话术会带上 "Screen 2 (outdoor / advertising):"）
                      ↓
@@ -966,7 +964,7 @@ AI  ：Absolutely, customization is something we can look at for church screens 
 
 | 文件 | 改动 |
 |------|------|
-| `src/rag/project_items.py` | 新增：`detect_new_item`（判断"另一块屏"，只在信号明确时开新条目）、`detect_more_items_answer`（客户说"就这一块"）、`multi_item_ask`、`screen_label`、`combined_summary`、`product_model` |
+| `src/rag/project_items.py` | 新增：`detect_new_item`（判断"另一块屏"，只在信号明确时开新条目）、`screen_label`、`combined_summary`、`product_model` |
 | `src/memory/store.py` | 新增 `project_items` / `active_item_index` / `item_flags` 的读写接口 |
 | `src/orchestrator.py` | `_maybe_start_new_item`（归档 + 开新档案）、`_multi_item_follow_up`（记录本块推荐 / 追问 / 出汇总）、第二块起的推荐加屏幕标签 |
 | `src/agents/sales/runner.py` | **关键修复**：每轮结束的 `clear()` 之前先保存、之后恢复多屏状态 —— 否则每轮都会退回"第 1 块屏" |
@@ -976,9 +974,12 @@ AI  ：Absolutely, customization is something we can look at for church screens 
 - 显式说法 → 开新条目：`另一块 / 第二块 / 再要一块 / 门口 / 入口 / another screen / also need / two screens`…
 - 环境或屏类型冲突 → **只有同时出现方位词**（门口/入口/外面/entrance/outside…）才开新条目；
   客户纠正自己说过的环境（"actually make it outdoor"）仍按"改需求"处理。
-- 客户说"就这一块 / 没有别的 / no thanks, that's all" → 不再追问。
 
-> 回归测试：`tests/test_multi_item.py`（13 条）。
+> **不主动追问**（客户口径 2026-09-18 二次确认）：推荐完不再发
+> "By the way — is this the only screen in the project, or is there another position…"。
+> 多屏只在客户**自己提到**第二块屏时启用。
+>
+> 回归测试：`tests/test_multi_item.py`（11 条）。
 
 ---
 

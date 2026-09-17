@@ -6,8 +6,12 @@
 
 模块职责：
   - ``detect_new_item``    判断客户这句话是不是在说"另一块屏"
-  - ``multi_item_ask``     第一块屏推荐完之后，问"还有其他位置要装吗"
+  - ``screen_label``       给第二块（及以后）的推荐加"这是哪一块"的标签
   - ``combined_summary``   两块（或多块）屏都推荐完之后，给一份汇总
+
+注：客户口径（2026-09-18 二次确认）**不再**在推荐后主动追问
+"By the way — is this the only screen in the project…"，多屏只在客户自己
+提到第二块屏时才启用。
 """
 from __future__ import annotations
 
@@ -37,21 +41,13 @@ _NEW_ITEM_PATTERNS = (
 _NEW_ITEM_RE = re.compile("|".join(_NEW_ITEM_PATTERNS), re.IGNORECASE)
 
 
-# ── 第一块屏推荐完之后，主动问一句"还有别的屏吗" ─────────────────────────
-_MULTI_ITEM_ASK = {
-    "en": (
-        "By the way — is this the only screen in the project, or is there another "
-        "position you'd like me to plan as well?",
-        "One more thing: will there be just this one screen, or should I also work out "
-        "a second one for another spot?",
-        "Quick one — do you need just this screen, or a second one somewhere else too?",
-    ),
-    "zh": (
-        "顺便问一下：这个项目就这一块屏，还是别的位置也要一起规划？",
-        "再确认一句：只需要这一块，还是其他位置也要再来一块？",
-        "顺便问一下，除了这里，还有别的位置要装屏吗？",
-    ),
-}
+# 「另一个位置」的方位词：只有出现这些词，环境/屏类型冲突才当成"第二块屏"
+_LOCATION_HINT_RE = re.compile(
+    r"门口|入口|大门|正门|外面|外侧|另(?:一)?(?:处|个位置|边)|别的?位置|"
+    r"entrance|outside|outdoor area|front (?:door|of)|another (?:spot|location|area)|"
+    r"second (?:spot|location|area)",
+    re.IGNORECASE,
+)
 
 _MULTI_ITEM_HEADER = {
     "en": "Summary for your project — {count} screens:",
@@ -62,37 +58,6 @@ _ITEM_LABEL = {
     "en": "Screen {index}",
     "zh": "第 {index} 块屏",
 }
-
-
-def multi_item_ask(language: str = "en", seed: int = 0) -> str:
-    """第一块屏推荐完之后，问客户还有没有别的屏。"""
-    lang = "zh" if str(language or "").lower().startswith("zh") else "en"
-    variants = _MULTI_ITEM_ASK[lang]
-    return variants[seed % len(variants)]
-
-
-# 「另一个位置」的方位词：只有出现这些词，环境/屏类型冲突才当成"第二块屏"
-_LOCATION_HINT_RE = re.compile(
-    r"门口|入口|大门|正门|外面|外侧|另(?:一)?(?:处|个位置|边)|别的?位置|"
-    r"entrance|outside|outdoor area|front (?:door|of)|another (?:spot|location|area)|"
-    r"second (?:spot|location|area)",
-    re.IGNORECASE,
-)
-
-# 客户明确回答"就这一块 / 没有别的" → 别再追问
-_NO_MORE_ITEMS_RES = (
-    re.compile(r"\bno\s+more\b|\bnothing\s+else\b|\bthat'?s\s+all\b|\bthats\s+all\b", re.I),
-    re.compile(r"\bjust\s+(?:this|the)\s+one\b|\bonly\s+(?:one|this)\b|\bno\s+thanks\b|\bnope\b", re.I),
-    re.compile(r"就(?:这|一)?(?:一)?块|只有(?:这|一)(?:一)?块|就这一个|没有别的|没有其他|不用了|不需要了|没有了|暂无"),
-)
-
-
-def detect_more_items_answer(message: str) -> bool:
-    """客户是不是在回答"就这一块，没有别的屏"。"""
-    text = " ".join(str(message or "").split())
-    if not text or len(text) > 40:
-        return False
-    return any(pattern.search(text) for pattern in _NO_MORE_ITEMS_RES)
 
 
 def _norm_environment(value: Any) -> str:
@@ -109,6 +74,19 @@ def _norm_display_type(value: Any) -> str:
     return text if text in ("LED", "LCD", "IFP") else ""
 
 
+def _screen_where(profile: Any, lang: str) -> str:
+    """这一块屏的"环境 / 场景"短语（用于标签与汇总）。"""
+    data = profile if isinstance(profile, dict) else getattr(profile, "model_dump", lambda: {})()
+    data = data or {}
+    scene = str(data.get("purpose") or data.get("usage") or "").strip()
+    env = _norm_environment(data.get("environment"))
+    env_text = {
+        "indoor": "室内" if lang == "zh" else "indoor",
+        "outdoor": "室外" if lang == "zh" else "outdoor",
+    }.get(env, env)
+    return " / ".join([part for part in (env_text, scene) if part])
+
+
 def detect_new_item(
     message: str,
     profile: Any = None,
@@ -119,8 +97,8 @@ def detect_new_item(
 
     只在**信号明确**时才开新条目，避免把"客户改需求"误判成"第二块屏"：
       1. 显式说法（"另外一块 / 第二块 / 门口 / another screen / also need …"）；
-      2. 或者：第一块屏已经推荐完了，而这句给出的**环境 / 屏类型**与当前条目冲突
-         （例如当前是室内、客户说"门口那块是室外的"）。
+      2. 或者：第一块屏已经推荐完了，而这句同时给出**方位词**和冲突的
+         环境 / 屏类型（例如当前是室内、客户说"门口那块是室外的"）。
 
     Returns:
         (是否开新条目, 原因)
@@ -142,9 +120,9 @@ def detect_new_item(
     except Exception:  # pragma: no cover - 防御式
         return False, ""
 
+    has_location_hint = bool(_LOCATION_HINT_RE.search(text))
     new_env = _norm_environment(slots.get("environment"))
     current_env = _norm_environment(getattr(profile, "environment", None))
-    has_location_hint = bool(_LOCATION_HINT_RE.search(text))
     if has_location_hint and new_env and current_env and new_env != current_env:
         return True, f"environment_switch:{current_env}->{new_env}"
 
@@ -156,20 +134,25 @@ def detect_new_item(
     return False, ""
 
 
+def screen_label(index: int, profile: Any, language: str = "en") -> str:
+    """多屏会话里给每块屏加个前缀，避免"把第二块说成第一块"。
+
+    实测：客户开了第二块屏（门口室外广告屏）之后，推荐话术里仍会出现
+    "For your church indoor screen …"，客户分不清在说哪一块。
+    """
+    lang = "zh" if str(language or "").lower().startswith("zh") else "en"
+    where = _screen_where(profile, lang)
+    number = index + 1
+    if lang == "zh":
+        return f"第 {number} 块屏（{where}）：" if where else f"第 {number} 块屏："
+    return f"Screen {number} ({where}): " if where else f"Screen {number}: "
+
+
 def item_summary_line(item: Dict[str, Any], index: int, language: str = "en") -> str:
     """汇总里的一行：第 N 块屏 + 场景/环境 + 型号（含箱体计算摘要）。"""
     lang = "zh" if str(language or "").lower().startswith("zh") else "en"
-    profile = item.get("profile") or {}
     label = _ITEM_LABEL[lang].format(index=index)
-
-    scene = str(profile.get("purpose") or profile.get("usage") or "").strip()
-    env = _norm_environment(profile.get("environment"))
-    env_text = {
-        "indoor": "室内" if lang == "zh" else "indoor",
-        "outdoor": "室外" if lang == "zh" else "outdoor",
-    }.get(env, env)
-    where = " / ".join([part for part in (env_text, scene) if part])
-
+    where = _screen_where(item.get("profile") or {}, lang)
     model = str(item.get("model") or "").strip()
     calc = str(item.get("calculation") or "").strip()
 
@@ -182,27 +165,6 @@ def item_summary_line(item: Dict[str, Any], index: int, language: str = "en") ->
     if calc:
         line = f"{line} —— {calc}" if lang == "zh" else f"{line} — {calc}"
     return line
-
-
-def screen_label(index: int, profile: Any, language: str = "en") -> str:
-    """多屏会话里给每块屏加个前缀，避免"把第二块说成第一块"。
-
-    实测：客户开了第二块屏（门口室外广告屏）之后，推荐话术里仍会出现
-    "For your church indoor screen …"，客户分不清在说哪一块。
-    """
-    lang = "zh" if str(language or "").lower().startswith("zh") else "en"
-    data = profile if isinstance(profile, dict) else getattr(profile, "model_dump", lambda: {})()
-    scene = str((data or {}).get("purpose") or "").strip()
-    env = _norm_environment((data or {}).get("environment"))
-    env_text = {
-        "indoor": "室内" if lang == "zh" else "indoor",
-        "outdoor": "室外" if lang == "zh" else "outdoor",
-    }.get(env, env)
-    where = " / ".join([part for part in (env_text, scene) if part])
-    number = index + 1
-    if lang == "zh":
-        return f"第 {number} 块屏（{where}）：" if where else f"第 {number} 块屏："
-    return f"Screen {number} ({where}): " if where else f"Screen {number}: "
 
 
 def combined_summary(items: Sequence[Dict[str, Any]], language: str = "en") -> Optional[str]:
@@ -251,10 +213,8 @@ def product_model(product: Any) -> str:
 
 __all__ = [
     "combined_summary",
-    "detect_more_items_answer",
     "detect_new_item",
     "item_summary_line",
-    "multi_item_ask",
     "product_model",
     "screen_label",
 ]

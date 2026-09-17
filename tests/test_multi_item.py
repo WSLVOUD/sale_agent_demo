@@ -14,10 +14,9 @@ from src.models.requirement import RequirementProfile  # noqa: E402
 from src.memory.store import memory  # noqa: E402
 from src.rag.project_items import (  # noqa: E402
     combined_summary,
-    detect_more_items_answer,
     detect_new_item,
-    multi_item_ask,
     product_model,
+    screen_label,
 )
 
 
@@ -64,13 +63,6 @@ class TestDetectNewItem:
         for message in ("5 meters", "it's for a church", "I don't know"):
             assert detect_new_item(message, profile, already_recommended=True)[0] is False, message
 
-    def test_more_items_answer(self):
-        for message in ("就这一块", "没有别的了", "no thanks, that is all", "nope"):
-            assert detect_more_items_answer(message) is True, message
-        for message in ("门口还有一块", "yes, another one"):
-            assert detect_more_items_answer(message) is False, message
-
-
 class TestProjectItemStore:
 
     def test_product_model_reads_document_shape(self):
@@ -114,9 +106,10 @@ class TestProjectItemStore:
         assert combined_summary([], "en") is None
         assert combined_summary([{"model": "TW11-3216-P3.0"}], "en") is None
 
-    def test_ask_variants_are_language_aware(self):
-        assert "screen" in multi_item_ask("en", 0)
-        assert "屏" in multi_item_ask("zh", 0)
+    def test_screen_label_is_language_aware(self):
+        profile = {"purpose": "advertising", "environment": "outdoor"}
+        assert screen_label(1, profile, "en").startswith("Screen 2 (outdoor")
+        assert screen_label(1, profile, "zh").startswith("第 2 块屏（室外")
 
 
 class _StubSales:
@@ -161,16 +154,17 @@ class TestMultiItemInOrchestrator:
             session_id, RequirementProfile.from_slots(slots, explicit_keys=set(slots))
         )
 
-    def test_first_recommendation_asks_for_more_screens(self):
-        session_id = "multi-item-ask"
+    def test_first_recommendation_does_not_ask_for_more_screens(self):
+        """客户口径：不要在推荐后追问 "is this the only screen in the project?"。"""
+        session_id = "multi-item-no-ask"
         self._start(session_id)
         try:
             orch = self._orchestrator(_StubSales())
             result = orch.process_message("i need an led screen for a church", session_id)
 
             extras = result.get("extra_messages") or []
-            assert len(extras) == 1, extras
-            assert "screen" in extras[0].lower()
+            assert extras == [], extras
+            assert "only screen in the project" not in result["response"]
             items = memory.get_project_items(session_id)
             assert items and items[0]["model"] == "TW11-3216-P3.0"
         finally:
@@ -215,19 +209,5 @@ class TestMultiItemInOrchestrator:
             assert "TW31-HOD-P5.7E" in extras[0]
             # 第二块屏的推荐要说清楚是哪一块，不能和第一块混在一起
             assert result["response"].startswith("Screen 2")
-        finally:
-            memory.clear(session_id)
-
-    def test_no_more_screens_stops_asking(self):
-        session_id = "multi-item-declined"
-        self._start(session_id)
-        try:
-            orch = self._orchestrator(_StubSales())
-            orch.process_message("i need an led screen for a church", session_id)
-            orch.process_message("就这一块", session_id)
-
-            orch = self._orchestrator(_StubSales())
-            result = orch.process_message("i need an led screen for a church", session_id)
-            assert not (result.get("extra_messages") or [])
         finally:
             memory.clear(session_id)

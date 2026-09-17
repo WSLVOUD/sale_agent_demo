@@ -210,29 +210,6 @@ class MemoryStore:
         items[index] = merged
         self._sessions[session_id]["project_items"] = items
 
-    def get_item_flag(self, session_id: str, key: str, default: Any = None) -> Any:
-        """多条屏流程的会话级开关（例如"已经问过还有没有别的屏"）。"""
-        if session_id not in self._sessions:
-            return default
-        flags = self._sessions[session_id].get("item_flags") or {}
-        return flags.get(key, default)
-
-    def set_item_flag(self, session_id: str, key: str, value: Any) -> None:
-        self._ensure(session_id)
-        flags = dict(self._sessions[session_id].get("item_flags") or {})
-        flags[key] = value
-        self._sessions[session_id]["item_flags"] = flags
-
-    def get_item_flags(self, session_id: str) -> Dict[str, Any]:
-        """取全部多条屏流程开关（供跨轮 clear() 前保存）。"""
-        if session_id not in self._sessions:
-            return {}
-        return dict(self._sessions[session_id].get("item_flags") or {})
-
-    def set_item_flags(self, session_id: str, flags: Optional[Dict[str, Any]]) -> None:
-        self._ensure(session_id)
-        self._sessions[session_id]["item_flags"] = dict(flags or {})
-
     def get_previous_display_type(self, session_id: str) -> Optional[str]:
         """取上一个已知的屏幕类型（LED/LCD/IFP/BOTH）。"""
         if session_id not in self._sessions:
