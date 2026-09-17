@@ -294,6 +294,22 @@ def environment_confirm_question(
 # 客户第一次说"不知道"之后，第二次要给区间 / 二选一，让他更容易回答；
 # 客户可以用"大概/大约/更远/更近/10 米以上"这种模糊说法回答。
 EASIER_QUESTIONS: Dict[str, Dict[str, tuple[str, ...]]] = {
+    # 第二次问安装方式：客户听不懂"fixed / rental"，就用大白话解释着问
+    "installation": {
+        "en": (
+            "Let me put it another way — do you need it mounted on the wall for good, "
+            "or should it be something you can put up and take down quickly and carry with you?",
+            "No jargon then — is it fixed in place permanently, or a portable one you can "
+            "assemble and pack away whenever you need to move it?",
+            "Simply put: does it stay installed on site, or do you need to move it around "
+            "from place to place?",
+        ),
+        "zh": (
+            "我换个说法：你是需要固定在墙上长期用的，还是需要能快装快拆、随时可以带走的？",
+            "不用专业词 —— 是装上去就不动了，还是要能快速拆装、随时搬走的？",
+            "简单说：这块屏是固定装在现场，还是需要经常挪地方、随时带走的？",
+        ),
+    },
     # 第二次问内容类型：给三个选项（视频 / 图片 / 两者都有）
     "content_type": {
         "en": (
@@ -345,12 +361,15 @@ EASIER_QUESTIONS: Dict[str, Dict[str, tuple[str, ...]]] = {
     },
     "installation": {
         "en": (
-            "That's fine — is this going to stay put permanently, or is it something you rent "
-            "for events?",
-            "If you are not sure, just tell me: long-term fixed install, or short-term rental?",
+            "No jargon then — is it fixed in place for good, or a portable one you can put up "
+            "and pack away whenever you need to move it?",
+            "Let me put it another way — do you need it mounted on the wall for good, or "
+            "something you can put up and take down quickly and carry with you?",
+            "Simply put: does it stay installed on site, or do you need to move it from place to place?",
         ),
         "zh": (
-            "不确定也没关系 —— 是长期固定安装，还是短期租赁使用？",
+            "我换个说法：你是需要固定在墙上长期用的，还是需要能快装快拆、随时可以带走的？",
+            "不用专业词 —— 是装上去就不动了，还是要能快速拆装、随时搬走的？",
         ),
     },
     "size": {

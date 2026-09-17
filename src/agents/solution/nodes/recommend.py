@@ -254,21 +254,20 @@ def _express_recommendation(
     follow_up: bool = False,
 ):
     """用一次 LLM 调用把确定性结论表达成销售话术；失败时退化为模板。"""
-    top = recommendations[0]
+    # 客户口径（2026-09-18）：**推荐时只报一个型号**，其他型号一律不提。
+    # 只有客户主动问"还有别的推荐吗"（follow_up）时，才换成另一个型号给他。
+    top = recommendations[1] if (follow_up and len(recommendations) > 1) else recommendations[0]
+    # 只把这个型号的实测参数交给 LLM —— 给它三行，它就容易把别的型号也念出来
+    alternative_lines: list = []
 
     spec_lines = [
-        f"- {rec['model']}: pixel pitch {rec['pixel_pitch_mm']}mm, "
-        f"brightness {rec['brightness_nit']}nit, "
-        f"cabinet {rec['cabinet_size_mm']}, "
-        f"{rec['modules_per_cabinet']} modules per cabinet, "
-        f"{rec['warranty_years']} year warranty"
-        for rec in recommendations[:3]
+        f"- {top['model']}: pixel pitch {top['pixel_pitch_mm']}mm, "
+        f"brightness {top['brightness_nit']}nit, "
+        f"cabinet {top['cabinet_size_mm']}, "
+        f"{top['modules_per_cabinet']} modules per cabinet, "
+        f"{top['warranty_years']} year warranty"
     ]
     # 备选款：说清"它比首选款多什么"，让客户按自己的偏好选（不提价格）
-    alternative_lines = [
-        f"- {rec['model']}: {_alternative_difference(top, rec)}"
-        for rec in recommendations[1:3]
-    ]
     reasons = "; ".join(top.get("reasons") or [])
     extra = ""
     if additional_requirements:
@@ -320,8 +319,6 @@ def _express_recommendation(
         f"{top['model']}\n\n"
         "Verified product data:\n" + "\n".join(spec_lines) + "\n\n"
         f"Recommendation reasons: {reasons}\n"
-        "Alternatives (each line says what that model gives you instead):\n"
-        + ("\n".join(alternative_lines) if alternative_lines else "- none")
         + f"{calc_text}{extra}{latest}\n\n"
         "Rules:\n"
         "1. Mention the selected model with its full model code — it does not have to be the very first words.\n"
@@ -330,9 +327,8 @@ def _express_recommendation(
         "brightness, size, delivery…), acknowledge them in ONE short clause and tie the choice to them, "
         "so the reply answers what they just said instead of repeating the same text.\n"
         "3. If a calculated configuration is given, include the cabinet count and actual size.\n"
-        "3b. If alternatives are listed, offer each one as ONE short conditional sentence in this exact shape: "
-        "\"If you want <that difference>, <MODEL>.\" (e.g. \"If you want higher brightness, TW21-3216-P3.0.\") "
-        "Never list them as a plain list and never repeat the selected model's specs.\n"
+        "3b. Mention ONLY the selected model above. Never name, hint at or compare any other model "
+        "code, and never write \"If you want <something>, <OTHER MODEL>\". One model per reply.\n"
         "3c. NEVER mention price, price tier, cost, discount, budget or value for money — pricing is handled "
         "separately by the sales team.\n"
         + next_step_rule
@@ -364,8 +360,6 @@ def _express_recommendation(
     fallback = opener
     if top.get("reasons"):
         fallback += " " + "; ".join(top["reasons"][:2]) + "."
-    for rec in recommendations[1:3]:
-        fallback += f" If you want {_alternative_difference(top, rec)}, {rec['model']}."
     if calculation:
         fallback += (
             f" For your target size we need {calculation['columns']}x{calculation['rows']} "

@@ -219,10 +219,11 @@ _ALT_PITCH = {
 
 
 class TestAlternativesReplyFormat:
-    """客户问"还有其他推荐吗"时的回答格式（客户口径）：
+    """推荐表达（客户口径 2026-09-18）：
 
-        "If you want higher brightness, TW21-3216-P3.0." + 邀请补充需求；
-        不重讲首选、不催尺寸、**绝不提价格**。
+      - 正常情况下**只报一个型号**，其他型号一律不提；
+      - 客户主动问"还有其他推荐吗" → 换成**另一个型号**给他，也不列一串备选；
+      - 不催尺寸、**绝不提价格**。
     """
 
     def _profile(self):
@@ -236,7 +237,8 @@ class TestAlternativesReplyFormat:
             assert recommend._ALTERNATIVES_RE.search(message), message
         assert not recommend._ALTERNATIVES_RE.search("我需要便宜质量好的屏幕")
 
-    def test_fallback_offers_conditional_alternatives_with_invitation(self, monkeypatch):
+    def test_follow_up_switches_to_another_model(self, monkeypatch):
+        """客户主动问"还有其他推荐吗" → 换一个型号（不是列一串条件式备选）。"""
         import src.agents.solution.nodes.recommend as recommend
 
         class _Failing:
@@ -256,15 +258,16 @@ class TestAlternativesReplyFormat:
         )
         lowered = answer.lower()
 
-        assert "if you want" in lowered, answer
-        assert "tw21-3216-p3.0" in lowered, answer
+        assert "tw21-3216-p3.0" in lowered, answer              # 换成了另一个型号
+        assert "tw11-3216-p3.0" not in lowered, answer          # 不再重复首选
+        assert "if you want" not in lowered, answer             # 不再给条件式备选
         assert "other requirements" in lowered, answer          # 邀请补充需求
         assert "width and height" not in lowered, answer        # 不在这一轮催尺寸
         for word in ("price", "cost", "budget", "tier", "cheap"):
             assert word not in lowered, (word, answer)
 
-    def test_prompt_forbids_price_and_asks_conditional_alternatives(self, monkeypatch):
-        """给 LLM 的提示词里：备选要说成条件句、且禁止提价格。"""
+    def test_prompt_allows_only_one_model_and_forbids_price(self, monkeypatch):
+        """给 LLM 的提示词里：只准提一个型号、且禁止提价格。"""
         import src.agents.solution.nodes.recommend as recommend
 
         captured = {}
@@ -291,5 +294,8 @@ class TestAlternativesReplyFormat:
         data_section = prompt.split("Rules:")[0]
         assert "price tier" not in data_section, data_section
         assert "NEVER mention price" in prompt
-        assert "If you want <that difference>" in prompt
-        assert "higher brightness" in prompt      # 备选差异说明
+        assert "Mention ONLY the selected model" in prompt
+        assert "If you want <that difference>" not in prompt
+        # 只给了被选中的那一个型号的参数（换型号是"再换一个"，不是并列罗列）
+        assert "tw21-3216-p3.0" in prompt.lower()
+        assert "tw11-3216-p3.0" not in data_section.lower()

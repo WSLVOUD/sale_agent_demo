@@ -135,8 +135,16 @@ class _StubSales:
 
 
 class _StubSolution:
+    """方案 Agent 的桩：多屏时每块屏会各调一次，返回该屏的型号。"""
+
+    def __init__(self, model="TW31-HOD-P5.7E"):
+        self.model = model
+
     def run(self, *args, **kwargs):
-        return {}
+        return {
+            "answer": f"{self.model} fits well.",
+            "products": [{"model": self.model}],
+        }
 
 
 class TestMultiItemInOrchestrator:
@@ -170,7 +178,8 @@ class TestMultiItemInOrchestrator:
         finally:
             memory.clear(session_id)
 
-    def test_second_screen_starts_a_fresh_profile(self):
+    def test_second_screen_starts_as_a_copy_when_unspecified(self):
+        """客户口径：没说清"这块要什么、那块要什么"→ 两块记成一样的。"""
         session_id = "multi-item-second"
         self._start(session_id)
         try:
@@ -180,13 +189,73 @@ class TestMultiItemInOrchestrator:
             # 客户说"门口再来一块室外的屏" → 开第二条需求档案
             orch.process_message("门口再来一块室外的屏", session_id)
             assert memory.get_active_item_index(session_id) == 1
-            profile = memory.get_requirement_profile(session_id) or {}
-            # 第一块的需求不能被带过来（环境/场景都要重新采集）
-            assert profile.get("purpose") != "church" or profile.get("environment") != "indoor"
+            items = memory.get_project_items(session_id)
+            first, second = items[0]["profile"], items[1]["profile"]
+            # 客户没指明差异的字段 → 两块一致
+            assert second["display_type"] == first["display_type"] == "LED"
+            assert second["purpose"] == first["purpose"] == "church"
         finally:
             memory.clear(session_id)
 
-    def test_second_recommendation_returns_combined_summary(self):
+    def test_two_specs_in_one_message_are_recorded_separately(self):
+        """一句话给了两块屏的规格 → 分别记录（每块一条）"""
+        session_id = "multi-item-split"
+        memory.clear(session_id)
+        memory.mark_first_contact_done(session_id)
+        try:
+            orch = self._orchestrator(_StubSales())
+            orch.process_message(
+                "i need two led screens: 4m wide x 2.5 high for indoor "
+                "and 3m x 2m for the outdoor",
+                session_id,
+            )
+            items = memory.get_project_items(session_id)
+            assert len(items) == 2, items
+            by_env = {
+                item["profile"].get("environment"): item["profile"] for item in items
+            }
+            assert set(by_env) == {"indoor", "outdoor"}, by_env
+            # 每块屏各拿各的尺寸（不是两个都记成 4x2.5）
+            assert (by_env["indoor"]["target_width_m"], by_env["indoor"]["target_height_m"]) == (4.0, 2.5)
+            assert (by_env["outdoor"]["target_width_m"], by_env["outdoor"]["target_height_m"]) == (3.0, 2.0)
+        finally:
+            memory.clear(session_id)
+
+    def test_edit_switches_to_the_named_screen_only(self):
+        """客户说"把室内那块改成 5m x 3m" → 只切到那一块（另一块不动）"""
+        session_id = "multi-item-edit"
+        memory.clear(session_id)
+        memory.mark_first_contact_done(session_id)
+        try:
+            orch = self._orchestrator(_StubSales())
+            orch._split_and_apply_screen_specs(
+                session_id,
+                "indoor 4m x 2.5m and outdoor 3m x 2m",
+            )
+            assert memory.get_active_item_index(session_id) == 1
+
+            target = orch._maybe_target_screen(
+                session_id, "change the indoor one to 5m x 3m"
+            )
+            assert target == 0
+            assert memory.get_active_item_index(session_id) == 0
+            # 室外那块没被动过
+            items = memory.get_project_items(session_id)
+            assert items[1]["profile"]["target_width_m"] == 3.0
+        finally:
+            memory.clear(session_id)
+
+    def test_unknown_specs_are_copied_to_both_screens(self):
+        """两块屏但只有一组参数（没指明归属）→ 两块记成一样的"""
+        from src.rag.project_items import split_multi_screen_specs
+
+        specs = split_multi_screen_specs("indoor and outdoor, 4m x 2.5m")
+        assert len(specs) == 2
+        assert {spec["environment"] for spec in specs} == {"indoor", "outdoor"}
+        assert all(spec["width_m"] == 4.0 and spec["height_m"] == 2.5 for spec in specs)
+
+    def test_multi_screen_reply_lists_one_model_per_screen(self):
+        """客户口径：有几块屏就按量给几个型号（不再只报一块屏）。"""
         session_id = "multi-item-summary"
         self._start(session_id)
         try:
@@ -199,15 +268,27 @@ class TestMultiItemInOrchestrator:
             memory.set_requirement_profile(
                 session_id, RequirementProfile.from_slots(slots, explicit_keys=set(slots))
             )
+            # 第二块屏还没推荐过 → 清掉它的推荐记录，模拟"两块屏同时要推"
+            items = memory.get_project_items(session_id)
+            items[1].pop("model", None)
+            items[1].pop("reply", None)
+            items[1]["profile"] = RequirementProfile.from_slots(
+                slots, explicit_keys=set(slots)
+            ).model_dump()
+            memory.set_project_items(session_id, items)
 
-            orch = self._orchestrator(_StubSales(products=[{"model": "TW31-HOD-P5.7E"}]))
+            orch = self._orchestrator(
+                _StubSales(
+                    products=[{"model": "TW31-HOD-P5.7E"}],
+                    response="TW31-HOD-P5.7E fits well.",
+                )
+            )
             result = orch.process_message("that one is for advertising", session_id)
 
-            extras = result.get("extra_messages") or []
-            assert len(extras) == 1, extras
-            assert "TW11-3216-P3.0" in extras[0]
-            assert "TW31-HOD-P5.7E" in extras[0]
-            # 第二块屏的推荐要说清楚是哪一块，不能和第一块混在一起
-            assert result["response"].startswith("Screen 2")
+            reply = result["response"]
+            # 两块屏 → 两个型号都在回复里，而且分得清哪块是哪块
+            assert "TW11-3216-P3.0" in reply, reply
+            assert "TW31-HOD-P5.7E" in reply, reply
+            assert "Screen 1" in reply and "Screen 2" in reply, reply
         finally:
             memory.clear(session_id)

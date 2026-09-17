@@ -344,9 +344,13 @@ class DualAgentOrchestrator:
             self.memory_store, session_id, vision_results, vision_metrics
         )
 
-        # ── 一个项目多条屏：客户这句话是不是在说"另一块屏"？────────────────
-        # （客户口径 2026-09-18：教堂一块室内屏 + 门口一块室外屏 → 两条需求档案）
-        self._maybe_start_new_item(session_id, message)
+        # ── 一个项目多条屏（客户口径 2026-09-18）─────────────────────────────
+        #  ① 一句话里给了两块屏的规格（"4m x2.5 indoor and 3m x2m outdoor"）→ 分别记录
+        #  ② 客户指明"改那一块"（"把室外那块改成 3m x 2m"）→ 切到那一块再改
+        #  ③ 客户自己提到另一块屏 → 开一条新记录（没指明差异时两块记成一样的）
+        multi_specs = self._split_and_apply_screen_specs(session_id, message)
+        if not multi_specs and self._maybe_target_screen(session_id, message) is None:
+            self._maybe_start_new_item(session_id, message)
 
         # Step 1: Sales Agent processes message
         sales_result = self.sales_agent.run(
@@ -356,6 +360,15 @@ class DualAgentOrchestrator:
         )
         perf.mark("sales_done")
         perf.intent = sales_result.get("intent", "")
+
+        # 多屏拆分的那一轮：Sales 的需求抽取只看到"整句话"，会把两块屏的参数
+        # 混到当前这条档案里 —— 这里按拆分结果把每块屏的参数重新写回去。
+        if multi_specs:
+            self._split_and_apply_screen_specs(session_id, message)
+        # 客户口径：多块屏时"没说清哪块要什么"就两块记成一样的 —— 所以客户
+        # 答过一次的共有项（视频/图片、安装方式、视距、价格取向…）要同步到
+        # 其他屏，绝不能因为另一块"还没答过"就把同一个问题再问一遍。
+        self._share_common_facts(session_id)
 
         next_action = sales_result.get("next_action")
         requirements = sales_result.get("requirements", {})
@@ -471,6 +484,17 @@ class DualAgentOrchestrator:
         # 实测：客户后面问"我能定制产品吗""交付日期多久"时，这些话被联系方式收集
         # 当成回答吞掉，回了 "Got it <客户原话>, thanks — I've passed your details on…"，
         # 客户真正的问题没有任何回答。联系信息改由销售人工在后端获取。
+        # ── 一个项目多条屏：几块屏就按量给几个型号（客户口径 2026-09-18）────────
+        # 单屏会话仍然"只报一个型号"；多屏会话不能省 —— 每块屏各推一个。
+        if perf.route == "trigger_solution":
+            multi_reply = self._recommend_all_screens(session_id, message)
+            if multi_reply:
+                result["response"] = multi_reply
+                result["_perf"] = perf.summary()
+                if vision_metrics:
+                    result["vision"] = vision_metrics
+                return result
+
         # ── 一个项目多条屏：第二块（及以后）的推荐要标清楚是哪一块 ────────────
         # 实测：客户开了第二块屏之后，推荐话术里仍会出现 "For your church indoor
         # screen …"（历史里的第一块屏），客户分不清在说哪一块。
@@ -499,6 +523,121 @@ class DualAgentOrchestrator:
         return result
     
     # ── 一个项目多条屏（客户口径 2026-09-18）─────────────────────────────
+    def _split_and_apply_screen_specs(self, session_id: str, message: str) -> list:
+        """一句话里给了多块屏的规格 → 每块屏各存一份需求。
+
+        客户口径：一句里能看出两块屏（"4m wide x2.5 high for indoor and 3m x2m
+        for the outdoor"）就**分别记录**；分不清哪组参数属于哪块屏时两块记成一样的。
+        返回拆分结果（空列表表示这一轮不是多屏描述）。
+        """
+        from .models.requirement import RequirementProfile
+        from .rag.project_items import split_multi_screen_specs
+
+        memory_store = self.memory_store
+        if memory_store is None or not hasattr(memory_store, "get_project_items"):
+            return []
+
+        specs = split_multi_screen_specs(message)
+        if len(specs) < 2:
+            return []
+
+        base = self._stored_profile(session_id)
+        base_slots = base.model_dump() if base is not None else {}
+        shared_skip = (
+            "sources", "ask_counts", "unknown_reasons", "conflicts", "conflict_slots",
+            "last_asked_slot", "model", "series_id", "pixel_pitch_mm",
+        )
+
+        items = memory_store.get_project_items(session_id)
+        while len(items) < len(specs):
+            items.append({})
+
+        for index, spec in enumerate(specs):
+            slots = {key: value for key, value in base_slots.items() if key not in shared_skip}
+            # 这一块屏**自己已经有**的值优先（否则第二句话只说了点间距时，
+            # 会把另一块屏的安装方式/尺寸覆盖成 base 的值 —— 实测踩过）
+            existing = dict((items[index] or {}).get("profile") or {})
+            for key, value in existing.items():
+                if key == "sources" or value in (None, "", [], {}):
+                    continue
+                slots[key] = value
+            if spec.get("environment"):
+                slots["environment"] = spec["environment"]
+            if spec.get("width_m"):
+                slots["target_width_m"] = spec["width_m"]
+            if spec.get("height_m"):
+                slots["target_height_m"] = spec["height_m"]
+            # 安装方式与点间距也要按屏幕分开（"permanent for indoor, rental for
+            # outdoor" / "p3 for indoor p5 for outdoor" 实测会被混到一块上）
+            if spec.get("installation"):
+                slots["installation"] = spec["installation"]
+            if spec.get("pixel_pitch_mm"):
+                slots["pixel_pitch_mm"] = spec["pixel_pitch_mm"]
+            try:
+                profile = RequirementProfile.model_validate(slots)
+            except Exception as exc:  # pragma: no cover - 防御式
+                logger.warning("[%s] Multi-spec profile build failed: %s", session_id, exc)
+                continue
+            # 这些值是客户这句话里明说的 → 记为 explicit，直接可用于选型/计算
+            for field in (
+                "environment", "target_width_m", "target_height_m",
+                "installation", "pixel_pitch_mm",
+            ):
+                profile.sources[field] = "explicit"
+            record = dict(items[index] or {})
+            record["profile"] = profile.model_dump()
+            # 规格变了 → 这一块之前的推荐作废，重新推荐
+            record.pop("model", None)
+            items[index] = record
+
+        memory_store.set_project_items(session_id, items)
+        memory_store.set_active_item_index(session_id, len(specs) - 1)
+        last = memory_store.get_project_items(session_id)[len(specs) - 1].get("profile")
+        if last:
+            memory_store.set_requirement_profile(
+                session_id, RequirementProfile.model_validate(last)
+            )
+        logger.info("[%s] Multi-item: 按一句话拆出 %d 块屏的规格", session_id, len(specs))
+        return specs
+
+    def _maybe_target_screen(self, session_id: str, message: str) -> Optional[int]:
+        """客户指明"改哪一块屏" → 把当前档案切到那一块，本轮就改它。"""
+        from .models.requirement import RequirementProfile
+        from .rag.project_items import detect_screen_target
+
+        memory_store = self.memory_store
+        if memory_store is None or not hasattr(memory_store, "get_project_items"):
+            return None
+
+        items = memory_store.get_project_items(session_id)
+        index = detect_screen_target(message, items)
+        if index is None:
+            return None
+
+        current = memory_store.get_active_item_index(session_id)
+        if index == current:
+            return index
+
+        profile = self._stored_profile(session_id)
+        if profile is not None and current < len(items):
+            record = dict(items[current] or {})
+            record["profile"] = profile.model_dump()
+            items[current] = record
+            memory_store.set_project_items(session_id, items)
+
+        target = (items[index] or {}).get("profile")
+        if target:
+            try:
+                memory_store.set_requirement_profile(
+                    session_id, RequirementProfile.model_validate(target)
+                )
+            except Exception as exc:  # pragma: no cover - 防御式
+                logger.warning("[%s] Screen switch failed: %s", session_id, exc)
+                return None
+        memory_store.set_active_item_index(session_id, index)
+        logger.info("[%s] Multi-item: 客户指定改第 %d 块屏", session_id, index + 1)
+        return index
+
     def _maybe_start_new_item(self, session_id: str, message: str) -> str:
         """客户这句话如果在说"另一块屏" → 归档当前这块，开一条新需求档案。
 
@@ -536,8 +675,18 @@ class DualAgentOrchestrator:
         memory_store.set_project_items(session_id, items)
         memory_store.set_active_item_index(session_id, index + 1)
 
-        # 新的一块屏从零开始收集需求（旧需求不能带过去）
-        memory_store.clear_requirement_profile(session_id)
+        # 客户口径：客户没说"这块要什么、那块要什么"时，两块**记成一样的** ——
+        # 所以新条目先复制当前这一份需求，本轮这句话里明说的差异（"室外的"）再覆盖上去。
+        from .models.requirement import RequirementProfile
+
+        seeded = RequirementProfile.model_validate(profile.model_dump())
+        items = memory_store.get_project_items(session_id)
+        while len(items) <= index + 1:
+            items.append({})
+        items[index + 1] = {"profile": seeded.model_dump()}
+        memory_store.set_project_items(session_id, items)
+        memory_store.set_requirement_profile(session_id, seeded)
+        # 旧 requirements 是 Profile 的只读投影，下一轮由 Sales 重建
         memory_store.clear_requirements(session_id)
         if hasattr(memory_store, "clear_recommendation"):
             memory_store.clear_recommendation(session_id)
@@ -545,6 +694,171 @@ class DualAgentOrchestrator:
             "[%s] Multi-item: 开始收集第 %d 块屏的需求（%s）", session_id, index + 2, reason
         )
         return reason
+
+    # 多块屏之间**默认共享**的字段（客户没说"这块要什么、那块要什么"时就一样）：
+    # 内容类型 / 安装方式 / 视距 / 价格取向 / 屏类型 / 场景。
+    # 环境与尺寸**不共享** —— 那正是区分两块屏的东西。
+    _SHARED_FACT_FIELDS = (
+        "display_type", "purpose", "content_type", "installation",
+        "price_preference", "budget_level", "viewing_distance_m",
+        # 没说清就两块一样：点间距也一样（"P3 for the indoor P5 for the outdoor"
+        # 这种明确说了的才各自不同）
+        "pixel_pitch_mm",
+    )
+
+    def _share_common_facts(self, session_id: str) -> None:
+        """把当前这块屏已确认的共有项同步给其他屏，避免同一个问题被问第二遍。
+
+        实测：两块屏时，客户答了 "both"（视频/图片）之后，系统又为另一块屏
+        把同一个问题问了一遍 —— 客户体验就是"回答过了还问"。
+        """
+        memory_store = self.memory_store
+        if memory_store is None or not hasattr(memory_store, "get_project_items"):
+            return
+        items = memory_store.get_project_items(session_id)
+        if len(items) < 2:
+            return
+        active = memory_store.get_active_item_index(session_id)
+        if active >= len(items):
+            return
+        # 当前这块的**实时**档案（items 里的可能还没同步过来）
+        live = self._stored_profile(session_id)
+        source = live.model_dump() if live is not None else dict(
+            (items[active] or {}).get("profile") or {}
+        )
+        if not source:
+            return
+        sources = dict(source.get("sources") or {})
+        changed = False
+        for index, item in enumerate(items):
+            merged = dict(item or {})
+            if index == active:
+                # 当前这块：把实时档案写回条目，保证"每条记录都是完整的"
+                merged["profile"] = source
+                items[index] = merged
+                continue
+            profile = dict((item or {}).get("profile") or {})
+            if not profile:
+                continue
+            for field in self._SHARED_FACT_FIELDS:
+                value = source.get(field)
+                if value in (None, "", [], {}) or profile.get(field) not in (None, "", [], {}):
+                    continue
+                profile[field] = value
+                if sources.get(field):
+                    profile.setdefault("sources", {})[field] = sources[field]
+                changed = True
+            if changed:
+                merged = dict(item or {})
+                merged["profile"] = profile
+                items[index] = merged
+        if changed:
+            memory_store.set_project_items(session_id, items)
+
+    @staticmethod
+    def _model_matches_screen(model_name: str, profile_data: Dict[str, Any]) -> bool:
+        """型号的使用环境是否和这块屏一致（避免"室外屏推室内型号"）。"""
+        environment = str((profile_data or {}).get("environment") or "").strip().lower()
+        if environment not in ("indoor", "outdoor"):
+            return True
+        try:
+            from .config import config
+            from .rag.json_loader import canonical_model_index
+
+            record = canonical_model_index(config.DATA_DIR).get(model_name)
+            if record is None:
+                return True
+            if environment == "indoor":
+                return bool(getattr(record, "indoor", False))
+            return bool(getattr(record, "outdoor", False))
+        except Exception:  # pragma: no cover - 防御式
+            return True
+
+    def _recommend_all_screens(self, session_id: str, message: str) -> Optional[str]:
+        """多块屏：**每块屏各跑一次推荐**，合成一条回复（一块屏一个型号）。
+
+        实测问题：客户一次给了两块屏的规格时，只有"当前那块"会跑推荐，
+        另一块没有型号 → 回复里只出现一个型号、另一个屏被漏掉。
+        """
+        from .models.requirement import RequirementProfile
+        from .rag.project_items import product_model, screen_label
+        from .rag.reply_composer import reply_language
+
+        memory_store = self.memory_store
+        if memory_store is None or not hasattr(memory_store, "get_project_items"):
+            return None
+
+        items = memory_store.get_project_items(session_id)
+        if len(items) < 2:
+            return None
+
+        history = self._load_history(session_id)
+        language = reply_language(message)
+        blocks: list = []
+        changed = False
+
+        # 【修复串台】先把**当前这块屏的实时档案**写回它的条目：
+        # 之前用 items[active] 里的旧拷贝（会少掉刚说的点间距/视距），
+        # 导致那一块屏拿旧档案去推荐 → 0 候选 → 兜底话术。
+        live = self._stored_profile(session_id)
+        if live is not None and 0 <= memory_store.get_active_item_index(session_id) < len(items):
+            active_index = memory_store.get_active_item_index(session_id)
+            merged_active = dict(items[active_index] or {})
+            merged_active["profile"] = live.model_dump()
+            items[active_index] = merged_active
+            memory_store.set_project_items(session_id, items)
+
+        for index, item in enumerate(items):
+            profile_data = item.get("profile") or {}
+            model_name = str(item.get("model") or "").strip()
+            text = str(item.get("reply") or "").strip()
+            if not model_name:
+                if not profile_data:
+                    continue
+                try:
+                    outcome = self.solution_agent.run(
+                        message=message,
+                        history=history,
+                        session_id=session_id,
+                        profile=RequirementProfile.model_validate(profile_data),
+                        intent="need_query",
+                    )
+                except Exception as exc:  # pragma: no cover - 防御式
+                    logger.warning("[%s] Per-screen recommend failed: %s", session_id, exc)
+                    continue
+                products = outcome.get("products") or []
+                if not products:
+                    continue
+                model_name = product_model(products[0])
+                if not model_name:
+                    continue
+                # 【修复串台】型号必须和这块屏的环境一致：
+                # 实测室外那块屏被推了室内租赁型号 TW11-IR-P4.8 —— 那种宁可不出，
+                # 也不能把不同环境的型号写给客户。
+                if not self._model_matches_screen(model_name, profile_data):
+                    logger.warning(
+                        "[%s] 屏 %d 环境=%s 但推荐出 %s（环境不符）→ 跳过",
+                        session_id, index + 1, profile_data.get("environment"), model_name,
+                    )
+                    continue
+                text = str(outcome.get("answer") or "").strip()
+                item["model"] = model_name
+                item["reply"] = text
+                changed = True
+
+            label = screen_label(index, profile_data, language)
+            if not text:
+                text = label + model_name
+            elif not text.lstrip().startswith(label.strip()):
+                text = label + text
+            blocks.append(text)
+
+        if changed:
+            memory_store.set_project_items(session_id, items)
+        if len(blocks) < 2:
+            return None
+        logger.info("[%s] Multi-item: 按 %d 块屏分别推荐", session_id, len(blocks))
+        return "\n\n".join(blocks)
 
     def _multi_item_follow_up(
         self, session_id: str, result: Dict[str, Any], message: str = ""
@@ -556,7 +870,7 @@ class DualAgentOrchestrator:
         多屏仍然支持 —— 客户自己提到第二块屏（"门口再来一块室外的屏" /
         "another screen for the entrance"）时照常开新条目，最后出汇总。
         """
-        from .rag.project_items import combined_summary, product_model
+        from .rag.project_items import product_model, screen_label
         from .rag.reply_composer import reply_language
 
         memory_store = self.memory_store
@@ -587,17 +901,33 @@ class DualAgentOrchestrator:
             {
                 "model": model,
                 "profile": profile.model_dump() if profile is not None else {},
+                # 这一块屏自己的推荐话术（拼"多屏一起给"的时候要用）
+                "reply": str(result.get("response") or "").strip(),
             },
         )
         items = memory_store.get_project_items(session_id)
         language = reply_language(customer_message)
 
-        # 第二块（及以后）都推荐完了 → 给"两份推荐 + 两份计算"的汇总
-        if index >= 1 and len(items) > 1:
-            summary = combined_summary(items, language)
-            if summary:
-                logger.info("[%s] Multi-item: 输出 %d 块屏汇总", session_id, len(items))
-                return summary
+        # 客户口径（2026-09-18）多块屏时要**按屏幕数量**推荐：
+        # 每块屏给一个型号，不再只报一块屏。这里把每块屏自己的推荐话术拼成一条，
+        # 每条前面带 "Screen N (…)" 标签，客户一眼能看出哪块屏对应哪个型号。
+        blocks: list = []
+        for position, item in enumerate(items, start=1):
+            model_name = str(item.get("model") or "").strip()
+            if not model_name:
+                continue
+            text = str(item.get("reply") or "").strip()
+            label = screen_label(position - 1, item.get("profile") or {}, language)
+            if not text:
+                text = label + model_name
+            elif not text.lstrip().startswith(label.strip()):
+                # 第一块屏当初是单屏推荐、没带标签 → 这里补上，客户才分得清哪块是哪块
+                text = label + text
+            blocks.append(text)
+        if len(blocks) >= 2:
+            result["response"] = "\n\n".join(blocks)
+            logger.info("[%s] Multi-item: 按 %d 块屏分别给出推荐", session_id, len(blocks))
+            return None
 
         return None
 
