@@ -1693,3 +1693,23 @@ DELEGATED 点间距 + 无视距 → 兜底档 → TW11-3216-P3.0（不再是 P1.
 
 测试：`tests/test_viewing_distance_derivation.py`（新增 10 条，含"屏体尺寸不被误判为场地"
 与反向校验）；全量 `python -m pytest tests/ -q` → **1197 passed, 4 skipped**。
+
+### 26.7.3 追问话术不再漏出内部槽位名（同日追加）
+
+实测日志（客户回"需要50人观看的屏幕"之后）：系统回了两句，
+一句问尺寸，另一句是
+
+```text
+To recommend the right products for you, could you tell me: distance?
+```
+
+两个问题：
+
+| 问题 | 根因 | 修法 |
+|---|---|---|
+| 把内部槽位名 `distance` 抛给客户 | Solution 侧 `clarify_node` 的旧分支拿 LLM 的 `missing_info` 拼问句（`f"... could you tell me: {missing[0]}?"`） | `clarify_node` 先做确定性判断：有 `RequirementProfile` → 一律用 Gate 的问句；Gate 已 ready → 本轮不问；旧分支保留但槽位名必须经 `human_label()` 翻译成人话。`question_for()` 对未知槽位退回通用问句，**任何**情况下都不会输出字段名 |
+| 客户已经说了"50 人"，还在追问观看距离 | 同上，旧分支用的是 LLM 的 missing_info 而不是字段决策状态 | 断言加在 `tests/test_question_safety.py`：`需要50人观看的屏幕 / about 50 people / 50 viewers` → Gate 的 `missing` 里不得出现 `viewing_distance` |
+
+测试：`tests/test_question_safety.py`（32 条：槽位名不漏出、clarify 优先用 Gate、
+Gate 就绪时不追问、人数已给时不问距离）；全量 `python -m pytest tests/ -q`
+→ **1229 passed, 4 skipped**。

@@ -39,6 +39,43 @@ MISSING_LABELS: Dict[str, str] = {
     "size_axis": "whether that measurement is the width, the height or the diagonal",
 }
 
+# 内部槽位名（历史遗留叫法）→ 人话。**任何**要发给客户的问句都必须先经过这里，
+# 否则会出现实测日志里那种 "could you tell me: distance?" —— 把内部字段名抛给客户。
+_HUMAN_SLOT_LABELS: Dict[str, str] = {
+    "distance": "roughly how far viewers will stand from the screen",
+    "distance_m": "roughly how far viewers will stand from the screen",
+    "viewing_distance_m": "roughly how far viewers will stand from the screen",
+    "size": "the screen size (width and height)",
+    "target_size": "the screen size (width and height)",
+    "screen_size": "the screen size (width and height)",
+    "target_width": "the screen width",
+    "target_height": "the screen height",
+    "target_width_mm": "the screen width",
+    "target_height_mm": "the screen height",
+    "pitch": "the pixel pitch you have in mind (P2.5, P3, P5 ...)",
+    "brightness": "the brightness you need",
+    "installation_or_distance": "whether it will be a fixed installation or a rental",
+}
+
+
+def human_label(slot: Any) -> str:
+    """槽位名 → 客户能看懂的说法（找不到时用通用问法，绝不回落到槽位名本身）。"""
+    key = str(slot or "").strip()
+    if not key:
+        return ""
+    for candidate in (key, key.lower()):
+        if candidate in MISSING_LABELS:
+            return MISSING_LABELS[candidate]
+        if candidate in _HUMAN_SLOT_LABELS:
+            return _HUMAN_SLOT_LABELS[candidate]
+    normalized = key.lower().replace("-", "_")
+    for candidate in (normalized, normalized.rstrip("_m"), normalized.replace("_", "")):
+        if candidate in MISSING_LABELS:
+            return MISSING_LABELS[candidate]
+        if candidate in _HUMAN_SLOT_LABELS:
+            return _HUMAN_SLOT_LABELS[candidate]
+    return ""
+
 # 缺失项 → 默认提问顺序（先问最高价值的）
 MISSING_ORDER: tuple[str, ...] = (
     # 客户刚报了一个裸尺寸（"129,2cm"）时，先确认它是宽 / 高 / 对角线，
@@ -427,7 +464,15 @@ def question_for(
             QUESTION_VARIANTS.get(slot) or {}
         ).get("en") or ()
     if not variants:
-        label = MISSING_LABELS.get(slot, slot)
+        label = human_label(slot)
+        if not label:
+            logger.warning(
+                "question_for: 未知槽位 %r → 退回通用问句（绝不把内部槽位名抛给客户）", slot
+            )
+            return (
+                "Could you tell me a bit more about your setup so I can narrow down "
+                "the right model?"
+            )
         return f"Could you tell me {label}?"
     return variants[seed % len(variants)]
 

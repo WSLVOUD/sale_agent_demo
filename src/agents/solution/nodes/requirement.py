@@ -258,6 +258,46 @@ def infer_parameters_node(state: SolutionState) -> SolutionState:
 
 def clarify_node(state: SolutionState) -> SolutionState:
     """Ask the user to clarify missing requirements."""
+    # ── v2.2：追问只有一个出处 —— 确定性 Gate（字段决策状态） ────────────────
+    # 历史遗留分支会用 LLM 给的 missing_info 拼问句，于是出现实测日志里那句
+    # "To recommend the right products for you, could you tell me: distance?"
+    # ——把内部槽位名直接抛给客户。这里先做确定性判断：
+    #   1) 有 RequirementProfile → 一律用 Gate 的问句；
+    #   2) 确定性 Gate 已经 ready（例如 reflect 之后又走到这里）→ 本轮不问。
+    # 只有完全没有 profile 时才会落到下面的旧逻辑。
+    from ....models.requirement import RequirementProfile
+    from ....rag.readiness import (
+        check_recommendation_ready,
+        first_missing_slot,
+        question_for,
+    )
+
+    _profile = state.get("requirement_profile")
+    if isinstance(_profile, RequirementProfile):
+        _decision = check_recommendation_ready(_profile)
+        if _decision.ready:
+            logger.info("Clarify: deterministic gate is ready -> no question this turn")
+            return {
+                **state,
+                "pending_question": "",
+                "next_action": "end",
+                "waiting_for_clarification": False,
+            }
+        _question = (
+            _decision.next_question
+            or str(state.get("pending_question") or "").strip()
+            or question_for(first_missing_slot(_decision.missing) or "", "en", 0)
+            or ""
+        )
+        if _question:
+            logger.info("Clarify: asking via deterministic gate: %s", _question)
+            return {
+                **state,
+                "pending_question": _question,
+                "recommendation": _question,
+                "next_action": "end",
+                "waiting_for_clarification": True,
+            }
     # ── v2.0 Phase 4：Recommendation Ready Gate 已给出明确追问 → 直接使用 ──
     # 旧启发式（按面积/人数反推视距等）保留在下面，但 Gate 判定为"未就绪"时
     # 以 Gate 的问题为准，避免两套逻辑互相覆盖。
@@ -497,7 +537,23 @@ def clarify_node(state: SolutionState) -> SolutionState:
     if not missing:
         return {**state, "next_action": "understand"}
     
-    question = f"To recommend the right products for you, could you tell me: {missing[0]}?"
+    # 旧分支最后一道保险：槽位名必须翻译成人话，绝不允许把内部字段名抛给客户
+    # （实测日志："... could you tell me: distance?"）
+    from ....rag.readiness import human_label, question_for
+
+    raw_slot = str(missing[0]).strip()
+    slot_alias = {
+        "distance": "viewing_distance",
+        "viewing_distance_m": "viewing_distance",
+        "width": "width",
+        "height": "height",
+        "size": "size",
+        "pitch": "pixel_pitch",
+    }.get(raw_slot.lower(), raw_slot)
+    question = question_for(slot_alias, "en", 0) or (
+        "To recommend the right products for you, could you tell me: "
+        f"{human_label(raw_slot) or 'a bit more about your setup'}?"
+    )
     
     return {
         **state,

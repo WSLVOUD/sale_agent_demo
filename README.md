@@ -84,6 +84,12 @@
 `the room is 8m x 5m / 场地 8米x5米 / room 8m by 5m / the hall is 10m wide and 6m deep /
 5米宽8米深`、`about 100 people / 大约50个人 / 50 viewers / 80 人`。
 
+5. **追问话术不再漏出内部槽位名**：实测日志里出现过
+   `To recommend the right products for you, could you tell me: distance?` ——
+   这是 Solution 侧 `clarify_node` 的旧分支拿 LLM 的 `missing_info` 直接拼问句造成的。
+   现在追问只有一个出处（确定性 Gate）；`question_for()` 对任何未知槽位都会退回
+   通用人话问句，绝不把 `distance` / `size` / `pixel_pitch` 这类字段名抛给客户。
+
 实测输出（同一个 10×5m 室内固装墙屏）：
 
 | 客户说法 | 推导出的距离区间 | 点间距窗口 | 推荐 |
