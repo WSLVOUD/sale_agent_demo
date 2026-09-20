@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -908,6 +908,75 @@ def _extract_budget_level(lowered: str) -> Optional[str]:
     return None
 
 
+# ── 场地几何事实（v2.2）：观众人数 / 场地面积 / 场地纵深 ─────────────────────
+# 这三个量本身**不是推荐规则**，只是"观看距离"的不同来源。系统用同一组物理公式
+# 把它们折算成观看距离区间（见 parameter_inference.estimate_viewing_distance），
+# 所以客户换一种说法（多少人 / 多少平米 / 进深几米）不需要新增推荐分支。
+_AUDIENCE_RE = re.compile(
+    r"(\d[\d,]*(?:\.\d+)?)\s*"
+    r"(?:people|persons?|viewers?|seats?|guests?|attendees?|audience\s*members?|"
+    r"观众|人员|座位|个人|人)",
+    re.IGNORECASE,
+)
+_ROOM_AREA_RE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*"
+    r"(?:sq\.?\s*m(?:etres?|eters?)?\.?|square\s*(?:metres?|meters?)|m2|m²|㎡|"
+    r"平米|平方米|个平方|平方)",
+    re.IGNORECASE,
+)
+_ROOM_DEPTH_RES: Tuple["re.Pattern[str]", ...] = (
+    re.compile(
+        r"(?:depth|deep|纵深|进深|长度)[^\d\n]{0,12}?(\d+(?:\.\d+)?)", re.IGNORECASE
+    ),
+    re.compile(
+        r"(\d+(?:\.\d+)?)\s*(?:m|metres?|meters?|米)\s*(?:deep|深|纵深|进深)",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _positive_number(raw: str) -> Optional[float]:
+    try:
+        value = float(str(raw).replace(",", "").replace("，", ""))
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _extract_space_facts(text: str) -> Dict[str, Any]:
+    """从客户原话里读出"人数 / 面积 / 进深"（纯规则、可单测）。
+
+    这些值一律按"客户明说"记录（来源 explicit），但它们**不会**直接决定型号：
+    只有"观看距离"才是选型输入，这里只是给观看距离提供另一种来源。
+    """
+    facts: Dict[str, Any] = {}
+    text = str(text or "")
+    if not text:
+        return facts
+
+    match = _AUDIENCE_RE.search(text)
+    if match:
+        people = _positive_number(match.group(1))
+        if people and 1 <= people <= 100000:
+            facts["audience_count"] = int(people)
+
+    match = _ROOM_AREA_RE.search(text)
+    if match:
+        area = _positive_number(match.group(1))
+        if area and 1 <= area <= 100000:
+            facts["room_area_sqm"] = round(float(area), 2)
+
+    for pattern in _ROOM_DEPTH_RES:
+        match = pattern.search(text)
+        if not match:
+            continue
+        depth = _positive_number(match.group(1))
+        if depth and 1 <= depth <= 200:
+            facts["room_depth_m"] = round(float(depth), 2)
+            break
+    return facts
+
+
 # ── 结果结构 ────────────────────────────────────────────────────────────────
 @dataclass
 class QueryUnderstanding:
@@ -1098,6 +1167,9 @@ def extract_slots(message: str) -> Dict[str, Any]:
     # 7b) 交互需求（IFP 场景的关键卖点）
     if _any(lowered, ("手写", "书写", "触控", "触摸", "白板", "touch", "whiteboard", "annotation", "interactive")):
         slots["interaction"] = True
+
+    # 7e) 场地几何（人数 / 面积 / 进深）—— 观看距离的另外几种来源
+    slots.update(_extract_space_facts(text))
 
     # 8) 客户点名型号 / 系列
     series_id, model = _extract_model_mention(text)

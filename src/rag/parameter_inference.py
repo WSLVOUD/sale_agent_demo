@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 from src.rag.query_understanding import (
@@ -126,6 +127,159 @@ BRIGHTNESS_BY_ENVIRONMENT: Dict[str, Tuple[Optional[int], Optional[int]]] = {
     "semi_outdoor": (800, None),
     "indoor": (400, 800),
 }
+
+
+# ── v2.2：观看距离的确定性推导 + 点间距窗口（物理公式，不是场景枚举）────────
+# 客户给的东西千变万化（人数 / 面积 / 进深 / 屏尺寸 / 直接说距离），但都能折算成
+# 同一个物理量：观看距离区间 [最近观众, 最远观众]。折算只用下面这几组常量与公式，
+# 所以以后客户换说法**不需要新增推荐规则**，只需要能解析出数字。
+SEAT_WIDTH_M = 0.6            # 每个观众沿屏宽方向占的座位宽度（含扶手/间距）
+SEAT_ROW_DEPTH_M = 0.9        # 每排座椅纵深
+FRONT_OFFSET_M = 2.5          # 第一排到屏面的留距（走道 / 视线）
+SCREEN_NEAR_FACTOR = 1.5      # 最近观众 ≈ 1.5 × 屏高
+SCREEN_FAR_FACTOR = 3.0       # 最远观众 ≈ 3 × 屏高
+# 点间距 ↔ 观看距离（行业口径）：1mm 点间距的最佳观看距离约 3m，
+# 再远（>5m/mm）就吃力；最近观看距离不能小于 1m/mm（否则看到像素结构）。
+PITCH_FAR_LIMIT_M_PER_MM = 5.0
+PITCH_OPTIMAL_M_PER_MM = 3.0
+PITCH_NEAR_LIMIT_M_PER_MM = 1.0
+
+# 连"观看距离"都推不出来时的兜底档（按环境给一个保守区间，**绝不取最细点间距**）
+FALLBACK_PITCH_BAND: Dict[str, Tuple[float, float, float]] = {
+    # environment -> (下限, 上限, 首选)
+    "indoor": (2.5, 4.0, 3.0),
+    "semi_outdoor": (4.0, 6.0, 5.0),
+    "outdoor": (5.0, 8.0, 5.0),
+}
+DEFAULT_FALLBACK_PITCH_BAND: Tuple[float, float, float] = (2.5, 5.0, 3.0)
+
+
+@dataclass(frozen=True)
+class ViewingDistanceEstimate:
+    """推导出来的观看距离区间（米）。``source`` 说明这个数是从哪来的。"""
+
+    nearest_m: float
+    farthest_m: float
+    source: str          # room_depth / room_area / audience / screen_size
+
+    @property
+    def typical_m(self) -> float:
+        return round((self.nearest_m + self.farthest_m) / 2, 2)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "nearest_m": round(self.nearest_m, 2),
+            "farthest_m": round(self.farthest_m, 2),
+            "typical_m": self.typical_m,
+            "source": self.source,
+        }
+
+
+def _screen_dims_m(facts: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
+    """从事实里取屏体宽高（米）；只有一条边时另一条按 16:9 估。"""
+    width = facts.get("target_width_m")
+    height = facts.get("target_height_m")
+    if width is None and facts.get("target_width_mm") is not None:
+        width = float(facts["target_width_mm"]) / 1000
+    if height is None and facts.get("target_height_mm") is not None:
+        height = float(facts["target_height_mm"]) / 1000
+    hint = facts.get("screen_size_hint_mm")
+    if width is None and height is None and hint:
+        width = float(hint) / 1000
+    width = float(width) if width else None
+    height = float(height) if height else None
+    if width and not height:
+        height = width * 9 / 16
+    elif height and not width:
+        width = height * 16 / 9
+    return width, height
+
+
+def estimate_viewing_distance(facts: Dict[str, Any]) -> Optional[ViewingDistanceEstimate]:
+    """把"人数 / 面积 / 进深 / 屏尺寸"折算成观看距离区间（纯公式、确定性）。
+
+    优先级（数字越靠前越直接）：
+
+        room_depth  → 最远 ≈ 进深 − 0.5m（最后排贴着后墙）
+        room_area   → 进深 ≈ 面积 ÷ 屏宽，再按上面的算法
+        audience    → 每排座位数 ≈ 屏宽 ÷ 0.6m，排数 = 人数 ÷ 每排，
+                      进深 ≈ 排数 × 0.9m + 屏前留距 2.5m
+        screen_size → 最近 ≈ 1.5 × 屏高，最远 ≈ 3 × 屏高
+
+    客户已经明确说了观看距离时返回 None（那条路径直接用客户给的数）。
+    """
+    if not facts:
+        return None
+    if facts.get("viewing_distance_m") or facts.get("distance"):
+        return None
+
+    width_m, height_m = _screen_dims_m(dict(facts))
+    source = ""
+    farthest: Optional[float] = None
+
+    depth = facts.get("room_depth_m")
+    if depth:
+        farthest = max(1.0, float(depth) - 0.5)
+        source = "room_depth"
+    if farthest is None:
+        area = facts.get("room_area_sqm")
+        if area and width_m:
+            derived_depth = float(area) / float(width_m)
+            if 1.0 <= derived_depth <= 200.0:
+                farthest = max(1.0, derived_depth - 0.5)
+                source = "room_area"
+    if farthest is None:
+        people = facts.get("audience_count")
+        if people and width_m:
+            seats_per_row = max(1, int(float(width_m) / SEAT_WIDTH_M))
+            rows = int(-(-int(people) // seats_per_row))       # 向上取整
+            farthest = rows * SEAT_ROW_DEPTH_M + FRONT_OFFSET_M
+            source = "audience"
+    if farthest is None and height_m:
+        farthest = SCREEN_FAR_FACTOR * float(height_m)
+        source = "screen_size"
+    if farthest is None:
+        return None
+
+    # 最近观众：至少 1.5 × 屏高（看不清整屏），但不会超过最远观众的 70%
+    nearest = 1.0
+    if height_m:
+        nearest = SCREEN_NEAR_FACTOR * float(height_m)
+    nearest = max(1.0, min(nearest, farthest * 0.7))
+    return ViewingDistanceEstimate(
+        nearest_m=nearest, farthest_m=farthest, source=source
+    )
+
+
+def pitch_window_for_distances(
+    nearest_m: Optional[float],
+    farthest_m: Optional[float],
+) -> Tuple[Optional[float], Optional[float]]:
+    """观看距离区间 → 点间距窗口 (下限, 上限)，单位 mm。
+
+    下限 = 最远观看距离 ÷ 5   （比这更细，远端观众根本看不出差别 → 白花钱）
+    上限 = 最远观看距离 ÷ 1.5 （比这更粗，远端观众就看不清）
+    再用最近观众收紧上限：点间距不能粗过"最近观众 ÷ 1m/mm"。
+    """
+    if not farthest_m or float(farthest_m) <= 0:
+        return None, None
+    farthest = float(farthest_m)
+    low = farthest / PITCH_FAR_LIMIT_M_PER_MM
+    high = farthest / (PITCH_OPTIMAL_M_PER_MM / 2)     # ÷1.5
+    if nearest_m and float(nearest_m) > 0:
+        high = min(high, float(nearest_m) / PITCH_NEAR_LIMIT_M_PER_MM)
+    if high < low:
+        low = high
+    return round(max(low, 0.5), 2), round(max(high, 0.5), 2)
+
+
+def fallback_pitch_band(
+    environment: Optional[str],
+) -> Tuple[float, float, float]:
+    """连观看距离都推不出来时的兜底档（按环境给保守区间，偏粗不偏细）。"""
+    env = str(environment or "").strip().lower()
+    return FALLBACK_PITCH_BAND.get(env, DEFAULT_FALLBACK_PITCH_BAND)
+
 
 # 观看距离 → 建议屏幕尺寸（对 LCD/IFP 场景仍有用，LED 场景仅作参考）
 SCREEN_SIZE_BY_DISTANCE: Tuple[Tuple[float, str], ...] = (
@@ -270,6 +424,25 @@ def infer_technical_parameters(facts: Dict[str, Any]) -> Dict[str, Any]:
     if distance_m is None:
         distance_m = parse_distance(facts.get("distance"))
 
+    # ── v2.2：客户没直接说观看距离时，用确定性公式从"人数 / 面积 / 进深 / 屏尺寸"
+    #    推导出一个区间。注意：这只是**推导**，用于给点间距一个物理窗口，
+    #    不会写进客户的确认事实，也不会因此放行 Gate。
+    distance_estimate: Optional[ViewingDistanceEstimate] = None
+    explicit_distance = distance_m is not None
+    if not explicit_distance:
+        try:
+            distance_estimate = estimate_viewing_distance(facts)
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("观看距离推导失败：%s", exc)
+            distance_estimate = None
+        if distance_estimate is not None:
+            distance_m = distance_estimate.typical_m
+            logger.info(
+                "观看距离推导：%s → 最近 %.1fm / 最远 %.1fm（用于点间距窗口）",
+                distance_estimate.source,
+                distance_estimate.nearest_m, distance_estimate.farthest_m,
+            )
+
     # 业务规则优先：环境 + 距离 → 点间距区间与首选值（室内 P2.5/P3，室外 P4/P5/P10）
     pitch_min, pitch_max, pitch_target = preferred_pitch_for_environment(
         environment, distance_m
@@ -282,6 +455,48 @@ def infer_technical_parameters(facts: Dict[str, Any]) -> Dict[str, Any]:
                 "点间距规则未命中（environment=%r / %sm）→ 用通用距离表 %s~%smm",
                 environment, distance_m, pitch_min, pitch_max,
             )
+
+    # ── v2.2：物理窗口收口 ────────────────────────────────────────────────
+    #   观看距离区间 → 点间距窗口，把业务规则的区间与物理窗口取交集：
+    #   窗口保证"不会细到白花钱、也不会粗到看不清"；没有交集时以物理窗口为准。
+    window_source = ""
+    if distance_estimate is not None:
+        win_low, win_high = pitch_window_for_distances(
+            distance_estimate.nearest_m, distance_estimate.farthest_m
+        )
+        window_source = distance_estimate.source
+    elif not explicit_distance:
+        win_low, win_high = None, None
+    else:
+        win_low = win_high = None
+    if win_low is not None and win_high is not None:
+        if pitch_min is None or pitch_max is None:
+            pitch_min, pitch_max = win_low, win_high
+        else:
+            new_min = max(float(pitch_min), float(win_low))
+            new_max = min(float(pitch_max), float(win_high))
+            if new_max < new_min:
+                logger.info(
+                    "点间距业务区间 %s~%smm 与物理窗口 %s~%smm 无交集 → 以物理窗口为准",
+                    pitch_min, pitch_max, win_low, win_high,
+                )
+                new_min, new_max = win_low, win_high
+            pitch_min, pitch_max = round(new_min, 2), round(new_max, 2)
+
+    # ── v2.2：连距离都推不出来时的兜底档 ─────────────────────────────────
+    #   以前这里会留空 → 点间距维度整维不参与打分 → 同系列全并列 →
+    #   排序兜底"点间距小的优先"直接挑中最细最贵的型号（实测 P1.2）。
+    #   现在按环境给一个保守区间（偏粗），保证永远不出现无依据的细点间距。
+    if pitch_min is None or pitch_max is None:
+        pitch_min, pitch_max, fallback_target = fallback_pitch_band(environment)
+        if pitch_target is None:
+            pitch_target = fallback_target
+        window_source = window_source or "fallback_environment_default"
+        logger.info(
+            "点间距无业务/物理依据 → 按环境(%s)取保守兜底档 %s~%smm（首选 %s）",
+            environment, pitch_min, pitch_max, pitch_target,
+        )
+
     brightness_min, brightness_max = brightness_range_for_environment(environment)
     source: Dict[str, str] = {}
 
@@ -297,7 +512,15 @@ def infer_technical_parameters(facts: Dict[str, Any]) -> Dict[str, Any]:
         # 客户点名了点间距 → 首选值就是客户的（场景/环境偏好不再参与）
         pitch_target = float(explicit_pitch)
     else:
-        if pitch_target is not None:
+        if window_source == "fallback_environment_default":
+            source["pixel_pitch"] = "fallback_environment_default"
+        elif distance_estimate is not None:
+            source["pixel_pitch"] = f"inferred_from_{distance_estimate.source}"
+            logger.info(
+                "点间距由推导的观看距离（%s）确定：%s~%smm，首选 P%s",
+                distance_estimate.source, pitch_min, pitch_max, pitch_target,
+            )
+        elif pitch_target is not None:
             source["pixel_pitch"] = "inferred_from_environment_distance"
             logger.info(
                 "点间距规则（%s / %sm）：%s~%smm，首选 P%s",
@@ -334,6 +557,14 @@ def infer_technical_parameters(facts: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "environment": environment,
         "viewing_distance_m": distance_m,
+        # v2.2：观看距离是不是推导出来的（推导值不能当成客户确认的事实）
+        "viewing_distance_source": (
+            "explicit" if explicit_distance
+            else (f"derived_from_{distance_estimate.source}" if distance_estimate else None)
+        ),
+        "viewing_distance_estimate": (
+            distance_estimate.to_dict() if distance_estimate else None
+        ),
         "pixel_pitch_min_mm": pitch_min,
         "pixel_pitch_max_mm": pitch_max,
         # 首选点间距（mm）：室内 ≤3m→2.5 / >3m→3.0；室外 4m→4.0 / 5m→4.5 /

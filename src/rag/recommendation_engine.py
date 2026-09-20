@@ -243,7 +243,7 @@ class RecommendationEngine:
             key=lambda item: (
                 -item.score,                                                    # 1. 分数高的优先
                 PRICE_TIER_ORDER.get(item.model.price_tier or "medium", 1),   # 2. 最便宜的优先
-                item.model.pixel_pitch_mm,                                      # 3. 点间距小的优先
+                self._pitch_tiebreak(item.model, technical),                     # 3. 点间距兜底
                 item.model.model,                                               # 4. 型号名排序
             ),
         )
@@ -272,6 +272,26 @@ class RecommendationEngine:
             len(candidates), [item.model.model for item in top], len(violations),
         )
         return result
+
+    @staticmethod
+    def _pitch_tiebreak(
+        model: CanonicalModel,
+        technical: Dict[str, Any],
+    ) -> float:
+        """同分时的点间距兜底（客户口径：宁可偏粗，绝不无依据地取最细）。
+
+        以前这里是"点间距小的优先"，于是在"没有观看距离 → 点间距维度不参与
+        打分 → 同系列所有型号完全平分"的情况下，直接挑中最细最贵的型号
+        （实测：10x5m 室内墙屏推出 P1.2，实际上 P3 就够）。
+
+        现在：有窗口首选值 → 取最接近首选的；没有 → 取偏粗的一端（便宜、
+        不会白花钱）。
+        """
+        pitch = float(getattr(model, "pixel_pitch_mm", 0.0) or 0.0)
+        target = technical.get("pitch_target_mm")
+        if target:
+            return abs(pitch - float(target))
+        return -pitch
 
     def _relax_model_constraint(
         self,
@@ -465,18 +485,24 @@ class RecommendationEngine:
         return _graded_pitch_fit(model.pixel_pitch_mm, low, high)
 
     def _size_fit(self, model: CanonicalModel, profile: RequirementProfile) -> Optional[float]:
-        if not profile.has_target_size:
+        # 只有宽高都齐才能算箱体排布（客户只报了一条边时由 Gate 继续追问，
+        # 这里不能拿半条尺寸去调计算器）
+        if not (profile.target_width_mm and profile.target_height_mm):
             return None
         try:
             from src.tools.screen_calculator import calculate_screen
         except Exception:  # pragma: no cover - Phase 9 之前该模块不存在
             return None
 
-        calc = calculate_screen(
-            model=model.model,
-            target_width_mm=profile.target_width_mm,
-            target_height_mm=profile.target_height_mm,
-        )
+        try:
+            calc = calculate_screen(
+                model=model.model,
+                target_width_mm=profile.target_width_mm,
+                target_height_mm=profile.target_height_mm,
+            )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("箱体排布打分失败（%s）：%s", model.model, exc)
+            return None
         target_area = (profile.target_width_mm or 0) * (profile.target_height_mm or 0)
         actual_area = calc["actual_width_mm"] * calc["actual_height_mm"]
         if target_area <= 0 or actual_area <= 0:

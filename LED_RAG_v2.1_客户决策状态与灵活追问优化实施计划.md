@@ -1616,3 +1616,35 @@ python -m pytest tests/ -q
 ```text
 Phase 10 线上日志验证  ⏸ 按用户要求本次排除（不在本地/线上日志环境跑真实会话）
 ```
+
+---
+
+## 26.7 追加：观看距离确定性推导 + 点间距物理窗口（v2.2，2026-09-20）
+
+实测 bug：客户说 "indoor permanent 10x5m wall for around 100 viewers" 时，系统推荐了
+**TW11-3216-P1.2**（该系列最细最贵的型号）。根因：没有观看距离 → `preferred_pitch_for_environment`
+返回空 → `_score` 里 `applicable` 过滤掉 `pitch` 维度 → 同系列所有型号完全平分 →
+排序兜底 `item.model.pixel_pitch_mm`（"点间距小的优先"）挑中最细的型号。
+
+**修法（不再按客户说法加规则，而是折算成物理量）**
+
+| 位置 | 改动 |
+|---|---|
+| `src/rag/query_understanding.py` | 新增 `_extract_space_facts()`：从原话解析人数 / 面积 / 进深（纯规则） |
+| `src/models/requirement.py` | 新增 `audience_count` / `room_area_sqm` / `room_depth_m` 三个**事实**字段（只作为观看距离的来源，不参与 Gate） |
+| `src/rag/parameter_inference.py` | 新增 `estimate_viewing_distance()`（4 个通用公式 + 优先级）、`pitch_window_for_distances()`（物理窗口）、`fallback_pitch_band()`（按环境的保守兜底档）；`infer_technical_parameters()` 增加窗口收口与来源标记 |
+| `src/rag/recommendation_engine.py` | 新增 `_pitch_tiebreak()`：并列时取接近窗口首选值的型号，没有首选值时**取偏粗的一端**，不再"点间距小的优先"；`_size_fit()` 只允许宽高都齐时才调用计算器 |
+
+**验收（5 组输入，全部不再出现 P1.x）**
+
+```text
+10x5m + 100 人      → 距离 6.2~8.8m   窗口 P3.0~P5.9  → TW11-3216-P3.0
+10x5m + 50 人       → 距离 4.3~6.1m   窗口 P3.0~P4.1  → TW11-3216-P3.0
+10x5m + 进深 8m     → 距离 5.3~7.5m   窗口 P3.0~P5.0  → TW11-3216-P3.0
+10x5m + 什么都不说   → 无            兜底 P2.5~P4.0  → TW11-3216-P3.0
+25㎡ + 3m 宽屏       → 距离 2.5~7.8m   窗口 P1.6~P2.5  → TW11-3216-P2.5
+DELEGATED 点间距 + 无视距 → 兜底档 → TW11-3216-P3.0（不再是 P1.2）
+```
+
+测试：`tests/test_viewing_distance_derivation.py`（36 条）；全量 `python -m pytest tests/ -q`
+→ **1171 passed, 4 skipped**。

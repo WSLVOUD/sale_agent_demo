@@ -220,6 +220,12 @@ class RequirementProfile(BaseModel):
     # 客户只报了一个长度（如 "129,2cm"）时的线索：是宽是高等客户确认，不替他猜
     screen_size_hint_mm: Optional[float] = Field(None, gt=0, le=200000)
     size_axis: Optional[str] = None
+    # ── 场地几何事实（v2.2）：观看距离的另外几种来源 ─────────────────────
+    # 客户说"100 人 / 25 平米 / 进深 8 米"时记录在这里；它们本身不决定型号，
+    # 只由 parameter_inference 折算成观看距离区间（确定性公式，不是场景枚举）。
+    audience_count: Optional[int] = Field(None, ge=1, le=100000)
+    room_area_sqm: Optional[float] = Field(None, gt=0, le=100000)
+    room_depth_m: Optional[float] = Field(None, gt=0, le=200)
 
     # ── 软条件事实 ──────────────────────────────────────────────────────
     budget_level: Optional[BudgetLevel] = None
@@ -358,6 +364,10 @@ class RequirementProfile(BaseModel):
         # 只报了一个长度的线索 + 客户指认的方向（宽 / 高 / 对角线）
         put("screen_size_hint_mm", slots.get("screen_size_hint_mm"))
         put("size_axis", slots.get("size_axis"))
+        # 场地几何（人数 / 面积 / 进深）→ 观看距离的其它来源
+        put("audience_count", slots.get("audience_count") or slots.get("seats"))
+        put("room_area_sqm", slots.get("room_area_sqm") or slots.get("area_sqm"))
+        put("room_depth_m", slots.get("room_depth_m") or slots.get("depth_m"))
 
         specials = _collect_specials(slots)
         if specials:
@@ -509,6 +519,12 @@ class RequirementProfile(BaseModel):
             facts["target_width_mm"] = self.target_width_mm
         if self.target_height_mm is not None:
             facts["target_height_mm"] = self.target_height_mm
+        if self.audience_count is not None:
+            facts["audience_count"] = self.audience_count
+        if self.room_area_sqm is not None:
+            facts["room_area_sqm"] = self.room_area_sqm
+        if self.room_depth_m is not None:
+            facts["room_depth_m"] = self.room_depth_m
         if self.pixel_pitch_mm is not None:
             facts["pixel_pitch_mm"] = self.pixel_pitch_mm
         if self.brightness_min_nit is not None:

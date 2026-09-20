@@ -419,13 +419,18 @@ def _degraded_profile():
 
 
 class TestPhase13EngineUnknownSkip:
-    """Phase 13：unknown != 0，未知维度直接跳过评分，不拉低所有候选。"""
+    """Phase 13 / v2.2：unknown != 0，未知维度绝不能记 0 分把所有候选一起拉低。
+
+    v2.2 起，"观看距离"不再是唯一来源 —— 客户给了屏尺寸 / 人数 / 面积 / 进深时，
+    点间距维度由确定性推导出来的物理窗口打分（而不是整维留空）。
+    """
 
     def test_unknown_viewing_distance_skips_pitch_scoring(self):
         from src.rag.recommendation_engine import RecommendationEngine
 
-        # 没有 P值/视距（客户还没给）→ 引擎里"点间距"这一维必须跳过（None），
-        # 不能记 0 分把所有候选都拉低。（此处直接调引擎，不经过 Gate）
+        # 没有 P值/视距，但有 5m x 3m 的屏体尺寸 → 引擎应推导出观看距离区间
+        # 并用窗口给点间距打分；旧实现会整维留空 → 同系列全并列 →
+        # 排序兜底"点间距小的优先"挑中最细最贵的型号。（此处直接调引擎，不过 Gate）
         slots = {
             "display_type": "LED", "environment": "indoor", "purpose": "church",
             "content_type": "mixed", "installation": "fixed",
@@ -436,10 +441,16 @@ class TestPhase13EngineUnknownSkip:
             profile=profile, top_k=3
         )
         assert result["recommendations"], "没有视距不代表不能选型（由调用方决定是否 Gate）"
+        technical = result["technical_parameters"]
+        assert technical["viewing_distance_estimate"], "必须能看出观看距离是怎么推出来的"
+        assert technical["viewing_distance_estimate"]["source"] == "screen_size"
         for rec in result["recommendations"]:
-            # 未知维度必须是 None（跳过），不能是 0.0（记零分）
-            assert rec["breakdown"]["pitch"] is None, rec
+            # 未知维度不能记 0 分（那会把所有候选一起拉低）；
+            # 推导出来的窗口必须给出一个"合理区间内"的分数
+            assert (rec["breakdown"]["pitch"] or 0.0) >= 0.5, rec
             assert rec["score"] > 0
+        # 3m 高的屏 → 最近 4.5m / 最远 9m → 窗口 P1.8~P4.5，绝不是最细的 P1.x
+        assert result["recommendations"][0]["pixel_pitch_mm"] >= 2.5
 
     def test_known_viewing_distance_scores_pitch(self):
         from src.rag.recommendation_engine import RecommendationEngine
