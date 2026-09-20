@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 MISSING_LABELS: Dict[str, str] = {
     "display_type": "the display type (LED, LCD or IFP)",
     "environment": "whether it will be installed indoors or outdoors",
-    "purpose": "the application scenario (meeting room, retail, advertising ...)",
+    "purpose": "the application scenario",
     "content_type": "whether the screen will play video, show images, or both",
     "installation": "whether it is a fixed installation or for rental/events",
     "pixel_pitch": "the pixel pitch you have in mind (P2.5, P3, P5 ...)",
@@ -44,19 +44,19 @@ MISSING_ORDER: tuple[str, ...] = (
     # 客户刚报了一个裸尺寸（"129,2cm"）时，先确认它是宽 / 高 / 对角线，
     # 这是"回应客户刚说的话"，比继续问环境更该先问
     "size_axis",
+    # ── 硬性条件（客户口径）：室内外 → 固装/租赁 → P值 → 尺寸 ──────────
     "environment",
-    "purpose",
-    # 客户口径：问完场景，紧接着问"放视频还是放图片"（只记录，不影响选型）
-    "content_type",
     "installation",
-    # 点间距先于观看距离：客户知道自己要什么 P 值就听客户的；
-    # 客户不知道再用观看距离反推（客户口径）。
     "pixel_pitch",
+    # 点间距与观看距离是一组（客户说不知道 P 值 → 紧接着问观看距离）
     "viewing_distance",
-    "display_type",
+    "size",
     "width",
     "height",
-    # 推荐前最后一问：最看重价格还是质量（客户已说过预算就不问）
+    # ── 非硬性（只记录，不阻塞推荐）──────────────────────────────────
+    "display_type",
+    "purpose",
+    "content_type",
     "price_preference",
 )
 
@@ -85,19 +85,19 @@ QUESTION_VARIANTS: Dict[str, Dict[str, tuple[str, ...]]] = {
     "purpose": {
         "en": (
             "What will the screen mainly be used for?",
-            "What kind of application is this — meeting room, retail, advertising, or something else?",
-            "Where will it be used, for example a meeting room, a store, or a venue?",
+            "What kind of application is this?",
+            "Where will the screen be used?",
             "Could you tell me the main use case?",
             "What's the screen for, and where will it be used?",
-            "What sort of venue will this be used in?",
-            "Which application is this for — meeting room, classroom, retail, or advertising?",
+            "What sort of application will this screen be used in?",
+            "Which application is this for?",
         ),
         "zh": (
-            "主要用在什么场景？",
-            "这块屏主要用在哪里，比如会议室、门店还是广告位？",
+            "这块屏主要用来做什么？",
+            "主要的使用场景是什么？",
             "方便说下主要的使用场景吗？",
             "这块屏主要用在什么场合？",
-            "使用场景是哪一类，会议室、教室、门店还是广告？",
+            "它是做什么用途的？",
         ),
     },
     # 问完场景紧接着问内容类型（视频 / 图片 / 两者都有）——只记录，不影响选型
@@ -392,11 +392,12 @@ EASIER_QUESTIONS: Dict[str, Dict[str, tuple[str, ...]]] = {
     },
     "purpose": {
         "en": (
-            "No problem — even the general setting helps. Is it more like a meeting room / "
-            "classroom, a retail space, or an advertising venue?",
+            # 客户口径：问场景时**不举例**，直接问问题（不要罗列会议室/教室/商场…）
+            "No problem — even the general setting helps. What sort of application will it be used for?",
+            "No problem at all — could you tell me roughly what the screen will be used for?",
         ),
         "zh": (
-            "没关系，说个大概就行 —— 更像会议室/教室、门店零售，还是广告类场景？",
+            "没关系，说个大概就行 —— 这块屏主要用来做什么？",
         ),
     },
 }
@@ -624,130 +625,79 @@ def check_recommendation_ready(
             status="READY",
         )
 
-    # 2) 客户明确给出技术规格（点间距 / 亮度）
-    #    客户口径：推荐前还要问过"最看重价格还是质量"（客户自己说过预算的就不用再问），
-    #    所以这里只有在该取向也明确时才直接放行。
-    preference_settled = (
-        getattr(profile, "price_preference", None) not in (None, "", [], {})
-        or getattr(profile, "budget_level", None) not in (None, "", [], {})
-    )
-    if preference_settled and (
-        getattr(profile, "pixel_pitch_mm", None) is not None
-        or getattr(profile, "brightness_min_nit", None) is not None
-    ):
-        return GateDecision(
-            ready=True, gate="recommendation",
-            reason="客户已明确给出技术规格（点间距/亮度）",
-            status="READY",
-        )
-
-    # 3) 场景充分：室内外 + 场景 + 安装方式 + 观看距离
-    #    （v2.0 Phase 4「推荐所需的核心信息」= Display Type / Environment /
-    #      Purpose / Installation / Viewing Distance；多轮示例也是在第四轮
-    #      补齐观看距离后才推荐）
+    # 2) 硬性条件（客户口径）：尺寸 + P值 + 室内外 + 固装/租赁
+    #    这四项齐了就直接推荐，**不再问其他问题**（场景 / 内容类型 / 价格取向
+    #    只记录，不阻塞）；缺哪一项就只问那一项。
     #
-    #    其中 installation 与 viewing_distance **必须是客户明确给出的**：
-    #    - installation 若无客户说明，会被"场景默认固装"猜出来
-    #    - viewing_distance 若无客户说明，旧逻辑会从"人数/面积"估算出来
-    #    这两种推断值只能用于打分/检索提示，不能作为推荐依据。
-    missing: List[str] = []
+    #    这四项**不适用**"问满两次就跳过"的容错规则：客户一直在说无关的话导致
+    #    没记录到，最后要推荐之前必须再问一次（否则推荐没有依据）。
+    hard_missing: List[str] = []
     # 客户报了一个裸尺寸（"129,2cm"）但没说方向 → 先确认，绝不替他猜
     if getattr(profile, "screen_size_hint_mm", None) and not getattr(profile, "has_target_size", False):
-        missing.append("size_axis")
-    environment_value = getattr(profile, "environment", None)
-    environment_source = profile.slot_source("environment") if environment_value else ""
-    # 客户明说（explicit/confirmed）或图片里明确可见（vision_explicit）→ 不必再问；
-    # 只是从场景推断出来的（scenario_derived）→ 先确认一次。
-    environment_confirmed_by_customer = (
-        _is_confirmed(profile, "environment") and environment_source != "scenario_derived"
-    )
-    if not environment_value:
-        missing.append("environment")
-    elif not environment_confirmed_by_customer and profile.ask_count("environment") == 0:
-        # 【客户口径】客户只说了场景（教堂 / 会议室 / 商场 / 广告牌…）时，环境是
-        # 系统**从场景推断**的，不等于客户说过 —— 先主动确认一次（确认型问法），
-        # 客户答了就用客户的，客户没答就沿用场景默认值继续往下问。
-        # 只问一次：这样既不会"客户说了教堂还傻问室内外"，也不会完全不问。
-        missing.append("environment")
-    elif not _environment_settled(profile):
-        # 舞台 / 演唱会 / 租赁这类室内外都可能 → 仍需追问
-        missing.append("environment")
-    if not getattr(profile, "purpose", None):
-        missing.append("purpose")
-    # 客户口径：问完场景紧接着问"放视频还是放图片"（只记录，不影响选型）
-    if not getattr(profile, "content_type", None):
-        missing.append("content_type")
-    if not getattr(profile, "installation", None):
-        missing.append("installation")
-    elif not _is_confirmed(profile, "installation"):
-        missing.append("installation")
-    # 点间距 / 观看距离：两者都不知道时**先问点间距**（客户口径）——
-    # 客户知道自己要什么 P 值就按客户的选型；不知道再问观看距离、用规则反推。
-    # 客户已经给了观看距离时就不用再问点间距了（距离能推 P 值）。
+        hard_missing.append("size_axis")
+    # 室内外：客户明说 / 明显场景（含 AI 从客户原话判断）/ 图片明确可见 → 都不用问
+    if not getattr(profile, "environment", None) or not _environment_settled(profile):
+        hard_missing.append("environment")
+    # 固装 / 租赁：必须是客户确认过的（场景默认的"固装"不算）
+    if not _is_confirmed(profile, "installation"):
+        hard_missing.append("installation")
+    # P值：客户点名了就按客户的；客户说"不知道"→ 用观看距离推；
+    # 两者都没有就必须问（先问 P 值，问不到再问观看距离）。
     pitch_known = getattr(profile, "pixel_pitch_mm", None) is not None
-    distance_present = getattr(profile, "viewing_distance_m", None) is not None
-    distance_confirmed = _is_confirmed(profile, "viewing_distance_m")
-    if not pitch_known and not distance_present:
-        missing.append("pixel_pitch")
-    # 客户已经给了点间距 → 不再问观看距离（按客户要的 P 值选型）
-    if not pitch_known and (not distance_present or not distance_confirmed):
-        missing.append("viewing_distance")
+    distance_known = (
+        getattr(profile, "viewing_distance_m", None) is not None
+        and _is_confirmed(profile, "viewing_distance_m")
+    )
+    if not pitch_known and not distance_known:
+        # 客户明确说"不知道 P 值" → 按规则转问观看距离，由规则反推点间距（客户口径）
+        if profile.is_unknown("pixel_pitch") or profile.unknown_reasons.get("pixel_pitch"):
+            hard_missing.append("viewing_distance")
+        else:
+            hard_missing.append("pixel_pitch")
+    # 尺寸：宽高都要（只有一条边 → 继续问另一条）
+    if not getattr(profile, "has_target_size", False):
+        hard_missing.append("size")
 
-    # 推荐前最后一问：最看重价格还是质量
-    # （客户已经直接说过预算 → 不再问，直接用他说的）
-    if (
-        getattr(profile, "price_preference", None) in (None, "", [], {})
-        and getattr(profile, "budget_level", None) in (None, "", [], {})
-    ):
-        missing.append("price_preference")
-
-    # ── Phase 11/12：字段级 Unknown 容错 ────────────────────────────────
-    # 已经问满两次（或客户明确跳过）仍然没有值的字段 → unknown，不再阻塞推荐。
-    unknown_slots = [slot for slot in missing if profile.is_unknown(slot)]
-    blocking = [slot for slot in missing if slot not in unknown_slots]
-
-    if blocking:
-        first = _first_missing(blocking)
+    if hard_missing:
+        first = _first_missing(hard_missing)
         # Phase 7：同一个字段第二次提问时要降低回答门槛（给区间 / 二选一）
         easier = profile.ask_count(first) >= 1
         question = (
             _size_axis_question(profile, language, variant_seed)
             if first == "size_axis"
-            else environment_confirm_question(language, variant_seed)
-            if first == "environment" and environment_value
             else None
         ) or question_for(first, language, variant_seed, easier=easier)
         # 图片给过尺寸估计 → 问尺寸时带上，让客户只需确认
         question = _with_size_hint(profile, first, language, question)
         return GateDecision(
-            ready=False, gate="recommendation", missing=blocking,
-            reason="信息不足以做可靠选型：" + ", ".join(blocking),
+            ready=False, gate="recommendation", missing=hard_missing,
+            reason="硬性条件未齐（尺寸 / P值 / 室内外 / 固装租赁）：" + ", ".join(hard_missing),
             next_question=question, status="CONTINUE_ASKING",
-            unknown_slots=unknown_slots,
+            unknown_slots=[],
         )
+
+    # 3) 非硬性项：只影响"是否 Best-effort"，绝不阻塞推荐
+    soft_missing: List[str] = []
+    if not getattr(profile, "purpose", None):
+        soft_missing.append("purpose")
+    if not getattr(profile, "content_type", None):
+        soft_missing.append("content_type")
+    if (
+        getattr(profile, "price_preference", None) in (None, "", [], {})
+        and getattr(profile, "budget_level", None) in (None, "", [], {})
+    ):
+        soft_missing.append("price_preference")
+    unknown_slots = [slot for slot in soft_missing if profile.is_unknown(slot)]
 
     if unknown_slots:
-        # 核心信息（场景 / 环境）至少要有其一，否则没有选型依据
-        has_basis = bool(getattr(profile, "purpose", None)) or bool(
-            getattr(profile, "environment", None)
-        )
-        if has_basis:
-            return GateDecision(
-                ready=True, gate="recommendation",
-                reason="按已确认信息做 Best-effort 推荐（部分字段客户不知道："
-                       + ", ".join(unknown_slots) + "）",
-                status="DEGRADED_READY", unknown_slots=unknown_slots,
-            )
         return GateDecision(
-            ready=False, gate="recommendation", missing=unknown_slots,
-            reason="核心信息（场景/室内外）客户也未确认，暂时没有选型依据",
-            next_question=question_for("purpose", language, variant_seed, easier=True),
-            status="CONTINUE_ASKING", unknown_slots=unknown_slots,
+            ready=True, gate="recommendation",
+            reason="硬性条件齐备，其余字段客户不知道：" + ", ".join(unknown_slots),
+            status="DEGRADED_READY", unknown_slots=unknown_slots,
         )
-
     return GateDecision(
         ready=True, gate="recommendation",
-        reason="环境 + 场景 + 安装方式 + 观看距离齐备",
+        reason="尺寸 + P值 + 室内外 + 固装租赁齐备",
         status="READY",
     )
 

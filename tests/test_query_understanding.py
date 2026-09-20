@@ -200,10 +200,10 @@ class TestImperialUnits:
         from src.rag.query_understanding import extract_slots
         from src.rag.readiness import check_recommendation_ready
 
-        # 客户口径：推荐前还要"内容类型"与"价格/质量取向"
+        # 客户口径（2026-09-18）：硬性条件 = 尺寸 / P值 / 室内外 / 固装租赁
         message = (
             "indoor conference room, fixed installation, about 100 feet viewing distance, "
-            "mainly for video, price matters more"
+            "mainly for video, price matters more, 5m x 3m"
         )
         slots = extract_slots(message)
         profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))

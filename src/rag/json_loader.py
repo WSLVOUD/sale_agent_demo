@@ -184,7 +184,7 @@ def load_structured_documents(data_dir: str) -> list[Document]:
 
 
 # ── Phase 2：Model 级 RAG Document ──────────────────────────────────────────
-ENVIRONMENT_METADATA_VERSION = 4  # 与 loader.py 保持一致
+ENVIRONMENT_METADATA_VERSION = 6  # 与 loader.py 保持一致（v6：新增室外租赁系列）
 
 
 def _clean_metadata_value(value: Any) -> Any:

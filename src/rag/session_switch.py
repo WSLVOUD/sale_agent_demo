@@ -84,6 +84,16 @@ _MORE_OPTIONS_GUARDS = (
     r"\bother\s+(?:options|models|products|choices|recommendations)\b",
 )
 
+# 客户明确让销售"再来一款 / 另外推荐一款"（要更多型号）→ 这是"想看更多选项"，
+# 不是换产品，绝不能清空需求重新采集（实测 bug：客户回"另外帮我推荐一款"，
+# 系统回了句"我们重新来一遍"又开始问室内外）。
+# 注意：这个判断要**优先于**强重置信号，因为 "另(?:外|…)" 也会命中强信号。
+_OTHER_MODEL_REQUEST_RE = re.compile(
+    r"(?:另外|再|又|还)(?:帮我|给我|帮忙)?(?:再)?推荐(?:一|几|两)?(?:款|个|种|台)"
+    r"|\b(?:recommend|suggest)\s+(?:me\s+)?(?:another|one more|a different)\b",
+    re.IGNORECASE,
+)
+
 
 # 重置后的口语确认（同一件事多种说法，按轮次轮换）
 RESET_ACKS: Dict[str, tuple[str, ...]] = {
@@ -130,6 +140,10 @@ def _match_any(patterns: Tuple[str, ...], text: str) -> Optional[str]:
 
 def _match_explicit_reset(text: str) -> Optional[str]:
     """客户是否明确要求"重新来 / 换一个"。强信号优先于"想看更多"的护栏。"""
+    # "另外/再 帮我推荐一款" = 想看更多型号（给排行第二的备选），不是换产品。
+    # 这一步必须放在强信号之前：强信号里的 "另(?:外|…)" 会把"另外"也当成重置。
+    if _OTHER_MODEL_REQUEST_RE.search(text):
+        return None
     strong = _match_any(_STRONG_RESET_PATTERNS, text)
     if strong:
         return strong

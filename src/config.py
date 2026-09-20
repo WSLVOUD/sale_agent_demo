@@ -3,7 +3,34 @@ Configuration module for LED RAG System.
 Loads settings from .env file.
 """
 import os
+import warnings
 from dotenv import load_dotenv
+
+# ── 启动噪音（不影响功能，但日志里很吵）──────────────────────────────────
+# 1) ChromaDB 的匿名遥测：默认开着，且 posthog 版本不兼容时会刷一堆
+#    "Failed to send telemetry event ... capture() takes 1 positional argument" 报错。
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+
+# 2) LangChain / LangGraph 的弃用告警（HuggingFaceEmbeddings、Chroma、JsonPlusSerializer …）：
+#    这些类仍可正常使用，等升级依赖时再处理，这里先别刷屏。
+def silence_deprecation_noise() -> None:
+    """抑制 LangChain / Chroma 的弃用告警（可重复调用）。
+
+    注意：sentence-transformers / transformers 在加载模型时可能重置 warnings 过滤器，
+    所以除了模块导入时调用一次，真正加载模型/向量库之前还会再调用一次。
+    """
+    try:  # pragma: no cover - 依赖版本差异
+        from langchain_core._api.deprecation import LangChainDeprecationWarning
+        from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
+
+        for _warning_cls in (LangChainDeprecationWarning, LangChainPendingDeprecationWarning):
+            warnings.filterwarnings("ignore", category=_warning_cls)
+    except Exception:  # pragma: no cover - 防御式
+        warnings.filterwarnings("ignore", message=r".*HuggingFaceEmbeddings.*")
+        warnings.filterwarnings("ignore", message=r".*Chroma.*")
+
+
+silence_deprecation_noise()
 
 # Resolve project-relative paths from this config file, not the process cwd.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

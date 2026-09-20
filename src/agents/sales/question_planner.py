@@ -39,8 +39,9 @@ QUESTION_PLAN: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "purpose",
-        "What will you mainly use it for — meeting room, classroom, retail, advertising, or something else?",
-        "主要用在什么场景？会议室、教室、商场零售、广告，还是其他？",
+        # 客户口径：问场景时不举例，直接问问题
+        "What will you mainly use it for?",
+        "主要用在什么场景？",
     ),
     (
         "installation",

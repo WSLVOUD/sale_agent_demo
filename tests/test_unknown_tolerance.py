@@ -89,6 +89,7 @@ def _reach_viewing_distance_question(sales_req, first_message="we need an indoor
         "content_type": "both videos and images",
         "installation": "it's a fixed installation",
         "pixel_pitch": "I don't know",
+        "size": "5 m x 3 m",
     }
     while turn["pending_slot"] != "viewing_distance" and guard < 6:
         guard += 1
@@ -214,24 +215,23 @@ class TestPlanTestCases:
         assert question != asked["pending_question"].lower()
 
     def test_3_unknown_twice_then_stop_asking(self, sales_llm):
+        """客户口径（2026-09-18）：点间距 / 观看距离属于**硬性条件**，
+        客户一直说"不知道"也必须继续问（换降门槛的问法），不能跳过。"""
         first = _reach_viewing_distance_question(sales_llm)
         second = _turn(sales_llm, "I don't know", first["requirement_profile"], {}, last_asked="viewing_distance")
         third = _turn(sales_llm, "still don't know", second["requirement_profile"], {}, last_asked="viewing_distance")
 
         profile = third["requirement_profile"]
-        assert profile.slot_status("viewing_distance") == "unknown"
-        assert profile.ask_count("viewing_distance") == MAX_ASKS_PER_SLOT
-        # 不再追问同一个字段
-        assert third["pending_slot"] != "viewing_distance"
-        # 观看距离问满两次就不问了，转去问还没问过的"价格/质量取向"
-        assert third["pending_slot"] == "price_preference"
+        assert profile.ask_count("viewing_distance") >= 1
+        assert third["pending_slot"] == "viewing_distance", "硬性条件不能跳过"
+        assert third["recommendation_gate"]["status"] == "CONTINUE_ASKING"
+        assert "viewing_distance" in third["recommendation_gate"]["missing"]
+        # 客户真的给出视距后 → 才继续往下走
         fourth = _turn(
-            sales_llm, "price matters more", third["requirement_profile"], {},
-            last_asked="price_preference",
+            sales_llm, "about 8 meters", third["requirement_profile"], {},
+            last_asked="viewing_distance",
         )
-        # 之后按已有信息继续（DEGRADED_READY），不再卡在需求收集
-        assert fourth["recommendation_gate"]["status"] == "DEGRADED_READY"
-        assert "viewing_distance" in fourth["recommendation_gate"]["unknown_slots"]
+        assert fourth["requirement_profile"].viewing_distance_m == pytest.approx(8.0)
 
     def test_4_answer_other_information_while_not_knowing(self, sales_llm):
         first = _reach_viewing_distance_question(sales_llm)
@@ -285,10 +285,10 @@ class TestPlanTestCases:
             first["requirement_profile"], {}, last_asked="viewing_distance",
         )
         profile = turn["requirement_profile"]
-        assert profile.slot_status("viewing_distance") == "unknown"
         assert profile.unknown_reasons["viewing_distance"] == "customer_skip"
-        assert profile.ask_count("viewing_distance") <= MAX_ASKS_PER_SLOT
-        assert turn["pending_slot"] != "viewing_distance"
+        # 客户口径：硬性条件即使被跳过也必须问回来（换成更口语的问法）
+        assert turn["pending_slot"] == "viewing_distance"
+        assert turn["recommendation_gate"]["status"] == "CONTINUE_ASKING"
 
 
 class TestDegradedRecommendation:
@@ -302,23 +302,27 @@ class TestDegradedRecommendation:
             "content_type": "mixed",
             "installation": "fixed",
             "price_preference": "price",
+            "viewing_distance_m": 5,
             "target_width_mm": 5000,
             "target_height_mm": 3000,
         }
         profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
-        # 客户口径：先问点间距；客户不知道 → 只问一次就跳过，再问观看距离
-        profile.record_ask("pixel_pitch")
-        profile.mark_unknown("pixel_pitch")
-        profile.record_ask("viewing_distance")
-        profile.record_ask("viewing_distance")
-        profile.mark_unknown("viewing_distance")
+        # 客户口径（2026-09-18）：硬性条件不能跳过；DEGRADED 只针对非硬性项。
+        # 这里模拟"非硬性的价格取向"问过两次客户都不知道。
+        profile.record_ask("price_preference")
+        profile.record_ask("price_preference")
+        profile.mark_unknown("price_preference")
+        profile.price_preference = None
+        profile.budget_level = None
+        profile.sources.pop("price_preference", None)
+        profile.sources.pop("budget_level", None)
         return profile
 
     def test_gate_returns_degraded_ready(self):
         decision = check_recommendation_ready(self._degraded_profile())
         assert decision.ready is True
         assert decision.status == "DEGRADED_READY"
-        assert "viewing_distance" in decision.unknown_slots
+        assert "price_preference" in decision.unknown_slots
 
     def test_recommendation_still_produced(self):
         from src.rag.recommendation_service import RecommendationService
@@ -384,7 +388,11 @@ class TestSessionSwitchClearsUnknownState:
 
 
 def _degraded_profile():
-    """室内 + 教堂 + 固装 + 5m x 3m，观看距离客户不知道。"""
+    """室内 + 教堂 + 固装 + 5m x 3m（硬性条件齐），非硬性的价格取向客户不知道。
+
+    客户口径（2026-09-18）：尺寸 / P值 / 室内外 / 固装租赁 是硬性条件，不能跳过；
+    DEGRADED_READY（Best-effort 推荐）只适用于内容类型 / 价格取向这类非硬性项。
+    """
     slots = {
         "display_type": "LED",
         "environment": "indoor",
@@ -392,16 +400,18 @@ def _degraded_profile():
         "content_type": "mixed",
         "installation": "fixed",
         "price_preference": "price",
+        "viewing_distance_m": 5,
         "target_width_mm": 5000,
         "target_height_mm": 3000,
     }
     profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
-    # 客户口径：先问点间距；客户不知道 → 只问一次就跳过，再问观看距离
-    profile.record_ask("pixel_pitch")
-    profile.mark_unknown("pixel_pitch")
-    profile.record_ask("viewing_distance")
-    profile.record_ask("viewing_distance")
-    profile.mark_unknown("viewing_distance")
+    profile.record_ask("price_preference")
+    profile.record_ask("price_preference")
+    profile.mark_unknown("price_preference")
+    profile.price_preference = None
+    profile.budget_level = None
+    profile.sources.pop("price_preference", None)
+    profile.sources.pop("budget_level", None)
     return profile
 
 
@@ -411,11 +421,18 @@ class TestPhase13EngineUnknownSkip:
     def test_unknown_viewing_distance_skips_pitch_scoring(self):
         from src.rag.recommendation_engine import RecommendationEngine
 
+        # 没有 P值/视距（客户还没给）→ 引擎里"点间距"这一维必须跳过（None），
+        # 不能记 0 分把所有候选都拉低。（此处直接调引擎，不经过 Gate）
+        slots = {
+            "display_type": "LED", "environment": "indoor", "purpose": "church",
+            "content_type": "mixed", "installation": "fixed",
+            "target_width_mm": 5000, "target_height_mm": 3000,
+        }
+        profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
         result = RecommendationEngine().recommend(
-            profile=_degraded_profile(), top_k=3, require_ready=True
+            profile=profile, top_k=3
         )
-        assert result["recommendation_status"] == "DEGRADED"
-        assert result["recommendations"], "客户不知道视距不代表不能推荐"
+        assert result["recommendations"], "没有视距不代表不能选型（由调用方决定是否 Gate）"
         for rec in result["recommendations"]:
             # 未知维度必须是 None（跳过），不能是 0.0（记零分）
             assert rec["breakdown"]["pitch"] is None, rec
@@ -425,10 +442,8 @@ class TestPhase13EngineUnknownSkip:
         from src.rag.recommendation_engine import RecommendationEngine
 
         profile = _degraded_profile()
-        profile.viewing_distance_m = 5.0
-        profile.sources["viewing_distance_m"] = "explicit"
         result = RecommendationEngine().recommend(profile=profile, top_k=3, require_ready=True)
-        assert result["recommendation_status"] == "RECOMMENDED"
+        assert result["recommendation_status"] in ("RECOMMENDED", "DEGRADED")
         assert any(rec["breakdown"]["pitch"] is not None for rec in result["recommendations"])
 
 
@@ -445,9 +460,9 @@ class TestPhase14RecommendationBasis:
         assert "environment" in basis["confirmed_requirements"]
         assert "purpose" in basis["confirmed_requirements"]
         assert "width" in basis["confirmed_requirements"]
-        # 点间距（先问、客户不知道）与观看距离都算客户不知道
-        assert sorted(basis["unknown_requirements"]) == ["pixel_pitch", "viewing_distance"]
-        assert sorted(result["unknown_requirements"]) == ["pixel_pitch", "viewing_distance"]
+        # 非硬性的"价格取向"客户不知道 → 记进 unknown（硬性条件都已确认）
+        assert sorted(basis["unknown_requirements"]) == ["price_preference"]
+        assert sorted(result["unknown_requirements"]) == ["price_preference"]
         assert result["missing_fields"] == []
 
     def test_normal_recommendation_is_not_degraded(self):
@@ -461,6 +476,8 @@ class TestPhase14RecommendationBasis:
             "installation": "fixed",
             "price_preference": "price",
             "viewing_distance_m": 5,
+            "target_width_mm": 5000,
+            "target_height_mm": 3000,
         }
         profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
         result = RecommendationService().recommend(profile)
@@ -515,7 +532,7 @@ class TestPhase16DegradedRecommendationEndToEnd:
             "additional_requirements": [],
         }
 
-    def test_node_recommends_with_unknown_distance(self, monkeypatch):
+    def test_node_recommends_with_unknown_soft_slot(self, monkeypatch):
         import importlib
 
         rec_mod = importlib.import_module("src.agents.solution.nodes.recommend")
@@ -523,13 +540,13 @@ class TestPhase16DegradedRecommendationEndToEnd:
 
         out = rec_mod.recommend_node(self._state(_degraded_profile()))
 
-        assert out["products"], "客户不知道视距时仍应给出产品"
+        assert out["products"], "非硬性项（价格取向）客户不知道时仍应给出产品"
         answer = out["recommendation"]
         # 客户口径：推荐话术只给结论，不再写"某项还没确认 / 可能有偏差"
         assert "not confirmed" not in answer.lower()
         assert "tell me if" not in answer.lower()
         # Phase 16：尺寸齐备 → 箱体/模组必须照常计算
-        assert out["screen_calculation"], "视距 unknown 不应阻塞箱体计算"
+        assert out["screen_calculation"], "非硬性 unknown 不应阻塞箱体计算"
         assert out["screen_calculation"]["cabinet_count"] > 0
 
     def test_fallback_template_also_states_the_gap(self, monkeypatch):
@@ -613,29 +630,41 @@ class TestPhase17PlannerPriority:
 
 
 class TestGoldenConversation:
-    """计划第 23 节：金标对话 —— 超过 2 次询问率必须为 0，且最终仍要推荐。"""
+    """金标对话（客户口径 2026-09-18）：
 
-    def test_never_asks_more_than_twice_and_still_recommends(self, sales_llm):
-        from collections import Counter
+    - 硬性条件（尺寸 / P值 / 室内外 / 固装租赁）**必须问到**：
+      客户一直说"不知道"也不能直接推荐，要继续换问法问；
+    - 客户补上硬性条件后立即放行推荐；
+    - 非硬性项（内容类型 / 价格取向）客户不知道也不阻塞。
+    """
 
+    def test_hard_conditions_are_never_skipped_then_recommends(self, sales_llm):
         turn = _turn(sales_llm, "we need an indoor led screen for a church", None, {})
         asked_slots = []
-        for _ in range(12):
-            if turn["should_generate_solution"]:
-                break
+        # 客户对所有问题都回"不知道"：硬性条件一直问回来，绝不推荐
+        for _ in range(6):
+            assert turn["should_generate_solution"] is False
             slot = turn["pending_slot"]
-            assert slot, "未就绪时必须继续追问（但不能死循环）"
+            assert slot, "未就绪时必须继续追问"
             asked_slots.append(slot)
             turn = _turn(
                 sales_llm, "I don't know", turn["requirement_profile"], {},
                 last_asked=slot,
             )
+        # 硬性条件必须一直在问（安装方式 / P值 / 尺寸…），不会自动放行
+        assert set(asked_slots) & {"installation", "pixel_pitch", "viewing_distance", "size"}
+        assert turn["recommendation_gate"]["status"] == "CONTINUE_ASKING"
 
-        counts = Counter(asked_slots)
-        assert max(counts.values()) <= MAX_ASKS_PER_SLOT, counts
+        # 客户补上硬性条件 → 立即推荐
         profile = turn["requirement_profile"]
-        assert profile.ask_count("installation") <= MAX_ASKS_PER_SLOT
-        assert profile.ask_count("viewing_distance") <= MAX_ASKS_PER_SLOT
-        # 客户两次都不知道 → 仍然基于已确认信息继续推荐
+        for slot, answer in (
+            ("installation", "fixed installation"),
+            ("pixel_pitch", "P3"),
+            ("size", "5m x 3m"),
+        ):
+            turn = _turn(sales_llm, answer, profile, {}, last_asked=slot)
+            profile = turn["requirement_profile"]
+        assert profile.installation == "fixed"
+        assert profile.pixel_pitch_mm == pytest.approx(3.0)
+        assert profile.has_target_size
         assert turn["should_generate_solution"] is True
-        assert turn["recommendation_gate"]["status"] == "DEGRADED_READY"

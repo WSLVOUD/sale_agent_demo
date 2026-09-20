@@ -85,6 +85,9 @@ SLOT_PRIORITY: Dict[str, str] = {
 _EXPLICIT_STRENGTH = {
     "explicit": 7,
     "confirmed": 7,
+    # 图片识别结果已经跟客户核对过、客户没有纠正（没反对）→ 视为接受
+    # （用于"别再重复问同一件事"，比"客户明说"弱一点）
+    "vision_accepted": 6,
     "vision_explicit": 5,
     "scenario_derived": 4,
     "vision_inferred": 3,
@@ -93,7 +96,10 @@ _EXPLICIT_STRENGTH = {
 }
 
 # 能算作"客户确认"的来源（可用于打开 Ready Gate）
-CONFIRMED_SOURCES: frozenset[str] = frozenset({"explicit", "confirmed", "scenario_derived"})
+# 注意：vision_accepted = 图片结果已经跟客户核对过、客户没有纠正 → 才算"客户侧接受"
+CONFIRMED_SOURCES: frozenset[str] = frozenset(
+    {"explicit", "confirmed", "scenario_derived", "vision_accepted"}
+)
 
 # 图片"明确可见"（vision_explicit）能作为选型依据的字段。
 # 这几项图片确实能看出来（明显的室内会议室 / 明显的 LED 屏 / 明显的租赁箱体），

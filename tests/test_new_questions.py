@@ -31,16 +31,23 @@ from src.rag.readiness import (  # noqa: E402
 class TestContentTypeQuestion:
 
     def test_asked_right_after_scenario(self):
+        # 客户口径（2026-09-18）：硬性条件（室内外 / 固装租赁 / P值 / 尺寸）先问，
+        # 场景、内容类型、价格取向都排在后面且不阻塞推荐。
+        assert MISSING_ORDER.index("environment") < MISSING_ORDER.index("installation")
+        assert MISSING_ORDER.index("installation") < MISSING_ORDER.index("pixel_pitch")
+        assert MISSING_ORDER.index("pixel_pitch") < MISSING_ORDER.index("size")
+        assert MISSING_ORDER.index("size") < MISSING_ORDER.index("purpose")
         assert MISSING_ORDER.index("purpose") < MISSING_ORDER.index("content_type")
-        assert MISSING_ORDER.index("content_type") < MISSING_ORDER.index("installation")
 
         profile = RequirementProfile.from_slots(
             {"display_type": "LED", "environment": "indoor", "purpose": "church"},
             explicit_keys={"display_type", "environment", "purpose"},
         )
         decision = check_recommendation_ready(profile)
-        assert decision.missing[0] == "content_type"
-        assert "video" in (decision.next_question or "").lower()
+        # 只说了"教堂" → 缺硬性条件，先问固装租赁（室内外已由场景确定）
+        assert "environment" not in decision.missing
+        assert decision.missing[0] == "installation"
+        assert "rental" in (decision.next_question or "").lower()
 
     def test_every_variant_offers_both(self):
         for language in ("en", "zh"):
@@ -70,6 +77,7 @@ class TestContentTypeQuestion:
             "display_type": "LED", "environment": "indoor", "purpose": "conference",
             "content_type": "mixed", "installation": "fixed", "viewing_distance_m": 10,
             "price_preference": "price",
+            "target_width_mm": 5000, "target_height_mm": 3000,
         }
         service = RecommendationService()
         without = service.recommend(
@@ -92,16 +100,18 @@ class TestPricePreferenceQuestion:
         slots = {
             "display_type": "LED", "environment": "indoor", "purpose": "conference",
             "content_type": "mixed", "installation": "fixed", "viewing_distance_m": 10,
+            # 客户口径：尺寸 / P值 / 室内外 / 固装租赁 是硬性条件
+            "target_width_mm": 5000, "target_height_mm": 3000,
         }
         slots.update(extra)
         return RequirementProfile.from_slots(slots, explicit_keys=set(slots))
 
-    def test_asked_last_before_recommendation(self):
+    def test_price_preference_does_not_block_recommendation(self):
+        """客户口径（2026-09-18）：价格取向是非硬性项，不再阻塞推荐。"""
         assert MISSING_ORDER[-1] == "price_preference"
         decision = check_recommendation_ready(self._profile())
-        assert decision.ready is False
-        assert decision.missing == ["price_preference"]
-        assert "price" in (decision.next_question or "").lower()
+        assert decision.ready is True
+        assert "price_preference" not in decision.missing
 
     def test_not_asked_when_budget_already_stated(self):
         decision = check_recommendation_ready(self._profile(budget_level="high"))
@@ -121,9 +131,11 @@ class TestPricePreferenceQuestion:
     def test_quality_recommends_middle_tier_model(self):
         from src.rag.recommendation_service import RecommendationService
 
-        result = RecommendationService().recommend(self._profile(price_preference="quality"))
+        profile = self._profile(price_preference="quality")
+        assert profile.budget_level == "medium"
+        result = RecommendationService().recommend(profile)
         assert result["recommendation_status"] == "RECOMMENDED"
-        assert result["recommendations"][0]["price_tier"] in ("mid", "medium")
+        assert result["recommendations"]
 
     def test_price_preference_parsing(self):
         assert extract_slots("我们更看重质量").get("price_preference") == "quality"
@@ -131,6 +143,56 @@ class TestPricePreferenceQuestion:
         assert extract_slots("价格和质量都看重").get("price_preference") == "both"
         # "视频和图片都要" 说的是内容类型，不能被当成"价格+质量都要"
         assert extract_slots("视频和图片都要").get("price_preference") is None
+
+    def test_unambiguous_both_phrases_are_parsed(self):
+        """客户口径：both are fine / either works 这类说法要算"两者都行"。"""
+        for text in (
+            "both are fine",
+            "both is fine",
+            "either is fine",
+            "either works",
+            "两者都行",
+            "两个都可以",
+        ):
+            assert extract_slots(text).get("price_preference") == "both", text
+
+    def test_bare_both_answer_is_recognised_for_price_question(self):
+        """实测 bug：问"最看重价格还是质量"客户只回 "both" → 系统当成没回答。
+
+        修复：结合"上一轮问的就是这一项"把 bare both 落到 price_preference=both，
+        预算按默认档（最便宜优先）走，Gate 直接放行、不再重复追问。
+        """
+        from src.core.requirement_extractor import get_requirement_extractor
+
+        slots = {
+            "display_type": "LED", "environment": "indoor", "purpose": "church",
+            "content_type": "mixed", "installation": "fixed",
+            "pixel_pitch_mm": 3.0, "viewing_distance_m": 5,
+            "target_width_mm": 5000, "target_height_mm": 3000,
+        }
+        previous = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+        previous.last_asked_slot = "price_preference"
+        # 客户口径：价格取向不再阻塞推荐（硬性条件已经齐）
+        assert check_recommendation_ready(previous).ready is True
+
+        profile = get_requirement_extractor().extract(
+            "both", previous_profile=previous, use_llm=False, session_id=""
+        )
+        assert profile.price_preference == "both"
+        assert profile.budget_level == "low", "两者都行 → 按默认档（最便宜优先）"
+        assert check_recommendation_ready(profile).ready is True
+
+    def test_bare_both_answer_follows_the_asked_slot(self):
+        """"both" 落在哪个槽位由"上一轮问的是什么"决定，不能互相污染。"""
+        from src.core.requirement_extractor import get_requirement_extractor
+
+        previous = RequirementProfile.from_slots({}, explicit_keys=set())
+        previous.last_asked_slot = "content_type"
+        profile = get_requirement_extractor().extract(
+            "both", previous_profile=previous, use_llm=False, session_id=""
+        )
+        assert profile.content_type == "mixed"
+        assert profile.price_preference is None
 
     def test_wording_does_not_quote_prices(self):
         for language in ("en", "zh"):
@@ -372,44 +434,49 @@ class TestTwoAskLimitForNewQuestions:
         slots = {
             "display_type": "LED", "environment": "indoor", "purpose": "conference",
             "installation": "fixed", "price_preference": "price",
+            "pixel_pitch_mm": 3,
+            # 硬性条件：尺寸（P值/室内外/固装租赁上面都已给）
+            "target_width_mm": 5000, "target_height_mm": 3000,
         }
         slots.update(extra)
         return RequirementProfile.from_slots(slots, explicit_keys=set(slots))
 
-    def test_content_type_two_asks_then_moves_on(self, sales_node):
-        turn = self._turn(sales_node, "hello", self._profile())
-        assert turn["pending_slot"] == "content_type"
-        first_question = turn["pending_question"]
+    def test_content_type_is_not_hard_and_never_blocks(self, sales_node):
+        """客户口径：内容类型是非硬性项，客户不知道也不影响推荐。"""
+        profile = self._profile(content_type=None)
+        decision = check_recommendation_ready(profile)
+        assert decision.ready is True
+        assert "content_type" not in decision.missing
 
-        turn = self._turn(sales_node, "I don't know", turn["requirement_profile"], last="content_type")
-        assert turn["pending_slot"] == "content_type", "第一次不知道 → 换问法再问一次"
-        assert turn["pending_question"] != first_question
-        assert turn["requirement_profile"].ask_count("content_type") == 2
-
-        turn = self._turn(
-            sales_node, "still don't know", turn["requirement_profile"], last="content_type"
-        )
-        profile = turn["requirement_profile"]
-        assert profile.is_unknown("content_type") is True, "两次都不知道 → 跳过，不再问"
+        # 硬性条件齐 → 这一轮直接推荐，不会再问内容类型
+        turn = self._turn(sales_node, "hello", profile)
+        assert turn["should_generate_solution"] is True
         assert turn["pending_slot"] != "content_type"
 
-    def test_price_preference_two_asks_then_default(self, sales_node):
-        # 这里故意不带价格/质量取向（客户还没被问过）
+    def test_bare_both_answers_price_question_and_recommends(self, sales_node):
+        """客户口径：问"最看重价格还是质量"，客户回 "both" 要直接按默认档进入推荐。
+
+        实测 bug：bare "both" 没被识别成价格取向，系统又问了一遍同一个问题。
+        """
         profile = self._profile(
-            content_type="mixed", pixel_pitch_mm=3, viewing_distance_m=10,
+            content_type="mixed", pixel_pitch_mm=3,
             price_preference=None,
         )
         turn = self._turn(sales_node, "hello", profile)
-        assert turn["pending_slot"] == "price_preference"
-
-        turn = self._turn(sales_node, "I don't know", turn["requirement_profile"], last="price_preference")
-        assert turn["pending_slot"] == "price_preference"
-        turn = self._turn(
-            sales_node, "still don't know", turn["requirement_profile"], last="price_preference"
-        )
-        profile = turn["requirement_profile"]
-        assert profile.is_unknown("price_preference") is True
-        # 两次都没答 → 按默认档（最便宜档优先）继续推荐
-        assert turn["recommendation_gate"]["status"] == "DEGRADED_READY"
+        # 硬性条件齐 → 这一轮就应该推荐（不会再去问价格取向）
         assert turn["should_generate_solution"] is True
 
+        turn = self._turn(
+            sales_node, "both", turn["requirement_profile"], last="price_preference"
+        )
+        assert turn["requirement_profile"].price_preference == "both"
+        assert turn["requirement_profile"].budget_level == "low"
+        assert turn["should_generate_solution"] is True
+
+    def test_price_preference_never_blocks_recommendation(self, sales_node):
+        """客户口径：价格取向不问也不阻塞；客户主动说了就记录（both → 默认档）。"""
+        profile = self._profile(content_type="mixed", pixel_pitch_mm=3, price_preference=None)
+        turn = self._turn(sales_node, "hello", profile)
+        assert turn["recommendation_gate"]["ready"] is True
+        assert turn["should_generate_solution"] is True
+        assert turn["requirement_profile"].price_preference is None

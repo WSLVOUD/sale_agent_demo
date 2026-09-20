@@ -333,6 +333,7 @@ class DualAgentOrchestrator:
                 "products": [],
                 "next_action": "first_contact_done",
             }
+            self._finalize_turn_response(result, session_id, message)
             result["_perf"] = perf.summary()
             if vision_metrics:
                 result["vision"] = vision_metrics
@@ -359,6 +360,10 @@ class DualAgentOrchestrator:
             has_vision=bool(vision_results),
         )
         perf.mark("sales_done")
+        # 客户口径：同一个问题全项目最多问两次 —— 客户答过的共有项要同步到其他屏，
+        # 否则两块屏会各问一遍（实测被连问 4 次）。
+        # 只填空值，绝不覆盖：能用 P3/P5、固装/租赁 等参数区分两块屏时，这些差异保留。
+        self._share_common_facts(session_id)
         perf.intent = sales_result.get("intent", "")
 
         # 多屏拆分的那一轮：Sales 的需求抽取只看到"整句话"，会把两块屏的参数
@@ -415,6 +420,7 @@ class DualAgentOrchestrator:
                     sales_result=sales_result,
                     message=message,
                     seed=len(history),
+                    session_id=session_id,
                 ),
                 "agent": "solution_question",
                 "requirements": requirements,
@@ -445,6 +451,7 @@ class DualAgentOrchestrator:
                     sales_result=sales_result,
                     message=message,
                     seed=len(history),
+                    session_id=session_id,
                 ),
                 "agent": "solution_others",
                 "requirements": requirements,
@@ -490,6 +497,10 @@ class DualAgentOrchestrator:
             multi_reply = self._recommend_all_screens(session_id, message)
             if multi_reply:
                 result["response"] = multi_reply
+                self._finalize_turn_response(result, session_id, message)
+                # 多屏回复里每块屏各自有环境（室内那块本来就该出现室内型号）；
+                # API 层据此**不**用"当前这块屏的环境"整段过滤回复。
+                result["multi_screen"] = True
                 result["_perf"] = perf.summary()
                 if vision_metrics:
                     result["vision"] = vision_metrics
@@ -518,9 +529,83 @@ class DualAgentOrchestrator:
         multi_extra = self._multi_item_follow_up(session_id, result, message)
         if multi_extra:
             result.setdefault("extra_messages", []).append(multi_extra)
+        self._finalize_turn_response(result, session_id, message)
         if vision_metrics:
             result["vision"] = vision_metrics
         return result
+
+    # ── 售后 / 服务类固定口径（说明书图纸 / 现场安装 / 质保）───────────────
+    def _finalize_turn_response(self, result: Dict[str, Any], session_id: str, message: str) -> Dict[str, Any]:
+        """本轮回复的最后两道加工（顺序固定）：
+
+          1. 客户问到的售后口径（说明书图纸 / 现场安装 / 质保）—— 必须回答；
+          2. 本轮带了图片 → **先把"图片里看到什么"跟客户核一遍**，再继续问需求。
+
+        实测 bug（客户日志）：客户只发了图片 + "i need this"，系统直接跳到问点间距，
+        既没跟客户核对图片识别结果，客户也没机会纠正判错的"固定/租赁"。
+        """
+        text = self._attach_service_faq(str(result.get("response") or ""), message)
+        text = self._attach_vision_confirmation(text, session_id, message)
+        if text:
+            result["response"] = text
+        return result
+
+    def _attach_vision_confirmation(self, response: str, session_id: str, message: str) -> str:
+        """带图的那一轮（以及客户还没回应之前）：把图片识别结果跟客户确认一次。"""
+        try:
+            profile = self._stored_profile(session_id)
+            if profile is None or not getattr(profile, "vision_confirmation_pending", None):
+                return response
+            from .rag.reply_composer import reply_language, vision_confirmation_items
+
+            language = reply_language(message)
+            # 业务侧（Sales 的各个分支）可能已经用别的措辞问过了 → 用"字段短语"判断，
+            # 不依赖具体模板，避免同一句确认被说两遍。
+            items = [item for item in vision_confirmation_items(profile, language) if item]
+            text = str(response or "")
+            if items and all(item in text for item in items):
+                return response
+            sentence = self._vision_confirmation_sentence(session_id, message)
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[Vision] confirmation sentence failed: %s", exc)
+            return response
+        if not sentence or sentence in str(response or ""):
+            return response
+        # 放在最前面：客户看到"照片里我理解成了什么"，有错他会直接纠正
+        return f"{sentence} {response}".strip() if response else sentence
+
+    def _vision_confirmation_sentence(self, session_id: str, message: str) -> str:
+        """图片识别结果的"跟客户核对"那一句（没有待确认字段时返回空串）。"""
+        if not session_id:
+            return ""
+        try:
+            profile = self._stored_profile(session_id)
+            if profile is None or not getattr(profile, "vision_confirmation_pending", None):
+                return ""
+            from .rag.reply_composer import reply_language, vision_confirmation_sentence
+
+            return vision_confirmation_sentence(profile, reply_language(message), 0)
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[Vision] confirmation sentence failed: %s", exc)
+            return ""
+
+    def _attach_service_faq(self, response: str, message: str) -> str:
+        """客户问到售后口径时**必须回答**（无论这一轮是追问、推荐还是自由问答）。
+
+        - 只在客户这一轮真的问到才加（不主动提，尤其质保）；
+        - 放在最前面：先回答客户问的这件事，再接本轮其它内容。
+        """
+        try:
+            from .rag.reply_composer import reply_language
+            from .rag.service_faq import service_faq_reply
+
+            answer = service_faq_reply(message, language=reply_language(message))
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[ServiceFAQ] failed: %s", exc)
+            return response
+        if not answer or answer in str(response or ""):
+            return response
+        return f"{answer} {response}".strip() if response else answer
     
     # ── 一个项目多条屏（客户口径 2026-09-18）─────────────────────────────
     def _split_and_apply_screen_specs(self, session_id: str, message: str) -> list:
@@ -543,6 +628,7 @@ class DualAgentOrchestrator:
 
         base = self._stored_profile(session_id)
         base_slots = base.model_dump() if base is not None else {}
+        base_sources = dict(getattr(base, "sources", None) or {}) if base is not None else {}
         shared_skip = (
             "sources", "ask_counts", "unknown_reasons", "conflicts", "conflict_slots",
             "last_asked_slot", "model", "series_id", "pixel_pitch_mm",
@@ -554,35 +640,52 @@ class DualAgentOrchestrator:
 
         for index, spec in enumerate(specs):
             slots = {key: value for key, value in base_slots.items() if key not in shared_skip}
+            # 【关键】继承来源标记：从基准档案抄过来的值，来源必须跟着抄过来。
+            # 之前这里把所有字段一律写成 explicit，于是"教堂默认固装"这种
+            # 系统默认值被当成"客户明说" → Gate 再也不问固装/租赁（实测 bug）。
+            sources = {
+                key: base_sources[key]
+                for key, value in slots.items()
+                if value not in (None, "", [], {}) and base_sources.get(key)
+            }
             # 这一块屏**自己已经有**的值优先（否则第二句话只说了点间距时，
             # 会把另一块屏的安装方式/尺寸覆盖成 base 的值 —— 实测踩过）
             existing = dict((items[index] or {}).get("profile") or {})
+            existing_sources = dict(existing.get("sources") or {})
             for key, value in existing.items():
                 if key == "sources" or value in (None, "", [], {}):
                     continue
                 slots[key] = value
+                if existing_sources.get(key):
+                    sources[key] = existing_sources[key]
+            # 客户这句话里**明说**的字段（只有这些才记 explicit）
+            explicit_fields = []
             if spec.get("environment"):
                 slots["environment"] = spec["environment"]
+                explicit_fields.append("environment")
             if spec.get("width_m"):
                 slots["target_width_m"] = spec["width_m"]
+                explicit_fields.append("target_width_m")
             if spec.get("height_m"):
                 slots["target_height_m"] = spec["height_m"]
+                explicit_fields.append("target_height_m")
             # 安装方式与点间距也要按屏幕分开（"permanent for indoor, rental for
             # outdoor" / "p3 for indoor p5 for outdoor" 实测会被混到一块上）
             if spec.get("installation"):
                 slots["installation"] = spec["installation"]
+                explicit_fields.append("installation")
             if spec.get("pixel_pitch_mm"):
                 slots["pixel_pitch_mm"] = spec["pixel_pitch_mm"]
+                explicit_fields.append("pixel_pitch_mm")
+            slots["sources"] = sources
             try:
                 profile = RequirementProfile.model_validate(slots)
             except Exception as exc:  # pragma: no cover - 防御式
                 logger.warning("[%s] Multi-spec profile build failed: %s", session_id, exc)
                 continue
-            # 这些值是客户这句话里明说的 → 记为 explicit，直接可用于选型/计算
-            for field in (
-                "environment", "target_width_m", "target_height_m",
-                "installation", "pixel_pitch_mm",
-            ):
+            # 客户这句话里明说的值 → explicit（可直接用于选型/计算）；
+            # 从基准档案继承来的值保留原来源（场景默认/推断不会被"洗白"）。
+            for field in explicit_fields:
                 profile.sources[field] = "explicit"
             record = dict(items[index] or {})
             record["profile"] = profile.model_dump()
@@ -706,6 +809,16 @@ class DualAgentOrchestrator:
         "pixel_pitch_mm",
     )
 
+    @staticmethod
+    def _screen_pending_block(index: int, profile_data: dict, language: str) -> str:
+        """某块屏这轮还没定下来时，也要在回复里占一段（客户口径：有多少屏就出多少屏）。"""
+        from .rag.project_items import screen_label
+
+        label = screen_label(index, profile_data or {}, language)
+        if str(language or "").lower().startswith("zh"):
+            return label + "这一块还在确认需求，确认好我马上把型号给你。"
+        return label + "this one is still being confirmed, I'll come back with the model shortly."
+
     def _share_common_facts(self, session_id: str) -> None:
         """把当前这块屏已确认的共有项同步给其他屏，避免同一个问题被问第二遍。
 
@@ -814,6 +927,9 @@ class DualAgentOrchestrator:
             text = str(item.get("reply") or "").strip()
             if not model_name:
                 if not profile_data:
+                    # 这一块还没有需求档案（例如刚开出来还没填）也要占一段，
+                    # 否则多屏回复里会只剩另一块（实测：只出现 Screen 2）。
+                    blocks.append(self._screen_pending_block(index, profile_data, language))
                     continue
                 try:
                     outcome = self.solution_agent.run(
@@ -825,12 +941,15 @@ class DualAgentOrchestrator:
                     )
                 except Exception as exc:  # pragma: no cover - 防御式
                     logger.warning("[%s] Per-screen recommend failed: %s", session_id, exc)
+                    blocks.append(self._screen_pending_block(index, profile_data, language))
                     continue
                 products = outcome.get("products") or []
                 if not products:
+                    blocks.append(self._screen_pending_block(index, profile_data, language))
                     continue
                 model_name = product_model(products[0])
                 if not model_name:
+                    blocks.append(self._screen_pending_block(index, profile_data, language))
                     continue
                 # 【修复串台】型号必须和这块屏的环境一致：
                 # 实测室外那块屏被推了室内租赁型号 TW11-IR-P4.8 —— 那种宁可不出，
@@ -840,6 +959,7 @@ class DualAgentOrchestrator:
                         "[%s] 屏 %d 环境=%s 但推荐出 %s（环境不符）→ 跳过",
                         session_id, index + 1, profile_data.get("environment"), model_name,
                     )
+                    blocks.append(self._screen_pending_block(index, profile_data, language))
                     continue
                 text = str(outcome.get("answer") or "").strip()
                 item["model"] = model_name
@@ -926,10 +1046,77 @@ class DualAgentOrchestrator:
             blocks.append(text)
         if len(blocks) >= 2:
             result["response"] = "\n\n".join(blocks)
+            result["multi_screen"] = True
             logger.info("[%s] Multi-item: 按 %d 块屏分别给出推荐", session_id, len(blocks))
             return None
 
         return None
+
+    # 多块屏之间"默认共享"的字段：客户没说"这块要什么、那块要什么"时，两块一样。
+    # 注意：环境（室内外）与尺寸**不在**这里面 —— 它们通常就是区分两块屏的参数；
+    # 能用点间距 / 安装方式 / 屏类型 区分时，那些字段也只填**空值**，不覆盖。
+    _SHARED_FACT_FIELDS = (
+        "display_type", "content_type", "installation",
+        "price_preference", "budget_level", "viewing_distance_m", "pixel_pitch_mm",
+    )
+
+    def _share_common_facts(self, session_id: str) -> None:
+        """把当前这块屏已确认的共有项同步给其他屏（只填空值），
+
+        这样同一个问题全项目只会问一次；能区分两块屏的参数不会被冲掉。
+        """
+        from .models.requirement import CONFIRMED_SOURCES
+
+        memory_store = self.memory_store
+        if memory_store is None or not hasattr(memory_store, "get_project_items"):
+            return
+        items = memory_store.get_project_items(session_id)
+        if len(items) < 2:
+            return
+        active = memory_store.get_active_item_index(session_id)
+        if active >= len(items):
+            return
+        live = self._stored_profile(session_id)
+        source = live.model_dump() if live is not None else {}
+        if not source:
+            return
+        sources = dict(source.get("sources") or {})
+        changed = False
+        for index, item in enumerate(items):
+            merged = dict(item or {})
+            profile = dict(merged.get("profile") or {})
+            if index == active:
+                # 当前这块：把实时档案写回它的条目（避免"条目是旧值"看起来像串台）
+                merged["profile"] = source
+                items[index] = merged
+                continue
+            if not profile:
+                continue
+            target_sources = dict(profile.get("sources") or {})
+            for field in self._SHARED_FACT_FIELDS:
+                value = source.get(field)
+                if value in (None, "", [], {}):
+                    continue
+                source_tag = sources.get(field)
+                if profile.get(field) not in (None, "", [], {}):
+                    # 已经有值：只有"目标这块只是场景默认/系统推断、客户明确答的就是
+                    # 同一个值"时才把来源升级为客户确认 —— 这样客户答过的共有项
+                    # （固装/租赁…）不会在另一块屏再问一遍；一旦两台的值不同
+                    # （固装 vs 租赁、P3 vs P5）就保留差异，绝不覆盖。
+                    if not source_tag or source_tag not in CONFIRMED_SOURCES:
+                        continue
+                    if target_sources.get(field) in CONFIRMED_SOURCES:
+                        continue
+                    if profile.get(field) != value:
+                        continue
+                profile[field] = value
+                if source_tag:
+                    target_sources[field] = source_tag
+                changed = True
+            profile["sources"] = target_sources
+            merged["profile"] = profile
+            items[index] = merged
+        memory_store.set_project_items(session_id, items)
 
     def _stored_profile(self, session_id: str):
         """取本会话已收集的需求档案（转发给 Solution Agent，避免它重新问一遍）。"""
@@ -967,6 +1154,7 @@ class DualAgentOrchestrator:
         sales_result: Dict[str, Any],
         message: str,
         seed: int = 0,
+        session_id: str = "",
     ) -> str:
         """把"答复客户"与"继续追问需求"合成一句自然的销售回复。
 
@@ -989,6 +1177,8 @@ class DualAgentOrchestrator:
                 requirement=sales_result.get("requirements") or {},
                 include_ack=not sales_result.get("requirements_reset", False),
                 llm_ack=str(sales_result.get("acknowledgement") or ""),
+                # 带图的那一轮：图片识别结果要跟客户核对（而且不能一边核对一边又问同一项）
+                vision_confirmation=self._vision_confirmation_sentence(session_id, message),
             )
         except Exception as exc:  # pragma: no cover - 防御式
             logger.warning("Compose requirement reply failed: %s", exc)

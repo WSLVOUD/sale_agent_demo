@@ -292,3 +292,126 @@ class TestMultiItemInOrchestrator:
             assert "Screen 1" in reply and "Screen 2" in reply, reply
         finally:
             memory.clear(session_id)
+
+
+class TestMultiItemKeepsAskingInstallation:
+    """实测 bug：多屏拆规格时把"教堂默认固装"写成了"客户明说"，
+
+    于是系统再也不问"固装还是租赁"，直接按固装推荐。
+    """
+
+    def _orchestrator(self):
+        from src.orchestrator import DualAgentOrchestrator
+
+        return DualAgentOrchestrator(sales_agent=_StubSales(), solution_agent=_StubSolution())
+
+    def _start_with_scene_default_installation(self, session_id):
+        memory.clear(session_id)
+        memory.mark_first_contact_done(session_id)
+        slots = {"display_type": "LED", "environment": "indoor", "purpose": "church"}
+        profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+        # 教堂默认固装（系统默认值，客户还没答过这一项）
+        profile.installation = "fixed"
+        profile.sources["installation"] = "default"
+        memory.set_requirement_profile(session_id, profile)
+
+    def test_scene_default_installation_is_not_promoted_to_explicit(self):
+        from src.rag.readiness import check_recommendation_ready
+
+        session_id = "multi-item-installation"
+        self._start_with_scene_default_installation(session_id)
+        try:
+            self._orchestrator()._split_and_apply_screen_specs(
+                session_id,
+                "4m wide x2.5 high for indoor and 3m x2m for the outdoor",
+            )
+            items = memory.get_project_items(session_id)
+            assert len(items) == 2
+            for item in items:
+                profile = RequirementProfile.model_validate(item["profile"])
+                assert profile.installation == "fixed"
+                assert profile.sources["installation"] == "default", (
+                    "场景默认固装不能被当成客户明说"
+                )
+                decision = check_recommendation_ready(profile)
+                assert decision.ready is False
+                assert "installation" in decision.missing, decision.missing
+                # 客户这句话里明说的那几项仍然是 explicit
+                assert profile.sources["environment"] == "explicit"
+                assert profile.sources["target_width_m"] == "explicit"
+        finally:
+            memory.clear(session_id)
+
+    def test_explicit_answer_is_shared_to_the_other_screen(self):
+        """客户答过的共有项要同步到另一块屏，不能换个屏再问一遍。"""
+        session_id = "multi-item-share"
+        self._start_with_scene_default_installation(session_id)
+        try:
+            orch = self._orchestrator()
+            orch._split_and_apply_screen_specs(
+                session_id,
+                "4m wide x2.5 high for indoor and 3m x2m for the outdoor",
+            )
+            # 客户回答"permanent"（回答当前这块屏）→ 记为客户确认
+            live = RequirementProfile.model_validate(memory.get_requirement_profile(session_id))
+            live.installation = "fixed"
+            live.sources["installation"] = "explicit"
+            memory.set_requirement_profile(session_id, live)
+
+            orch._share_common_facts(session_id)
+
+            items = memory.get_project_items(session_id)
+            other = RequirementProfile.model_validate(items[0]["profile"])
+            assert other.sources["installation"] == "explicit", other.sources
+        finally:
+            memory.clear(session_id)
+
+
+class TestMultiScreenReplySurvivesSanitizer:
+    """实测 bug：多屏回复被"当前这块屏（室外）"整段过滤掉，只剩 Screen 2。
+
+    ``sanitize_customer_response(outdoor=True)`` 会把出现室内型号的句子删掉；
+    多屏回复里室内那块的型号本来就是室内型号，必须整段保留。
+    """
+
+    MULTI_REPLY = (
+        "Screen 1 (indoor / church): TW11-3216-P3.0 is the right call for the indoor screen.\n"
+        "Screen 2 (outdoor / church): TW11-OD-P5 is the right fit for the outdoor screen."
+    )
+
+    def test_api_keeps_both_screens_for_multi_screen_reply(self):
+        import asyncio
+
+        from src import api
+
+        class _StubOrchestrator:
+            def process_message(self, message, session_id, images=None):
+                return {
+                    "response": TestMultiScreenReplySurvivesSanitizer.MULTI_REPLY,
+                    "requirements": {"outdoor": True, "location_type": "室外"},
+                    "products": [{"model": "TW11-OD-P5"}],
+                    "route": "agent",
+                    "complexity": "simple",
+                    "multi_screen": True,
+                    "_perf": {},
+                }
+
+        original = api.orchestrator
+        api.orchestrator = _StubOrchestrator()
+        try:
+            result = asyncio.run(
+                api._chat_sync(api.ChatRequest(session_id="multi-http", question="price"))
+            )
+        finally:
+            api.orchestrator = original
+
+        assert "TW11-3216-P3.0" in result.answer, result.answer
+        assert "TW11-OD-P5" in result.answer, result.answer
+
+    def test_single_screen_still_filters_conflicting_environment(self):
+        """单屏（没有 multi_screen 标记）时，室外会话仍要过滤掉室内型号。"""
+        from src.rag.rerank import sanitize_customer_response
+
+        assert "TW11-3216-P3.0" not in sanitize_customer_response(
+            self.MULTI_REPLY, outdoor=True
+        )

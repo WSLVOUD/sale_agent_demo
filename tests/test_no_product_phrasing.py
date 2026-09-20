@@ -167,15 +167,139 @@ class TestFastPathRespectsAccumulatedRequirements:
 
         result = self._fast({
             "pixel_pitch": 3.0, "pixel_pitch_tolerance": 0.5,
-            "outdoor": True, "indoor": False, "display_type": "LED",
+            "outdoor": True, "indoor": False, "is_rental": False, "display_type": "LED",
         })
-        assert result["products"], "室外固装 P3 应该能匹配到室外型号"
+        assert result["products"], "室外固装 P3 应该能匹配到户外固装型号"
         assert all(("OD" in p["model"] or "HOD" in p["model"]) for p in result["products"]), result["products"]
         # 清洗器（outdoor=True）不会再把它整段删掉
         assert sanitize_customer_response(result["answer"], outdoor=True).strip()
 
     def test_no_match_gives_relaxation_not_no_product(self):
-        result = self._fast({"pixel_pitch": 3.0, "outdoor": True, "is_rental": True})
+        # 2026-09-18：库里新增了室外租赁（TW11-OR 等，最大 P4.8），
+        # 所以"室外租赁 + P6"才是真正无匹配的组合。
+        result = self._fast({"pixel_pitch": 6.0, "outdoor": True, "is_rental": True})
         assert not result["products"]
         assert result["answer"].strip()
         assert not has_no_product_phrase(result["answer"])
+
+
+class TestEnglishOnlyGuard:
+    """客户口径：策略=en（默认）时，回复里**不能出现任何一句中文**。
+
+    实测 bug：客户问"anything else?"，自由问答节点（others）用中文答了一段。
+    """
+
+    def _policy_en(self, monkeypatch):
+        from src.config import config
+
+        monkeypatch.setattr(config, "RESPONSE_LANGUAGE_POLICY", "en")
+
+    def test_cjk_detection(self):
+        from src.rag.reply_composer import contains_cjk
+
+        assert contains_cjk("当然有，还有几点值得您一起考虑一下。")
+        assert not contains_cjk("Sure, here is another option for you.")
+
+    def test_english_reply_needs_no_rewrite_call(self, monkeypatch):
+        import src.core.llm as llm_mod
+        from src.rag.reply_composer import enforce_english
+
+        self._policy_en(monkeypatch)
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("英文回复不应该触发重写调用")
+
+        monkeypatch.setattr(llm_mod, "get_llm", _boom)
+        text = "TW11-3216-P3.0 is the right fit for your church screen."
+        assert enforce_english(text, message="anything else?") == text
+
+    def test_chinese_reply_is_rewritten_into_english(self, monkeypatch):
+        import src.core.llm as llm_mod
+        from src.rag.reply_composer import enforce_english
+
+        self._policy_en(monkeypatch)
+        calls = []
+
+        class _Resp:
+            content = "Of course, there are a few more things worth considering."
+
+        class _LLM:
+            def invoke(self, prompt, *args, **kwargs):
+                calls.append(prompt)
+                return _Resp()
+
+        monkeypatch.setattr(llm_mod, "get_llm", lambda *a, **k: _LLM())
+        out = enforce_english("当然有，还有几点值得您一起考虑一下。", message="anything else?")
+        assert out == "Of course, there are a few more things worth considering."
+        assert calls, "命中中文必须调用一次 LLM 重写"
+
+    def test_unfixable_chinese_is_dropped_not_sent(self, monkeypatch):
+        import src.core.llm as llm_mod
+        from src.rag.reply_composer import enforce_english
+
+        self._policy_en(monkeypatch)
+
+        class _Bad:
+            def invoke(self, *args, **kwargs):
+                raise RuntimeError("offline")
+
+        monkeypatch.setattr(llm_mod, "get_llm", lambda *a, **k: _Bad())
+        assert enforce_english("这是中文回复。", message="hi") == ""
+
+    def test_rewrite_still_chinese_is_dropped(self, monkeypatch):
+        import src.core.llm as llm_mod
+        from src.rag.reply_composer import enforce_english
+
+        self._policy_en(monkeypatch)
+
+        class _StillChinese:
+            content = "还是中文"
+
+            def invoke(self, *args, **kwargs):
+                return self
+
+        monkeypatch.setattr(llm_mod, "get_llm", lambda *a, **k: _StillChinese())
+        assert enforce_english("这是中文回复。", message="hi") == ""
+
+    def test_policy_auto_keeps_customer_language(self, monkeypatch):
+        from src.config import config
+        from src.rag.reply_composer import enforce_english
+
+        monkeypatch.setattr(config, "RESPONSE_LANGUAGE_POLICY", "auto")
+        assert enforce_english("这是中文回复。", message="你好，我要一块屏") == "这是中文回复。"
+
+    def test_api_never_returns_chinese_under_english_policy(self, monkeypatch):
+        """端到端：编排器返回中文时，/chat 出去的文本必须是英文（或英文兜底）。"""
+        import asyncio
+
+        import src.core.llm as llm_mod
+        from src import api
+        from src.config import config
+
+        monkeypatch.setattr(config, "RESPONSE_LANGUAGE_POLICY", "en")
+        monkeypatch.setattr(llm_mod, "get_llm", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
+
+        class _ChineseOrchestrator:
+            def process_message(self, message, session_id, images=None):
+                return {
+                    "response": "当然有，还有几点值得您一起考虑一下。",
+                    "requirements": {},
+                    "products": [],
+                    "route": "agent",
+                    "complexity": "simple",
+                    "_perf": {},
+                }
+
+        original = api.orchestrator
+        api.orchestrator = _ChineseOrchestrator()
+        try:
+            result = asyncio.run(
+                api._chat_sync(api.ChatRequest(session_id="lang-guard", question="anything else?"))
+            )
+        finally:
+            api.orchestrator = original
+
+        from src.rag.reply_composer import contains_cjk
+
+        assert result.answer.strip(), "中文被丢弃后必须有英文兜底"
+        assert not contains_cjk(result.answer), result.answer

@@ -320,6 +320,133 @@ class TestVisionConfirmation:
         assert "photo" not in out["response"].lower()
         assert "indoor" not in out["response"].lower()
 
+    def test_offtopic_image_turn_still_confirms(self):
+        """实测 bug（客户日志）：只发图片 + "i need this" 被判成 off-topic，
+
+        回复里把"图片里看到什么"的确认句丢了 → 直接跳到问点间距。
+        """
+        from src.agents.sales.nodes.script_generator import script_generator
+
+        profile = self._vision_profile()
+        state = {
+            "messages": [{"role": "user", "content": "i need this"}],
+            "current_message": "i need this",
+            "session_id": "vision-confirm-offtopic",
+            "intent": "need_query",
+            "next_action": "ask",
+            "requirements": {},
+            "additional_requirements": [],
+            "should_generate_solution": False,
+            "response": "",
+            "offtopic_turn": True,
+            "acknowledgement": "Got it, I hear you.",
+            "pending_question": "What pixel pitch do you have in mind?",
+            "pending_slot": "pixel_pitch",
+            "requirement_profile": profile,
+            "vision_applied": True,
+        }
+        out = script_generator(state)
+        reply = out["response"].lower()
+        assert "photo" in reply or "picture" in reply, reply
+        assert "indoor" in reply, reply
+        assert "conference" in reply, reply
+        assert "pixel pitch" in reply, reply
+
+    def test_orchestrator_prepends_confirmation_when_missing(self):
+        """编排器兜底：任何一条路径漏了图片确认句，也要补在最前面。"""
+        from src.orchestrator import DualAgentOrchestrator
+        from src.memory.store import memory
+
+        class _StubAgent:
+            pass
+
+        session_id = "vision-orch-confirm"
+        memory.clear(session_id)
+        memory.mark_first_contact_done(session_id)
+        memory.set_requirement_profile(session_id, self._vision_profile())
+        try:
+            orch = DualAgentOrchestrator(
+                sales_agent=_StubAgent(), solution_agent=_StubAgent()
+            )
+            out = orch._attach_vision_confirmation(
+                "Which pixel pitch are you thinking of?", session_id, "i need this"
+            )
+            assert "photo" in out.lower()
+            assert "indoor" in out.lower() and "conference" in out.lower()
+            assert out.lower().rstrip().endswith("which pixel pitch are you thinking of?")
+            # 已经确认过的内容不重复
+            assert orch._attach_vision_confirmation(out, session_id, "i need this") == out
+        finally:
+            memory.clear(session_id)
+
+    def test_reply_never_asks_what_the_vision_confirmation_just_stated(self, monkeypatch):
+        """实测 bug（客户日志）：回复里刚说 "it looks like … a fixed installation …,
+
+        correct me if I've misread it"，紧接着又问 "is this a long-term installation,
+        or do you need it for rental/events?" —— 自相矛盾。
+
+        规则：图片识别结果里的那一项，本轮**不能再问**（确认句本身就是"在问这一项"）。
+        """
+        import importlib
+
+        sales_req = importlib.import_module("src.agents.sales.nodes.requirement")
+        extractor_mod = importlib.import_module("src.core.requirement_extractor")
+        from src.agents.sales.nodes.script_generator import script_generator
+
+        class _Response:
+            content = '{"usage": null, "additional_requirements": [], "ack": ""}'
+
+        class _FakeChat:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def invoke(self, *args, **kwargs):
+                return _Response()
+
+        monkeypatch.setattr(sales_req, "ChatOpenAI", _FakeChat)
+        monkeypatch.setattr(
+            extractor_mod.RequirementExtractor,
+            "_llm_semantic_extract",
+            lambda self, message, rule_slots, session_id="": {},
+        )
+        extractor_mod.RequirementExtractor._semantic_cache.clear()
+
+        # 图片：LED / indoor / advertising / installation=fixed（只是推测，所以必须核对）
+        profile = RequirementProfile()
+        vision = VisionExtractor.from_payload({
+            "display_type": {"value": "LED", "source": "vision_explicit", "confidence": 0.9},
+            "environment": {"value": "indoor", "source": "vision_explicit", "confidence": 0.9},
+            "purpose": {"value": "advertising", "source": "vision_explicit", "confidence": 0.8},
+            "installation": {"value": "fixed", "source": "vision_inferred", "confidence": 0.5},
+        })
+        merged, _ = apply_vision_to_profile(profile, vision)
+        assert "installation" in merged.vision_confirmation_pending
+
+        state = {
+            "messages": [{"role": "user", "content": "i need this"}],
+            "current_message": "i need this",
+            "session_id": "vision-no-contradiction",
+            "intent": "need_query",
+            "next_action": "ask",
+            "requirements": {},
+            "additional_requirements": [],
+            "should_generate_solution": False,
+            "response": "",
+            "pending_question": "",
+            "pending_slot": "",
+            "requirement_profile": merged,
+            "vision_applied": True,
+        }
+        out = sales_req.requirement_mining(state)
+        # 图片确认里已经说了 fixed → 本轮不能把 installation 当成待问项
+        assert out["pending_slot"] != "installation", out["pending_question"]
+
+        reply = script_generator(out)["response"]
+        lowered = reply.lower()
+        assert "photo" in lowered, reply                 # 先跟客户核对图片
+        assert "fixed installation" in lowered, reply    # 说清看到的是固定安装
+        assert "rental" not in lowered, reply            # 不能紧接着又问固装还是租赁
+
     def test_customer_confirmation_marks_fields_confirmed(self):
         from src.vision import resolve_vision_confirmation
 
@@ -351,15 +478,30 @@ class TestVisionConfirmation:
         assert any("image said indoor" in note for note in profile.vision_corrections)
         assert profile.vision_confirmation_pending == []
 
-    def test_unrelated_reply_does_not_fake_confirmation(self):
+    def test_unrelated_reply_is_accepted_and_not_reasked(self):
+        """客户没纠正、也没说"对" → 视为"已核对过、没反对"，不再重复追问同一件事。
+
+        （客户口径：识别结果已经摆在上一条回复里请他核对过了；再问一次就是重复。）
+        """
+        from src.rag.readiness import check_recommendation_ready
         from src.vision import resolve_vision_confirmation
 
         profile = self._vision_profile()
         stats = resolve_vision_confirmation(profile, "what is the price?")
 
-        assert stats["confirmed"] == []
-        assert profile.sources["environment"] == "vision_explicit", "没确认就不能当成客户确认"
-        assert profile.vision_confirmation_pending == [], "但也不该反复追问同一件事"
+        assert stats["confirmed"] == []                      # 客户并没有口头确认
+        assert "environment" in stats["accepted"]            # 但也没纠正 → 接受
+        assert profile.sources["environment"] == "vision_accepted"
+        assert profile.vision_confirmation_pending == []
+        # 已经核对过的项不再被 Gate 追问
+        assert "environment" not in check_recommendation_ready(profile).missing
+
+    def test_customer_affirmation_still_counts_as_confirmed(self):
+        from src.vision import resolve_vision_confirmation
+
+        profile = self._vision_profile()
+        resolve_vision_confirmation(profile, "yes, that's right")
+        assert profile.sources["environment"] == "confirmed"
 
 
 class TestApiImagePayload:

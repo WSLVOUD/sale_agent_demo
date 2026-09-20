@@ -54,15 +54,16 @@ class TestHealthAndDiagnostics:
         payload = response.json()
         assert payload["orchestrator_ready"] is True
         assert payload["vectorstore_ready"] is True
-        # Phase 2 之后：语料必须是 49 个 Model（9 Series）
-        assert payload["record_count"] == 49
+        # 语料为 Model 级：12 个 Series / 56 个 Model
+        # （2026-09-18 新增室外租赁 TW11-OR / TW31-ORHD / TW21-ORHD，共 7 个型号）
+        assert payload["record_count"] == 56
 
     def test_retrieval_diagnostics(self, client):
         payload = client.get("/diagnostics/retrieval").json()
-        assert payload["record_count"] == 49
+        assert payload["record_count"] == 56
         assert payload["indoor_records"] == 31
-        assert payload["outdoor_records"] == 18
-        assert payload["led_records"] == 49
+        assert payload["outdoor_records"] == 25
+        assert payload["led_records"] == 56
 
 
 class TestAuth:
@@ -214,10 +215,10 @@ class TestRebuildTask:
         if status_payload["status"] in ("pending", "running"):
             client.post(f"/rebuild/{task_id}/cancel", headers=AUTH)
 
-        # 回归：重建必须是"替换"而不是"追加"，否则语料会翻倍（49 → 98）
+        # 回归：重建必须是"替换"而不是"追加"，否则语料会翻倍（56 → 112）
         if status_payload["status"] == "completed":
             health = client.get("/health").json()
-            assert health["record_count"] == 49, "重建后向量库记录数必须回到 49"
+            assert health["record_count"] == 56, "重建后向量库记录数必须回到 56"
 
         tasks = client.get("/rebuild", headers=AUTH)
         assert tasks.status_code == 200

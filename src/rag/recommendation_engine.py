@@ -194,31 +194,30 @@ class RecommendationEngine:
             # 这时放宽"环境"限制再筛一次，让最接近目标的型号能被选出来，
             # 而不是直接"没有匹配产品"。
             #
-            # 注意：只有"同环境本来有产品、是被距离区间卡掉"时才放宽；
-            # 如果该环境/安装方式在库里本来就一片空白（例如户外租赁），
-            # 那是数据边界，仍然按"没有匹配产品"处理。
-            from dataclasses import replace as _replace
-
+            # 客户口径（2026-09-18）：**不换环境**。同一环境里没有"距离对应的点间距"
+            # （典型：室内 100m → 规则给出 P8~P10，而室内最大只有 P4.81）时，
+            # 就在同一环境（+ 固装/租赁等其他硬条件）里取**点间距最大**的那款，
+            # 而不是改推室外型号。
+            # 只有"该环境/安装方式在库里本来就一片空白"（例如户外租赁）时，
+            # 仍然按"没有匹配产品"处理。
             probe_technical = {
                 key: value for key, value in technical.items()
                 if key not in ("pixel_pitch_min_mm", "pixel_pitch_max_mm")
             }
             probe_candidates, _ = self._hard_filter(constraints, probe_technical)
             if probe_candidates:
-                relaxed_env_constraints = _replace(
-                    constraints, environment=None, sources=constraints.sources
+                largest = max(probe_candidates, key=lambda m: m.pixel_pitch_mm)
+                candidates = [largest]
+                rejected = [
+                    {"model": m.model, "reason": "点间距不符合该距离区间"}
+                    for m in probe_candidates if m is not largest
+                ]
+                relaxed_environment = False
+                logger.info(
+                    "环境/距离对应点间距（%s~%smm）在 %s 环境无匹配 → 取该环境最大点间距 %s（P%s）",
+                    technical.get("pixel_pitch_min_mm"), technical.get("pixel_pitch_max_mm"),
+                    constraints.environment, largest.model, largest.pixel_pitch_mm,
                 )
-                alt_candidates, alt_rejected = self._hard_filter(
-                    relaxed_env_constraints, technical
-                )
-                if alt_candidates:
-                    logger.info(
-                        "环境/距离对应点间距（%s~%smm）在 %s 环境无匹配 → 放宽环境后命中 %d 个",
-                        technical.get("pixel_pitch_min_mm"), technical.get("pixel_pitch_max_mm"),
-                        constraints.environment, len(alt_candidates),
-                    )
-                    candidates, rejected = alt_candidates, alt_rejected
-                    relaxed_environment = True
         relaxed = None
         if not candidates and constraints.model:
             # 客户点名的型号在库里不存在时，退化为"同系列 + 同量级点间距"，
@@ -514,8 +513,8 @@ class RecommendationEngine:
             reasons.append("HDR support")
         if model.cob:
             reasons.append("COB packaging for reliability")
-        if model.warranty_years >= 2:
-            reasons.append(f"{model.warranty_years}-year warranty")
+        # 客户口径：质保只在客户主动问到时回答（默认 1 年、可付费延长），
+        # 推荐话术里**不主动提**质保。
         if model.installation == "rental":
             reasons.append("quick-install rental design")
         reasons.append(

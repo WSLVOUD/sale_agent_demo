@@ -15,6 +15,7 @@ Unified Requirement Extractor - 统一需求提取器
 """
 
 import logging
+import re
 from typing import Any, Dict, Optional, List
 from src.models.requirement import RequirementProfile
 from src.rag.query_understanding import (
@@ -31,6 +32,39 @@ from src.core.environment_installation_resolver import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+_BARE_BOTH_RE = re.compile(
+    r"^\s*(?:both|both of them|both please|both are (?:fine|good|ok(?:ay)?)|"
+    r"both is (?:fine|good|ok(?:ay)?)|both work|both works|"
+    r"either|either one|either way|either is (?:fine|good|ok(?:ay)?)|either works|"
+    r"whichever(?: one)?|whatever works|"
+    r"两者都行|两个都行|两边都行|两种都行|两个都可以|都行|都可以|随便|无所谓|"
+    r"你决定|你帮我决定|你看着办|看你的)\s*[.!。！]?\s*$",
+    re.IGNORECASE,
+)
+
+_BOTH_ANSWER_VALUES: Dict[str, Any] = {
+    "price_preference": "both",
+    "content_type": "mixed",
+}
+
+
+def resolve_pending_both_answer(message: str, previous_profile: Any) -> Optional[str]:
+    """客户用"都行 / both"回答上一轮问的那一项时，返回该槽位名。
+
+    客户对"二选一"提问的回答常常只有一两个词（both / either / 都行 / 随便），
+    单看这句话有歧义（both 也可能是在回答"视频还是图片"），必须结合
+    ``previous_profile.last_asked_slot``（上一轮主动问的是哪一项）才能落到正确槽位。
+    """
+    if previous_profile is None:
+        return None
+    slot = str(getattr(previous_profile, "last_asked_slot", "") or "").strip()
+    if slot not in _BOTH_ANSWER_VALUES:
+        return None
+    if not _BARE_BOTH_RE.match(str(message or "")):
+        return None
+    return slot
 
 
 class RequirementExtractor:
@@ -76,6 +110,16 @@ class RequirementExtractor:
         # Step 2: 规则确定性解析（高确定性，无需 LLM）
         rule_slots = extract_slots(message)
         logger.debug(f"Rule extraction: {rule_slots}")
+
+        # Step 2a: "都行 / both" 这类回答按"上一轮问的是哪一项"落地
+        # （客户口径：问"最看重价格还是质量"回 both → 记成 both、走默认档）
+        both_slot = resolve_pending_both_answer(message, previous_profile)
+        if both_slot:
+            rule_slots[both_slot] = _BOTH_ANSWER_VALUES[both_slot]
+            logger.info(
+                "Bare both-answer %r → %s=%s（上一轮问的就是这一项）",
+                str(message)[:40], both_slot, _BOTH_ANSWER_VALUES[both_slot],
+            )
 
         # Step 2b: canonical phrase fast path（计划 Phase 6.2 / 22）
         # 关键词表没覆盖的说法（shopping center / commercial complex / football venue…）
@@ -155,6 +199,22 @@ class RequirementExtractor:
                 merged_slots.setdefault("_default_slots", []).append("environment")
             else:
                 merged_slots.setdefault("_inferred_slots", []).append("environment")
+
+        # Step 6b: 场景本身就决定室内外（由 AI 从客户原话判断，**必须带原话证据**）
+        # 客户口径（2026-09-18）：不要只锁定几个固定场景词 —— 明显的室内/室外场景
+        # 直接落定环境、不再问客户；室内外都可能（舞台/演唱会/租赁/婚礼…）则 AI 应返回 null。
+        implied_env = (semantic_override or {}).get("environment_implied_by_scene")
+        implied_evidence = (semantic_override or {}).get("environment_implied_evidence")
+        if (
+            implied_env in ("indoor", "outdoor", "semi_outdoor")
+            and not merged_slots.get("environment")
+            and self._evidence_ok(message, implied_evidence)
+        ):
+            merged_slots["environment"] = implied_env
+            merged_slots.setdefault("_scenario_derived", []).append("environment")
+            logger.info(
+                "Scene implies %s (AI judgement, evidence=%r)", implied_env, implied_evidence
+            )
 
         # Step 7: Installation 统一解析
         explicit_inst = merged_slots.get("installation")

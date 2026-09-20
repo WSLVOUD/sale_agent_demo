@@ -32,6 +32,7 @@ Response rules:
 - Do not repeat what the customer has already stated
 - Plain text only: no markdown at all
 - Never say "based on my records", "I queried", "from the database" — do not reveal internal processes
+- 【LANGUAGE RULE】{language_rule}
 - 【Hallucination prevention】Every model name and every technical spec you mention must appear in the "Product data" below
 - 【Full model name rule】Always output the complete model name, e.g. write "T65Omni-N4" or "TW21-COB-P0.9", never just the suffix
 - 【Delivery rules】If the customer asks about delivery or lead time: counting from order and payment
@@ -119,12 +120,17 @@ def others_node(state: SolutionState) -> SolutionState:
 
     # Generate answer
     try:
+        from ....rag.query_understanding import response_language_rule
+        from ....rag.reply_composer import reply_language
+
         response = get_llm(temperature=0.7).invoke(
             OTHERS_PROMPT.format(
                 question=question,
                 user_model=user_asked_model or "（未提及具体型号）",
                 requirement=state.get("requirement", {}),
                 products=products_text,
+                # 默认策略下必须是纯英文（客户口径：不能出现任何一句中文）
+                language_rule=response_language_rule(reply_language(question)),
             )
         )
         answer = response.content if hasattr(response, "content") else str(response)

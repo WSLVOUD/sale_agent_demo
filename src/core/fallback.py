@@ -146,7 +146,7 @@ class LLMFallbackManager:
         # Fallback responses
         self._fallback_responses: dict[str, str] = {
             "greeting": "Hello! I'm your LED display advisor. How can I help you today?",
-            "warranty": "Our products come with 1-2 years of warranty (varies by series). What scenario are you looking to use it for?",
+            "warranty": "Our products come with a 1-year warranty by default, and the warranty can be extended for an additional fee. What scenario are you looking to use it for?",
             "product_recommendation": "Thanks for your question! We carry the full range: LED, LCD, and IFP displays. Is there anything specific you'd like to know more about?",
             "default": "Sorry, the system is busy right now. Please try again shortly, or reach out to our support team for assistance.",
         }

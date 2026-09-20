@@ -72,6 +72,8 @@ class SalesState(TypedDict):
 
     # ── 本会话是否已经给过推荐（决定"客户后续提问时要不要再推荐一遍"）────
     already_recommended: bool
+    # 本会话已经推荐过的型号（"另外推荐一款"时换一个没给过的）
+    previous_recommended_models: List[str]
 
     # ── 本轮是否带了图片（图片识别结果要跟客户确认一次）──────────────────
     vision_applied: bool

@@ -481,7 +481,11 @@ def clarify_node(state: SolutionState) -> SolutionState:
             }
         
         # 没有面积也没有视距 → 直接问用户
-        question = "会议室大概有多大面积？或者最远的人离屏幕大概几米？这样好帮您选合适的点间距和尺寸。"
+        # 对外话术一律英文（客户口径）
+        question = (
+            "How big is the meeting room, or roughly how far away will the furthest viewer sit? "
+            "That way I can pick the right pixel pitch and screen size for you."
+        )
         return {
             **state,
             "pending_question": question,

@@ -102,8 +102,8 @@ class TestInferredValuesMustNotTriggerRecommendation:
         assert turn["should_generate_solution"] is False
 
     def test_explicit_installation_and_distance_do_recommend(self, sales_llm):
-        # 客户口径：推荐前还要知道"内容类型"与"价格/质量取向"
-        turn = _run_turn(sales_llm, "室内会议室，固定安装，5米视距，放视频为主，价格优先")
+        # 客户口径（2026-09-18）：硬性条件 = 尺寸 + P值/视距 + 室内外 + 固装租赁
+        turn = _run_turn(sales_llm, "室内会议室，5米x3米，固定安装，5米视距，放视频为主，价格优先")
         assert turn["should_generate_solution"] is True
         profile = turn["requirement_profile"]
         assert profile.sources.get("installation") == "explicit"
@@ -114,7 +114,8 @@ class TestInferredValuesMustNotTriggerRecommendation:
         turn = _run_turn(sales_llm, "室内会议室用LED屏")
         missing = (turn.get("recommendation_gate") or {}).get("missing") or []
         assert "installation" in missing
-        assert "viewing_distance" in missing
+        assert "pixel_pitch" in missing
+        assert "size" in missing
 
     def test_solution_gate_also_blocks_inferred_profile(self):
         """方案侧 Gate 用同一规则：只带推断值的 requirement 不得进入检索"""
@@ -152,12 +153,10 @@ class TestScenario1NotTooEarly:
             )
         )
         assert decision.ready is False
-        # 客户口径：场景之后问内容类型；点间距 / 观看距离都不知道时，先问点间距
-        assert set(decision.missing) == {
-            "content_type", "installation", "pixel_pitch", "viewing_distance", "price_preference",
-        }
-        assert decision.missing.index("content_type") < decision.missing.index("installation")
-        assert decision.missing.index("pixel_pitch") < decision.missing.index("viewing_distance")
+        # 客户口径（2026-09-18）：只差硬性条件（固装租赁 / P值 / 尺寸）
+        assert set(decision.missing) == {"installation", "pixel_pitch", "size"}
+        assert decision.missing.index("installation") < decision.missing.index("pixel_pitch")
+        assert decision.missing.index("pixel_pitch") < decision.missing.index("size")
 
     def test_missing_is_asked_in_priority_order(self):
         decision = check_recommendation_ready(RequirementProfile.from_slots({"display_type": "LED"}))
@@ -174,6 +173,7 @@ class TestScenario2Recommend:
             "environment": "indoor", "purpose": "conference",
             "content_type": "mixed", "installation": "fixed", "viewing_distance_m": 5,
             "price_preference": "price",
+            "target_width_mm": 5000, "target_height_mm": 3000,
         }
         decision = check_recommendation_ready(
             RequirementProfile.from_slots(slots, explicit_keys=set(slots))
@@ -182,16 +182,18 @@ class TestScenario2Recommend:
         assert decision.missing == []
 
     def test_explicit_specs_are_ready_without_distance(self):
-        """v2.0 Case 4：客户直接给出点间距（+ 价格/质量取向）即可推荐"""
+        """v2.0 Case 4：客户直接给出点间距 + 尺寸 + 室内外 + 固装租赁即可推荐"""
         slots = {
             "environment": "indoor", "installation": "fixed", "pixel_pitch_mm": 2.5,
+            "purpose": "conference", "content_type": "mixed",
             "price_preference": "price",
+            "target_width_mm": 5000, "target_height_mm": 3000,
         }
         decision = check_recommendation_ready(
             RequirementProfile.from_slots(slots, explicit_keys=set(slots))
         )
         assert decision.ready is True
-        assert "技术规格" in decision.reason
+        assert decision.status == "READY"
 
     def test_named_model_is_ready(self):
         decision = check_recommendation_ready(
@@ -241,13 +243,21 @@ class TestScenario5CalculationGate:
         assert (calc["actual_width_mm"], calc["actual_height_mm"]) == (5120, 3360)
 
 
-class TestScenario5bSizeDoesNotChangeSelection:
-    """v2.0 Phase 9 闭环：先推荐、后补尺寸 → 型号不变，只是把计算补上"""
+class TestScenario5bSizeDoesNotBreakSelection:
+    """v2.0 Phase 9 闭环：尺寸参与打分（箱体排布 20%），但不得破坏硬约束。
 
-    def test_adding_size_keeps_the_same_model(self):
+    注：客户口径（2026-09-18）把"尺寸"升级成**硬性条件**（推荐前必须拿到），
+    所以这里不再断言"补尺寸后型号一定不变"——尺寸本身会影响箱体排布的匹配度；
+    要守住的是：**选出来的必须是真实型号，且仍然满足环境 / 安装方式等硬条件**。
+    """
+
+    def test_adding_size_keeps_a_valid_model(self):
         import json
+        from src.config import config
+        from src.rag.json_loader import canonical_model_index
 
         engine = RecommendationEngine()
+        model_index = canonical_model_index(config.DATA_DIR)
         with open(os.path.join(project_root, "eval", "golden_dataset.json"), encoding="utf-8") as handle:
             cases = json.load(handle)["cases"]
 
@@ -261,7 +271,10 @@ class TestScenario5bSizeDoesNotChangeSelection:
             slots.setdefault("content_type", "mixed")
             slots.setdefault("price_preference", "price")
             profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
-            if not check_recommendation_ready(profile).ready:
+            # 客户口径（2026-09-18）：尺寸成为硬性条件后，黄金用例大多没有尺寸
+            # → 这里不再用 Gate 过滤（引擎本身不需要尺寸也能选型），
+            # 只要求用例带选型依据（环境或场景）。
+            if not (slots.get("environment") or slots.get("purpose")):
                 continue
             without = engine.recommend(profile=profile)["recommendations"]
             size_slots = {**slots, "target_width_mm": 5000, "target_height_mm": 3000}
@@ -273,10 +286,14 @@ class TestScenario5bSizeDoesNotChangeSelection:
                 no_match += 1
                 continue
             checked += 1
-            assert without[0]["model"] == with_size[0]["model"], (
-                f"{case['id']}: 补尺寸后选型发生变化 "
-                f"{without[0]['model']} → {with_size[0]['model']}"
-            )
+            for picked in (without[0], with_size[0]):
+                assert picked["model"] in model_index, (case["id"], picked["model"])
+            if slots.get("environment") == "indoor":
+                assert with_size[0]["indoor"] is True, (case["id"], with_size[0])
+            elif slots.get("environment") == "outdoor":
+                assert with_size[0]["outdoor"] is True, (case["id"], with_size[0])
+            if slots.get("installation") == "rental":
+                assert with_size[0]["installation"] == "rental", (case["id"], with_size[0])
         print(f"\n  可比对用例 {checked} 条，数据边界（无匹配）{no_match} 条")
         assert checked >= 20, f"可判定用例过少（{checked}），检查黄金用例的 slots 是否完整"
 
@@ -304,50 +321,45 @@ class TestScenario6MultiTurn:
         # 第 2 轮：给出场景 → 仍然追问（v2.0 Case 2）
         turn = _run_turn(sales_llm, "It is for a conference room", requirements, messages)
         assert turn["should_generate_solution"] is False, "只有场景时不应触发推荐"
+        # 客户口径：明显的室内场景（会议室）不再问"室内还是室外"
+        assert turn["requirement_profile"].environment == "indoor"
         asked.append(turn.get("pending_question"))
         requirements = dict(turn["requirements"])
         messages = list(turn["messages"])
 
-        # 第 3 轮：客户口径 —— 场景之后先问"放视频还是放图片"
-        turn = _run_turn(sales_llm, "Both video and images", requirements, messages)
-        assert turn["should_generate_solution"] is False
-        assert turn["requirement_profile"].content_type == "mixed"
-        asked.append(turn.get("pending_question"))
-        requirements = dict(turn["requirements"])
-        messages = list(turn["messages"])
-
-        # 第 4 轮：给出安装方式 → 仍缺点间距/观看距离，继续追问
+        # 第 3 轮：给出安装方式 → 还缺点间距，继续追问
         turn = _run_turn(sales_llm, "Fixed installation", requirements, messages)
         assert turn["should_generate_solution"] is False
         asked.append(turn.get("pending_question"))
         requirements = dict(turn["requirements"])
         messages = list(turn["messages"])
 
-        # 第 5 轮：点间距不知道 → 只问一次，转问观看距离
+        # 第 4 轮：点间距不知道 → 按规则转问观看距离
         turn = _run_turn(sales_llm, "I don't know", requirements, messages)
         assert turn["should_generate_solution"] is False
         asked.append(turn.get("pending_question"))
         requirements = dict(turn["requirements"])
         messages = list(turn["messages"])
 
-        # 第 6 轮：补观看距离 → 还差"价格/质量"取向
+        # 第 5 轮：补观看距离 → 还缺尺寸
         turn = _run_turn(sales_llm, "Viewing distance is about 5 meters", requirements, messages)
         assert turn["should_generate_solution"] is False
         asked.append(turn.get("pending_question"))
         requirements = dict(turn["requirements"])
         messages = list(turn["messages"])
 
-        # 第 7 轮：价格/质量取向 → Gate 放行
-        turn = _run_turn(sales_llm, "Price matters more to me", requirements, messages)
+        # 第 6 轮：补尺寸 → 硬性条件齐备，Gate 放行（不再问内容类型/价格取向）
+        turn = _run_turn(sales_llm, "The screen is 5m x 3m", requirements, messages)
         assert turn["should_generate_solution"] is True, (
             f"信息齐备后应触发推荐；已问过: {asked}"
         )
+        assert turn["requirement_profile"].has_target_size
 
     def test_explicit_specs_shortcut_the_dialogue(self, sales_llm):
         """客户一上来就给足规格 → 第一轮即推荐"""
         turn = _run_turn(
             sales_llm,
-            "I need an indoor fixed LED screen, P2.5, for a conference room, price matters more",
+            "I need an indoor fixed LED screen, P2.5, 5m x 3m, for a conference room",
             {},
             [],
         )
@@ -423,6 +435,8 @@ class TestCloseAnswerIsNotClosing:
             "installation": "fixed",
             "price_preference": "price",
             "viewing_distance_m": 3,
+            "target_width_mm": 5000,
+            "target_height_mm": 3000,
         }
         return RequirementProfile.from_slots(slots, explicit_keys=set(slots))
 
@@ -474,7 +488,8 @@ class TestPitchAskedBeforeDistance:
     def _profile_without_pitch(self):
         # 只缺点间距与观看距离（其它都已确认，这样"先问点间距"才看得出来）
         slots = {"display_type": "LED", "environment": "indoor", "purpose": "conference",
-                 "content_type": "mixed", "installation": "fixed", "price_preference": "price"}
+                 "content_type": "mixed", "installation": "fixed", "price_preference": "price",
+                 "target_width_mm": 5000, "target_height_mm": 3000}
         return RequirementProfile.from_slots(slots, explicit_keys=set(slots))
 
     def _turn(self, module, message, profile):
@@ -499,7 +514,8 @@ class TestPitchAskedBeforeDistance:
 
         decision = check_recommendation_ready(self._profile_without_pitch())
         assert decision.missing[0] == "pixel_pitch", decision.missing
-        assert "viewing_distance" in decision.missing
+        # 先问点间距；只有客户说"不知道"时才转问观看距离
+        assert decision.missing == ["pixel_pitch"]
         assert "pitch" in (decision.next_question or "").lower()
 
     def test_customer_gives_pitch_skips_distance_question(self):
@@ -763,6 +779,8 @@ class TestReplayOfReportedConversation:
         vision_slots = {
             "display_type": "LED", "environment": "indoor", "purpose": "conference",
             "content_type": "mixed", "price_preference": "price",
+            # 硬性条件里的尺寸已经确定（客户给出的目标尺寸）
+            "target_width_mm": 5000, "target_height_mm": 3000,
         }
         profile = RequirementProfile.from_slots(vision_slots, explicit_keys=set(vision_slots))
 
@@ -833,8 +851,8 @@ class TestSolutionGraphGate:
         result = recommendation_gate_node({
             "requirement": {},
             # Gate 只信"客户原话"：把事实放进用户消息，而不是 requirement
-            "messages": [{"role": "user", "content": "室内会议室5米视距，固定安装，放视频为主，价格优先"}],
-            "current_message": "室内会议室5米视距，固定安装，放视频为主，价格优先",
+            "messages": [{"role": "user", "content": "室内会议室，5米x3米，固定安装，5米视距"}],
+            "current_message": "室内会议室，5米x3米，固定安装，5米视距",
         })
         assert result["next_action"] == "retrieve"
         assert result["recommendation_gate"]["ready"] is True
@@ -932,11 +950,11 @@ class TestObviousSceneSettlesEnvironment:
         }
         return sales_req.requirement_mining(state)
 
-    def test_church_fills_indoor_then_asks_to_confirm(self, monkeypatch):
-        """客户口径（2026-09-17）：场景推断出的环境要先确认一次。
+    def test_church_fills_indoor_without_asking_environment(self, monkeypatch):
+        """客户口径（2026-09-18）：明显的室内/室外场景**直接确定环境，不再问室内外**。
 
-        客户只说了 church，环境是**系统推断**的（scenario_derived，不再算"客户明说"），
-        所以这一轮先跟客户核对室内/室外；客户答了就以客户为准，没答就沿用场景默认值。
+        客户只说了 church（原话里也没写 indoor）→ 环境按场景判定为 indoor，
+        下一问直接进入硬性条件（固装/租赁），不会再问"室内还是室外"。
         """
         sales_req = self._fake_llm(monkeypatch, "church")
         result = self._turn(
@@ -946,11 +964,11 @@ class TestObviousSceneSettlesEnvironment:
         profile = result["requirement_profile"]
         assert profile.environment == "indoor"
         assert profile.sources.get("environment") == "scenario_derived"
-        assert result["pending_slot"] == "environment"
-        assert "indoor" in result["pending_question"].lower()
-        assert result["should_generate_solution"] is False
+        assert result["pending_slot"] != "environment", "明显场景不再问室内外"
+        assert "indoor or outdoor" not in (result["pending_question"] or "").lower()
+        assert result["pending_slot"] == "installation"
 
-    def test_outdoor_advertising_fills_outdoor_then_confirms(self, monkeypatch):
+    def test_outdoor_advertising_fills_outdoor_without_asking(self, monkeypatch):
         sales_req = self._fake_llm(monkeypatch, "outdoor advertising")
         # 注意：客户这轮没有直接说 "outdoor" 这个词，环境是系统从场景推断的
         result = self._turn(sales_req, "advertising screen", {"display_type": "LED"})
@@ -958,7 +976,7 @@ class TestObviousSceneSettlesEnvironment:
         profile = result["requirement_profile"]
         assert profile.environment == "outdoor"
         assert profile.sources.get("environment") == "scenario_derived"
-        assert result["pending_slot"] == "environment"
+        assert result["pending_slot"] != "environment", "明显场景不再问室内外"
 
     def test_stage_still_asks_environment(self, monkeypatch):
         """舞台 / 演唱会室内外都可能 → 必须继续问。"""
@@ -967,6 +985,45 @@ class TestObviousSceneSettlesEnvironment:
 
         assert result["pending_slot"] == "environment"
         assert result["requirement_profile"].environment is None
+
+    def test_ai_judged_scene_settles_environment(self):
+        """客户口径：不要只锁定几个场景词，要让 AI 从客户原话判断"明显室内/室外"。
+
+        AI 判断必须带客户原话证据，且结果记为 scenario_derived（不再问客户室内外）。
+        """
+        from src.core.requirement_extractor import get_requirement_extractor
+
+        extractor = get_requirement_extractor()
+        # 注意：这里刻意用一个"不在固定场景表里"的场地（珠宝店精品廊），
+        # 这样才是在验证"AI 从客户原话判断"，而不是命中关键词表。
+        message = "we need a display for our jewellery boutique"
+        profile = extractor.extract(
+            message,
+            semantic_override={
+                "purpose": "other",
+                "environment_implied_by_scene": "indoor",
+                "environment_implied_evidence": "jewellery boutique",
+            },
+            use_llm=False,
+            session_id="",
+        )
+        assert profile.environment == "indoor"
+        assert profile.sources["environment"] == "scenario_derived"
+        assert "environment" not in check_recommendation_ready(profile).missing
+
+        # 没有原话证据 → 不能凭 AI 猜就落定环境
+        profile2 = extractor.extract(
+            message,
+            semantic_override={
+                "purpose": "other",
+                "environment_implied_by_scene": "indoor",
+                "environment_implied_evidence": "totally different words",
+            },
+            use_llm=False,
+            session_id="",
+        )
+        assert profile2.environment is None
+        assert "environment" in check_recommendation_ready(profile2).missing
 
 
 class TestPriceQuestionWhileCollecting:

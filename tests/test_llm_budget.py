@@ -40,6 +40,9 @@ def _state(**overrides):
         "price_preference": "price",
         "viewing_distance_m": 5,
         "installation": "fixed",
+        # 客户口径：尺寸是硬性条件（推荐前必须有）
+        "target_width_mm": 5000,
+        "target_height_mm": 3000,
     }
     state = {
         "requirement": {"usage": "会议室"},

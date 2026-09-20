@@ -252,11 +252,28 @@ def _express_recommendation(
     language: str = "en",
     degraded_slots=(),
     follow_up: bool = False,
+    previous_models=(),
+    calculation_variants=None,
 ):
     """用一次 LLM 调用把确定性结论表达成销售话术；失败时退化为模板。"""
     # 客户口径（2026-09-18）：**推荐时只报一个型号**，其他型号一律不提。
     # 只有客户主动问"还有别的推荐吗"（follow_up）时，才换成另一个型号给他。
-    top = recommendations[1] if (follow_up and len(recommendations) > 1) else recommendations[0]
+    top_index = 0
+    if follow_up and len(recommendations) > 1:
+        # 换一个**还没给他看过**的型号（按引擎排名依次给：第 1 好的 → 第 2 好的 → …）
+        seen = {str(model) for model in (previous_models or [])}
+        top_index = next(
+            (
+                index
+                for index, rec in enumerate(recommendations)
+                if str(rec.get("model")) not in seen
+            ),
+            1,
+        )
+        if top_index == 0:
+            # 候选都被推荐过了 → 至少给排行第二的，而不是把首选再说一遍
+            top_index = 1
+    top = recommendations[min(top_index, len(recommendations) - 1)]
     # 只把这个型号的实测参数交给 LLM —— 给它三行，它就容易把别的型号也念出来
     alternative_lines: list = []
 
@@ -264,8 +281,8 @@ def _express_recommendation(
         f"- {top['model']}: pixel pitch {top['pixel_pitch_mm']}mm, "
         f"brightness {top['brightness_nit']}nit, "
         f"cabinet {top['cabinet_size_mm']}, "
-        f"{top['modules_per_cabinet']} modules per cabinet, "
-        f"{top['warranty_years']} year warranty"
+        f"{top['modules_per_cabinet']} modules per cabinet"
+        # 客户口径：客户没问质保就不主动提（质保由 FAQ 按 1 年 + 可付费延长 回答）
     ]
     # 备选款：说清"它比首选款多什么"，让客户按自己的偏好选（不提价格）
     reasons = "; ".join(top.get("reasons") or [])
@@ -276,12 +293,27 @@ def _express_recommendation(
     if customer_text:
         latest = f"\nCustomer's latest message: {str(customer_text)[:200]}"
     calc_text = ""
-    if calculation:
+    layouts = calculation_variants or (
+        {"landscape": calculation} if calculation else {}
+    )
+    layout_lines = []
+    for key in ("landscape", "portrait"):
+        calc = layouts.get(key)
+        if not calc:
+            continue
+        label = (
+            "Vertical tiling (cabinets rotated 90 degrees)" if key == "portrait"
+            else "Horizontal tiling"
+        )
+        layout_lines.append(
+            f"- {label}: {calc['columns']}x{calc['rows']} = {calc['cabinet_count']} cabinets, "
+            f"actual size {calc['actual_width_m']}m x {calc['actual_height_m']}m "
+            f"({calc['area_sqm']} sqm), {calc['total_modules']} modules"
+        )
+    if layout_lines:
         calc_text = (
-            f"\nCalculated configuration (authoritative, do not recompute): "
-            f"{calculation['columns']}x{calculation['rows']} = {calculation['cabinet_count']} cabinets, "
-            f"actual size {calculation['actual_width_m']}m x {calculation['actual_height_m']}m "
-            f"({calculation['area_sqm']} sqm), {calculation['total_modules']} modules."
+            "\nCalculated configurations (authoritative, do not recompute) — "
+            "the customer must see BOTH options:\n" + "\n".join(layout_lines)
         )
     next_step_rule = (
         # 客户只是在问"还有没有别的推荐"：别再把尺寸当成单独一问，
@@ -326,7 +358,9 @@ def _express_recommendation(
         "2b. If the customer's latest message mentions other requirements (quality, lead time, installation, "
         "brightness, size, delivery…), acknowledge them in ONE short clause and tie the choice to them, "
         "so the reply answers what they just said instead of repeating the same text.\n"
-        "3. If a calculated configuration is given, include the cabinet count and actual size.\n"
+        "3. If calculated configurations are given, present BOTH tiling options (horizontal and "
+        "vertical) — for each one give the cabinet count (columns x rows = total) and the actual "
+        "screen size. Never drop one of the two layouts.\n"
         "3b. Mention ONLY the selected model above. Never name, hint at or compare any other model "
         "code, and never write \"If you want <something>, <OTHER MODEL>\". One model per reply.\n"
         "3c. NEVER mention price, price tier, cost, discount, budget or value for money — pricing is handled "
@@ -361,12 +395,20 @@ def _express_recommendation(
     if top.get("reasons"):
         fallback += " " + "; ".join(top["reasons"][:2]) + "."
     if calculation:
-        fallback += (
-            f" For your target size we need {calculation['columns']}x{calculation['rows']} "
-            f"= {calculation['cabinet_count']} cabinets "
-            f"({calculation['total_modules']} modules), actual size "
-            f"{calculation['actual_width_m']}m x {calculation['actual_height_m']}m."
-        )
+        for key in ("landscape", "portrait"):
+            calc = (calculation_variants or {}).get(key)
+            if not calc:
+                continue
+            label = (
+                "If the cabinets go in vertically (rotated 90 degrees)"
+                if key == "portrait" else
+                "With the cabinets in their standard horizontal position"
+            )
+            fallback += (
+                f" {label}: {calc['columns']}x{calc['rows']} = {calc['cabinet_count']} cabinets "
+                f"({calc['total_modules']} modules), actual size "
+                f"{calc['actual_width_m']}m x {calc['actual_height_m']}m."
+            )
     if follow_up:
         fallback += (
             " If you have any other requirements — the target screen size, brightness, delivery or "
@@ -391,6 +433,9 @@ _ALTERNATIVES_RE = re.compile(
     r"(?:还|另外|再)?有(?:没有)?(?:其他|其它|别的|别|更多|什么)?(?:的|一些|几款)?"
     r"(?:推荐|型号|选择|方案|款式|屏幕|屏)|"
     r"其他推荐|其它推荐|别的推荐|更多(?:选择|型号|推荐)|换一款|换个型号|"
+    # 客户让销售"另外/再 帮我推荐一款" → 换一个型号给他（不是重新采集需求）
+    r"(?:另外|再|又|还)(?:帮我|给我|帮忙)?(?:再)?推荐(?:一|几|两)?(?:款|个|种|台)|"
+    r"\b(?:recommend|suggest)\s+(?:me\s+)?(?:another|one more|a different)\b|"
     r"\b(?:any other|other options?|other models?|more options?|alternatives?|anything else)\b",
     re.IGNORECASE,
 )
@@ -525,15 +570,21 @@ def recommend_node(state: SolutionState) -> SolutionState:
     )
 
     calculation = None
+    calculation_variants = None
     if calc_decision.ready:
         try:
-            from ....tools.screen_calculator import calculate_screen, format_screen_spec
+            from ....tools.screen_calculator import (
+                calculate_screen_variants,
+                format_screen_spec,
+            )
 
-            calculation = calculate_screen(
+            # 客户口径：箱体可以横拼也可以竖拼 → 两种排布都给客户
+            calculation_variants = calculate_screen_variants(
                 recommendations[0]["model"],
                 target_width_mm=profile.target_width_mm,
                 target_height_mm=profile.target_height_mm,
             )
+            calculation = calculation_variants["landscape"]
             calculation["summary"] = format_screen_spec(calculation)
         except Exception as exc:  # pragma: no cover - 防御式
             logger.warning("Screen calculation failed: %s", exc)
@@ -555,7 +606,12 @@ def recommend_node(state: SolutionState) -> SolutionState:
     degraded_slots = list(selection.get("unknown_requirements") or [])
     # 客户这轮问的是"还有没有别的推荐" → 用"备选 + 邀请补充需求"的格式，
     # 不重讲首选、不催尺寸、不提价格（客户口径）。
-    follow_up = bool(_ALTERNATIVES_RE.search(str(customer_text or "")))
+    # 只有"客户之前已经拿到过推荐"时，'另外推荐一款'才等于'换一个型号'；
+    # 用**本轮消息**判断（不能用整段历史，否则后面每一轮都会一直换型号）。
+    current_message = str(state.get("current_message") or "")
+    follow_up = bool(_ALTERNATIVES_RE.search(current_message)) and bool(
+        state.get("already_recommended")
+    )
     answer = _express_recommendation(
         recommendations=recommendations,
         profile=profile,
@@ -566,6 +622,8 @@ def recommend_node(state: SolutionState) -> SolutionState:
         language=state.get("understood_language") or "en",
         degraded_slots=degraded_slots,
         follow_up=follow_up,
+        previous_models=state.get("previous_recommended_models") or (),
+        calculation_variants=calculation_variants,
     )
 
     # 缺尺寸时必须追问（确定性兜底：模型若没问，就补一句尺寸追问，
@@ -581,6 +639,7 @@ def recommend_node(state: SolutionState) -> SolutionState:
         "recommendation": answer,
         "recommendation_result": selection,
         "screen_calculation": calculation,
+        "screen_calculation_variants": calculation_variants,
         "calculation_gate": calc_decision.to_dict(),
         "evidence_dropped": dropped_evidence,
         "next_action": "reflect",

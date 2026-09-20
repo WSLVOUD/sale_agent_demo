@@ -317,7 +317,6 @@ class CanonicalModel(BaseModel):
             f"module {self.module_size_text}",
             f"cabinet {self.cabinet_size_text}",
             f"{self.modules_per_cabinet} modules per cabinet",
-            f"warranty {self.warranty_years} year",
             f"price tier {self.price_tier}",
         ]
         if self.lamp_brand:

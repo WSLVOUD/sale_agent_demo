@@ -6,6 +6,7 @@
       "expected": {
         "environment": "indoor",
         "display_type": "LED",
+        "installation": "fixed",
         "notes": "synthetic"
       }
     },
@@ -22,6 +23,7 @@
       "expected": {
         "environment": "outdoor",
         "display_type": "LED",
+        "installation": "fixed",
         "notes": "synthetic"
       }
     },
@@ -39,6 +41,7 @@
         "environment": "indoor",
         "display_type": "LED",
         "purpose": "stage",
+        "installation": "rental",
         "notes": "synthetic"
       }
     },

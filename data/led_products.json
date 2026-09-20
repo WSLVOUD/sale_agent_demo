@@ -63,7 +63,7 @@
       "brightness_min_nit": 600,
       "brightness_max_nit": 600,
       "refresh_rate_hz": 3840,
-      "warranty_years": 2,
+      "warranty_years": 1,
       "lamp_brand": "Kinglight",
       "price_tier": "mid",
       "cob": false,
@@ -78,8 +78,8 @@
         "cabinet_height_mm": 480,
         "modules_per_cabinet": 6
       },
-      "features": ["splicable", "mid-price", "indoor", "Kinglight-lamp", "2-years-warranty"],
-      "series_description": "splicable mid-price indoor LED, Kinglight lamp, Custom LED beads, 2 years warranty, module=320mm*160mm, cabinet=640mm*480mm, brightness=600nit, refresh=3840Hz",
+      "features": ["splicable", "mid-price", "indoor", "Kinglight-lamp", "1-year-warranty"],
+      "series_description": "splicable mid-price indoor LED, Kinglight lamp, Custom LED beads, 1 year warranty, module=320mm*160mm, cabinet=640mm*480mm, brightness=600nit, refresh=3840Hz",
       "sub_models": [
         {"model": "TW21-3216-P1.2", "pixel_pitch_mm": 1.25, "resolution_per_sqm": 640000, "module_resolution": "256*128", "cabinet_resolution": "512*384", "scanning": null},
         {"model": "TW21-3216-P1.5", "pixel_pitch_mm": 1.53, "resolution_per_sqm": 422500, "module_resolution": "208*104", "cabinet_resolution": "416*312", "scanning": null},
@@ -103,7 +103,7 @@
       "brightness_min_nit": 800,
       "brightness_max_nit": 800,
       "refresh_rate_hz": 3840,
-      "warranty_years": 2,
+      "warranty_years": 1,
       "lamp_brand": "COB",
       "price_tier": "high",
       "cob": true,
@@ -118,8 +118,8 @@
         "cabinet_height_mm": 337.5,
         "modules_per_cabinet": 8
       },
-      "features": ["COB", "HDR", "indoor", "waterproof", "premium", "2-years-warranty"],
-      "series_description": "waterproof splicable Kinglight lamp high-price premium indoor COB HDR LED, 2 years warranty, module=150mm*168.75mm, cabinet=600mm*337.5mm, brightness=800nit, refresh=3840Hz, HDR=support",
+      "features": ["COB", "HDR", "indoor", "waterproof", "premium", "1-year-warranty"],
+      "series_description": "waterproof splicable Kinglight lamp high-price premium indoor COB HDR LED, 1 year warranty, module=150mm*168.75mm, cabinet=600mm*337.5mm, brightness=800nit, refresh=3840Hz, HDR=support",
       "sub_models": [
         {"model": "TW31-COB-P0.7H", "pixel_pitch_mm": 0.78, "resolution_per_sqm": 1638400, "module_resolution": "160*180", "cabinet_resolution": "768*432", "scanning": null},
         {"model": "TW31-COB-P0.9H", "pixel_pitch_mm": 0.9375, "resolution_per_sqm": 1137777, "module_resolution": "160*180", "cabinet_resolution": "640*360", "scanning": null},
@@ -176,7 +176,7 @@
       "brightness_min_nit": 600,
       "brightness_max_nit": 800,
       "refresh_rate_hz": 3840,
-      "warranty_years": 2,
+      "warranty_years": 1,
       "lamp_brand": "Kinglight",
       "price_tier": "mid",
       "cob": false,
@@ -191,8 +191,8 @@
         "cabinet_height_mm": 500,
         "modules_per_cabinet": 4
       },
-      "features": ["rental", "indoor", "mid-price", "Kinglight-lamp", "2-years-warranty"],
-      "series_description": "splicable mid-price indoor regular rental LED, Kinglight/standard lamp, 2 years/1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, refresh=3840Hz, brightness=600-800nit",
+      "features": ["rental", "indoor", "mid-price", "Kinglight-lamp", "1-year-warranty"],
+      "series_description": "splicable mid-price indoor regular rental LED, Kinglight/standard lamp, 1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, refresh=3840Hz, brightness=600-800nit",
       "sub_models": [
         {"model": "TW21-IRHD-P2.6H", "pixel_pitch_mm": 2.6, "resolution_per_sqm": 147456, "module_resolution": "96*96", "cabinet_resolution": "192*192", "scanning": "32s"},
         {"model": "TW21-IRHD-P2.9H", "pixel_pitch_mm": 2.976, "resolution_per_sqm": 112896, "module_resolution": "84*84", "cabinet_resolution": "168*168", "scanning": "28s"},
@@ -211,7 +211,7 @@
       "brightness_min_nit": 600,
       "brightness_max_nit": 800,
       "refresh_rate_hz": 3840,
-      "warranty_years": 2,
+      "warranty_years": 1,
       "lamp_brand": "Kinglight",
       "price_tier": "high",
       "cob": false,
@@ -226,8 +226,8 @@
         "cabinet_height_mm": 500,
         "modules_per_cabinet": 4
       },
-      "features": ["rental", "indoor", "flexible", "high-price", "Kinglight-lamp", "2-years-warranty"],
-      "series_description": "splicable high-price flexible indoor rental LED, Kinglight/standard lamp, 2 years/1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, refresh=3840Hz, brightness=600-800nit",
+      "features": ["rental", "indoor", "flexible", "high-price", "Kinglight-lamp", "1-year-warranty"],
+      "series_description": "splicable high-price flexible indoor rental LED, Kinglight/standard lamp, 1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, refresh=3840Hz, brightness=600-800nit",
       "sub_models": [
         {"model": "TW31-IRHD-P2.6", "pixel_pitch_mm": 2.6, "resolution_per_sqm": 147456, "module_resolution": "96*96", "cabinet_resolution": "192*192", "scanning": "32s"},
         {"model": "TW31-IRHD-P2.9", "pixel_pitch_mm": 2.976, "resolution_per_sqm": 112896, "module_resolution": "84*84", "cabinet_resolution": "168*168", "scanning": "28s"},
@@ -324,7 +324,7 @@
       "brightness_min_nit": 7500,
       "brightness_max_nit": 10000,
       "refresh_rate_hz": 3840,
-      "warranty_years": 2,
+      "warranty_years": 1,
       "lamp_brand": "high-brightness",
       "price_tier": "high",
       "cob": false,
@@ -339,13 +339,116 @@
         "cabinet_height_mm": 960,
         "modules_per_cabinet": 6
       },
-      "features": ["outdoor", "fixed", "high-brightness", "waterproof", "2-years-warranty"],
-      "series_description": "waterproof splicable high-price high-brightness outdoor fixed LED, 2 years warranty, module=480mm*320mm, cabinet=960mm*960mm, refresh=3840Hz, brightness=7500-10000nit, average power=352W/sqm, max power=800W/sqm",
+      "features": ["outdoor", "fixed", "high-brightness", "waterproof", "1-year-warranty"],
+      "series_description": "waterproof splicable high-price high-brightness outdoor fixed LED, 1 year warranty, module=480mm*320mm, cabinet=960mm*960mm, refresh=3840Hz, brightness=7500-10000nit, average power=352W/sqm, max power=800W/sqm",
       "sub_models": [
         {"model": "TW31-HOD-P5.7E", "pixel_pitch_mm": 5.7, "resolution_per_sqm": 40000, "module_resolution": "84*56", "cabinet_resolution": "168*168", "scanning": null, "brightness_nit": 7500},
         {"model": "TW31-HOD-P6.67E", "pixel_pitch_mm": 6.67, "resolution_per_sqm": 22500, "module_resolution": "72*48", "cabinet_resolution": "144*144", "scanning": null, "brightness_nit": 9000},
         {"model": "TW31-HOD-P8E", "pixel_pitch_mm": 8.0, "resolution_per_sqm": 15625, "module_resolution": "60*40", "cabinet_resolution": "120*120", "scanning": null, "brightness_nit": 10000},
         {"model": "TW31-HOD-P10E", "pixel_pitch_mm": 10.0, "resolution_per_sqm": 10000, "module_resolution": "48*32", "cabinet_resolution": "96*96", "scanning": null, "brightness_nit": 10000}
+      ]
+    },
+    {
+      "product_id": "TW11-OR",
+      "series_id": "TW11-OR",
+      "series": "TW11-OR series",
+      "display_type": "LED",
+      "environment": ["outdoor"],
+      "installation": "rental",
+      "is_rental": true,
+      "brightness_nit": 3500,
+      "brightness_min_nit": 3500,
+      "brightness_max_nit": 3500,
+      "refresh_rate_hz": 3840,
+      "warranty_years": 1,
+      "lamp_brand": "standard",
+      "price_tier": "low",
+      "cob": false,
+      "hdr": false,
+      "waterproof": true,
+      "module_size_mm": "250mm*250mm",
+      "cabinet_size_mm": "500mm*500mm",
+      "geometry": {
+        "module_width_mm": 250,
+        "module_height_mm": 250,
+        "cabinet_width_mm": 500,
+        "cabinet_height_mm": 500,
+        "modules_per_cabinet": 4
+      },
+      "features": ["outdoor", "rental", "waterproof", "low-price", "standard-lamp", "1-year-warranty", "quick-install"],
+      "series_description": "waterproof low-price LED outdoor rental (OR) LED, standard lamp, 1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, brightness=3500nit, refresh=3840Hz",
+      "sub_models": [
+        {"model": "TW11-OR-P2.9", "pixel_pitch_mm": 2.976, "resolution_per_sqm": 112896, "module_resolution": "84*84", "cabinet_resolution": "168*168", "scanning": null},
+        {"model": "TW11-OR-P3.9", "pixel_pitch_mm": 3.91, "resolution_per_sqm": 65536, "module_resolution": "64*64", "cabinet_resolution": "128*128", "scanning": null},
+        {"model": "TW11-OR-P4.8", "pixel_pitch_mm": 4.81, "resolution_per_sqm": 43264, "module_resolution": "52*52", "cabinet_resolution": "104*104", "scanning": null}
+      ]
+    },
+    {
+      "product_id": "TW31-ORHD",
+      "series_id": "TW31-ORHD",
+      "series": "TW31-ORHD series",
+      "display_type": "LED",
+      "environment": ["outdoor"],
+      "installation": "rental",
+      "is_rental": true,
+      "brightness_nit": 4500,
+      "brightness_min_nit": 4500,
+      "brightness_max_nit": 4500,
+      "refresh_rate_hz": 3840,
+      "warranty_years": 1,
+      "lamp_brand": "Kinglight",
+      "price_tier": "low",
+      "cob": false,
+      "hdr": false,
+      "waterproof": true,
+      "module_size_mm": "250mm*250mm",
+      "cabinet_size_mm": "500mm*500mm",
+      "geometry": {
+        "module_width_mm": 250,
+        "module_height_mm": 250,
+        "cabinet_width_mm": 500,
+        "cabinet_height_mm": 500,
+        "modules_per_cabinet": 4
+      },
+      "features": ["outdoor", "rental", "flexible", "waterproof", "low-price", "kinglight-lamp", "1-year-warranty", "quick-install"],
+      "series_description": "waterproof low-price LED outdoor flexible rental LED, Kinglight/standard lamp, 1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, brightness=4500nit, refresh=3840Hz",
+      "sub_models": [
+        {"model": "TW31-ORHD-P2.9", "pixel_pitch_mm": 2.976, "resolution_per_sqm": 112896, "module_resolution": "84*84", "cabinet_resolution": "168*168", "scanning": null},
+        {"model": "TW31-ORHD-P3.9", "pixel_pitch_mm": 3.91, "resolution_per_sqm": 65536, "module_resolution": "52*52", "cabinet_resolution": "104*104", "scanning": null}
+      ]
+    },
+    {
+      "product_id": "TW21-ORHD",
+      "series_id": "TW21-ORHD",
+      "series": "TW21-ORHD series",
+      "display_type": "LED",
+      "environment": ["outdoor"],
+      "installation": "rental",
+      "is_rental": true,
+      "brightness_nit": 4500,
+      "brightness_min_nit": 4500,
+      "brightness_max_nit": 4500,
+      "refresh_rate_hz": 3840,
+      "warranty_years": 1,
+      "lamp_brand": "Kinglight",
+      "price_tier": "low",
+      "cob": false,
+      "hdr": false,
+      "waterproof": true,
+      "module_size_mm": "250mm*250mm",
+      "cabinet_size_mm": "500mm*500mm",
+      "geometry": {
+        "module_width_mm": 250,
+        "module_height_mm": 250,
+        "cabinet_width_mm": 500,
+        "cabinet_height_mm": 500,
+        "modules_per_cabinet": 4
+      },
+      "features": ["outdoor", "rental", "waterproof", "low-price", "kinglight-lamp", "1-year-warranty", "quick-install"],
+      "series_description": "waterproof low-price LED outdoor regular rental LED, Kinglight/standard lamp, 1 year warranty, module=250mm*250mm, cabinet=500mm*500mm, brightness=4500nit, refresh=3840Hz",
+      "sub_models": [
+        {"model": "TW21-ORHD-P2.9H", "pixel_pitch_mm": 2.976, "resolution_per_sqm": 112896, "module_resolution": "84*84", "cabinet_resolution": "168*168", "scanning": null},
+        {"model": "TW21-ORHD-P3.9H", "pixel_pitch_mm": 3.91, "resolution_per_sqm": 65536, "module_resolution": "64*64", "cabinet_resolution": "128*128", "scanning": null}
       ]
     }
   ]

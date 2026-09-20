@@ -190,6 +190,8 @@ class SolutionAgentRunner:
         profile: Any = None,
         session_id: str = "",
         intent: str = "",
+        already_recommended: bool = False,
+        previous_models: Optional[List[str]] = None,
     ) -> SolutionState:
         """Build the initial state for the agent."""
         # Normalize history
@@ -260,6 +262,9 @@ class SolutionAgentRunner:
 
         return {
             "session_id": session_id,
+            # "另外推荐一款" = 换一个没给过的型号（不是重新采集需求）
+            "already_recommended": bool(already_recommended),
+            "previous_recommended_models": list(previous_models or []),
             "messages": history + [{"role": "user", "content": message}],
             "requirement": merged_requirement,
             # 【M7】Sales 的 RequirementProfile 直接进入 Solution state，
@@ -307,6 +312,8 @@ class SolutionAgentRunner:
         profile: Any = None,
         session_id: str = "",
         intent: str = "",
+        already_recommended: bool = False,
+        previous_models: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Run the agent with a user message.
 
@@ -369,7 +376,8 @@ class SolutionAgentRunner:
 
         # ── Step 2b: Agent Path ────────────────────────────────────────
         initial_state = self._build_initial_state(
-            message, history, requirements, additional_requirements, profile, session_id, intent
+            message, history, requirements, additional_requirements, profile, session_id, intent,
+            already_recommended=already_recommended, previous_models=previous_models,
         )
 
         # 将路由层提取的约束注入 agent state（避免 LLM 重复推理）
@@ -443,7 +451,8 @@ class SolutionAgentRunner:
         except Exception as e:
             logger.error(f"Agent run error: %s", e)
             return {
-                "answer": "抱歉，遇到了错误，请重试。",
+                # 对外话术一律英文（客户口径）
+                "answer": "Sorry, something went wrong on my side. Could you try that again?",
                 "requirement": {},
                 "reflection_score": 0,
                 "reflection_notes": str(e),

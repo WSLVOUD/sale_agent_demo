@@ -55,7 +55,14 @@ class TestScreenCalculator:
         calc = estimate_screen("TW11-IR-P2.6", 3, 3)
         assert calc["cabinet_count"] == 36
         text = format_screen_spec(calc)
-        assert "TW11-IR-P2.6" in text and "36 cabinets" in text
+        # 客户口径：横拼/竖拼两种排布，格式化文本要标出是哪种
+        assert "36 cabinets" in text and "Horizontal tiling" in text
+        from src.tools.screen_calculator import calculate_screen
+
+        portrait = format_screen_spec(
+            calculate_screen("TW11-IR-P2.6", 3000, 3000, orientation="portrait")
+        )
+        assert "Vertical tiling" in portrait
 
     def test_unknown_model_raises(self):
         with pytest.raises(KeyError):

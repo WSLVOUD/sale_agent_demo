@@ -47,6 +47,29 @@ class TestQuestionVariants:
         seen = {question_for("viewing_distance", "en", seed) for seed in range(20)}
         assert 2 <= len(seen) <= len(QUESTION_VARIANTS["viewing_distance"]["en"])
 
+    def test_purpose_question_has_no_examples(self):
+        """客户口径：问场景/环境时**不举例**，直接问问题。
+
+        实测反馈：追问"用在什么场景"时列了"会议室/教室/商场/广告"的例子，
+        客户不要这种罗列。
+        """
+        from src.rag.readiness import EASIER_QUESTIONS, MISSING_LABELS
+
+        banned = (
+            "meeting room", "classroom", "retail", "advertising", "store", "shop",
+            "会议室", "教室", "商场", "门店", "零售", "广告",
+        )
+        texts = list(QUESTION_VARIANTS["purpose"]["en"]) + list(
+            QUESTION_VARIANTS["purpose"]["zh"]
+        )
+        texts += list(EASIER_QUESTIONS["purpose"]["en"]) + list(
+            EASIER_QUESTIONS["purpose"]["zh"]
+        )
+        texts.append(MISSING_LABELS["purpose"])
+        for text in texts:
+            for word in banned:
+                assert word not in text.lower(), (text, word)
+
     def test_chinese_variants(self):
         texts = {question_for("installation", "zh", seed) for seed in range(9)}
         assert len(texts) >= 2
@@ -94,9 +117,10 @@ class TestGateQuestionVaries:
             tuple(check_recommendation_ready(profile, variant_seed=seed).missing)
             for seed in range(6)
         }
-        # 客户口径：场景之后问内容类型；点间距 / 观看距离都不知道时先问点间距；最后问价格/质量
+        # 客户口径（2026-09-18）：只差硬性条件（固装租赁 / P值 / 尺寸）；
+        # 场景 / 内容类型 / 价格取向都只记录、不阻塞推荐。
         assert missing == {(
-            "content_type", "installation", "pixel_pitch", "viewing_distance", "price_preference",
+            "installation", "pixel_pitch", "size",
         )}
 
 

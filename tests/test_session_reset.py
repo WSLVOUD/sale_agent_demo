@@ -93,6 +93,11 @@ class TestExplicitResetDetection:
         "能重新计算一下箱体吗",
         "any other options?",
         "more models please",
+        # 实测 bug：客户回"另外帮我推荐一款"被当成"重新来 / 换产品"，
+        # 又回头问室内外；正确行为是换一个型号给他（排行第二的备选）。
+        "另外帮我推荐一款",
+        "另外推荐一款",
+        "再帮我推荐一个",
     ])
     def test_no_false_reset(self, message):
         """想看更多选项 / 参数提问，不是换需求 → 不清空。"""
@@ -416,7 +421,10 @@ class TestGraphAsksAgainAfterReset:
 
         profile = result["requirement_profile"]
         assert profile.environment == "outdoor"
-        assert "purpose" in check_recommendation_ready(profile).missing
+        # 客户口径（2026-09-18）：重置后要继续采集**硬性条件**
+        # （尺寸 / P值 / 室内外 / 固装租赁），场景/内容类型/价格只记录不阻塞
+        missing = check_recommendation_ready(profile).missing
+        assert {"installation", "pixel_pitch", "size"} <= set(missing)
         assert result["should_generate_solution"] is False
 
 

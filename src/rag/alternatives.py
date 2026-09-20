@@ -40,8 +40,7 @@ def alternative_difference(top: Dict[str, Any], other: Dict[str, Any]) -> str:
         if token in other_features and token not in top_features:
             bits.append(phrase)
 
-    if int(other.get("warranty_years") or 0) > int(top.get("warranty_years") or 0):
-        bits.append(f"a longer {other['warranty_years']}-year warranty")
+    # 质保不主动提（客户口径）：不再用"更长质保"作为备选差异点
     if other.get("installation") and other.get("installation") != top.get("installation"):
         bits.append(f"a {other['installation']} version")
     if not bits:

@@ -498,6 +498,8 @@ def requirement_mining(state: SalesState) -> SalesState:
   "purpose": "使用场景的**标准 token**（只能从下面这张表里选，不能自造）：retail/advertising/conference/classroom/stadium/concert/stage/wedding/church/museum/showroom/airport/bank/hotel/restaurant/office/hospital/exhibition/hall/rental/control_room/other；没有则 null",
   "environment": "indoor / outdoor / semi_outdoor —— **只有客户这句话里明确说了室内外才填**（比如 open-air、on the facade、露天、室内），否则必须 null",
   "environment_evidence": "填 environment 时，必须给出客户原话里的**原样片段**（例如 'open-air advertising'）；没填 environment 时给空字符串",
+  "environment_implied_by_scene": "如果**客户原话里的场景本身**就决定了室内外（例如 church / classroom / football stadium / roadside billboard / shopping mall / 医院大厅），填 indoor 或 outdoor；只要室内外都可能（stage / concert / rental / wedding / 泛泛的 exhibition / 说不清），一律 null",
+  "environment_implied_evidence": "填 environment_implied_by_scene 时，给出客户原话里的**原样片段**（例如 'for our church'）；没填时给空字符串",
   "installation": "fixed / rental —— **只有客户明确说了安装方式才填**（permanent、fixed、rental、temporary、租赁），否则 null",
   "installation_evidence": "填 installation 时给出客户原话里的原样片段（例如 'rental'）；没填时给空字符串",
   "additional_requirements": ["用户明确提出的、无法归入场景的特殊要求，如'租赁'、'防水'、'高刷新率'"],
@@ -525,6 +527,8 @@ ack 的写法（很重要，销售不能只会追问）：
    它们由系统的确定性解析器从客户原话提取。
 4. usage 只写用户实际描述的场景原词，不要映射、不要扩展（映射由 purpose 负责）。
 5. 没有对应信息就返回 null 或 []，禁止编造。
+6. environment_implied_by_scene 是"**场景本身就决定室内外**"的判断：必须基于客户原话里的
+   场景词，不能凭空猜；舞台 / 演唱会 / 租赁 / 婚礼 / 展会这类室内外都可能的一律 null。
 6. 只返回 JSON，不要任何解释。""")
     
     current_msg = HumanMessage(content=f"已有需求：{state['requirements']}\n\n当前对话：\n{conversation}")
@@ -576,6 +580,11 @@ ack 的写法（很重要，销售不能只会追问）：
             if extracted.get(key) not in (None, "", []):
                 semantic_payload[key] = extracted[key]
         for key in ("environment_evidence", "installation_evidence"):
+            if extracted.get(key):
+                semantic_payload[key] = extracted[key]
+        # 场景本身就决定室内外（AI 判断，必须带客户原话证据）：
+        # 客户口径 —— 明显的室内/室外场景不要再问客户"室内还是室外"
+        for key in ("environment_implied_by_scene", "environment_implied_evidence"):
             if extracted.get(key):
                 semantic_payload[key] = extracted[key]
     except json.JSONDecodeError:
@@ -753,11 +762,15 @@ ack 的写法（很重要，销售不能只会追问）：
             from ....vision.integration import resolve_vision_confirmation
 
             vision_stats = resolve_vision_confirmation(profile, current_msg_text)
-            if vision_stats.get("confirmed") or vision_stats.get("corrected"):
+            if (
+                vision_stats.get("confirmed")
+                or vision_stats.get("accepted")
+                or vision_stats.get("corrected")
+            ):
                 logger.info(
-                    "[VisionConfirm] confirmed=%s corrected=%s corrections=%s",
-                    vision_stats.get("confirmed"), vision_stats.get("corrected"),
-                    profile.vision_corrections,
+                    "[VisionConfirm] confirmed=%s accepted=%s corrected=%s corrections=%s",
+                    vision_stats.get("confirmed"), vision_stats.get("accepted"),
+                    vision_stats.get("corrected"), profile.vision_corrections,
                 )
 
         # ── Phase 4~9：Unknown 容错 ──────────────────────────────────────────
@@ -891,7 +904,6 @@ ack 的写法（很重要，销售不能只会追问）：
                 # 客户这一轮如果是在**说需求**（哪怕是把视距/尺寸重复一遍、或改了个值），
                 # 就按需求重新走推荐，不能丢给自由问答 —— 否则会出现
                 # "推荐说 P3.9、回答却讲 around 5"这种自相矛盾（实测日志）。
-                and not turn_states_requirement
             ):
                 state["should_generate_solution"] = False
                 state["pending_question"] = ""
@@ -913,7 +925,45 @@ ack 的写法（很重要，销售不能只会追问）：
             # 没有对应模板时再退回 question_planner 的扩展问题（如预算）。
             question = decision.next_question or ""
             slot = first_missing_slot(decision.missing) or ""
-            if not question:
+            # 【关键】图片里已经"看到"、并且这一轮正要跟客户核对的字段，**不要再问同一个问题**。
+            # 实测 bug：回复里刚说完 "it looks like … a fixed installation … correct me if I've
+            # misread it"，紧接着又问 "is this a long-term installation, or rental?" —— 自相矛盾。
+            # 处理：跳过被图片确认覆盖的槽位，改问下一个缺失项；全被覆盖了就本轮不再提问。
+            vision_pending = {
+                str(x) for x in (getattr(profile, "vision_confirmation_pending", None) or [])
+            }
+            vision_covered_everything = False
+            if vision_pending and slot and slot in vision_pending:
+                from ....rag.query_understanding import (  # noqa: PLC0415
+                    detect_language,
+                )
+                from ....rag.readiness import question_for as _question_for
+                from ....rag.reply_composer import reply_language as _reply_language
+
+                _language = _reply_language(current_msg_text) or detect_language(current_msg_text)
+                alternatives = [s for s in decision.missing if s not in vision_pending]
+                if alternatives:
+                    next_slot = alternatives[0]
+                    logger.info(
+                        "[VisionConfirm] slot=%s 已经在图片确认里问过 → 改问 %s",
+                        slot, next_slot,
+                    )
+                    slot = next_slot
+                    question = _question_for(slot, _language, _turn_seed, easier=False) or ""
+                    if slot == "size_axis":
+                        from ....rag.readiness import _size_axis_question  # noqa: PLC0415
+
+                        question = (
+                            _size_axis_question(profile, _language, _turn_seed) or question
+                        )
+                else:
+                    logger.info(
+                        "[VisionConfirm] 缺少的字段都在图片确认里 → 本轮不再提问"
+                    )
+                    slot = ""
+                    question = ""
+                    vision_covered_everything = True
+            if not question and not vision_covered_everything:
                 plan = plan_next_question(profile, seed=_turn_seed) or {}
                 question = plan.get("question") or ""
                 slot = plan.get("slot") or slot

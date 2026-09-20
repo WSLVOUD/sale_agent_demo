@@ -82,7 +82,7 @@ class SalesRequirementAdapter:
         questions = {
             "display_type": "What type of display are you looking for? (LED/LCD/IFP)",
             "environment": "Will it be used indoors or outdoors?",
-            "purpose": "What is the screen for? (conference, retail, advertising, etc.)",
+            "purpose": "What is the screen for?",
             "installation": "Will this be a fixed installation or rental?",
             "viewing_distance_m": "What is the viewing distance?",
             "target_size": "What size screen do you need?",

@@ -57,7 +57,15 @@ class HybridSearch:
     优先级：sparse > bm25，当两者都存在时，Sparse 权重更高。
     """
     
-    def __init__(self, vectorstore, sparse=None, bm25=None, sparse_weight=1.5, bm25_weight=1.0):
+    def __init__(
+        self,
+        vectorstore,
+        sparse=None,
+        bm25=None,
+        sparse_weight=1.5,
+        bm25_weight=1.0,
+        max_per_series: int = 2,
+    ):
         """
         初始化混合检索器。
 
@@ -67,12 +75,14 @@ class HybridSearch:
             bm25: BM25Search 实例（可选）
             sparse_weight: Sparse 检索在 RRF 中的权重（默认 1.5）
             bm25_weight: BM25 检索在 RRF 中的权重（默认 1.0）
+            max_per_series: 同一个系列在 Top-K 里最多出现几条（默认 2）
         """
         self.vectorstore = vectorstore
         self.sparse = sparse
         self.bm25 = bm25
         self.sparse_weight = sparse_weight
         self.bm25_weight = bm25_weight
+        self.max_per_series = int(max_per_series or 0)
         self.fusion = ReciprocalRankFusion(k=60)
         from .retriever import retrieve as vector_retrieve
         self._vector_retrieve = vector_retrieve
@@ -156,7 +166,10 @@ class HybridSearch:
         if not ranked_lists:
             return []
 
-        fused = self.fusion.fuse(ranked_lists, top_k=top_k, weights=list_weights)
+        # 多取一些候选：下面要做"同系列去重"（一个系列有很多型号时，
+        # 5 个槽位会被同系列的相邻点间距占满，别的系列一个都进不来 ——
+        # 实测检索召回下降、客户也会看到 5 个几乎一样的型号）。
+        fused = self.fusion.fuse(ranked_lists, top_k=max(top_k * 3, top_k), weights=list_weights)
 
         # Rehydrate results
         doc_map = {doc.get("id"): doc for doc in vector_results}
@@ -166,7 +179,10 @@ class HybridSearch:
                     if doc.get("id"):
                         doc_map[doc["id"]] = doc
 
-        results = []
+        max_per_series = int(getattr(self, "max_per_series", 2) or 0)
+        results: List[Dict[str, Any]] = []
+        overflow: List[Dict[str, Any]] = []
+        per_series: Dict[str, int] = {}
         for item in fused:
             original = doc_map.get(item["id"])
             if not original:
@@ -178,8 +194,17 @@ class HybridSearch:
                 brightness = original.get("metadata", {}).get("brightness_max_cd")
                 if brightness is not None and brightness > brightness_max:
                     continue
+            series = str((original.get("metadata") or {}).get("series_id") or "")
+            if max_per_series and series and per_series.get(series, 0) >= max_per_series:
+                # 同一系列已经占了上限 → 先放一边，最后不够 top_k 时再补上
+                overflow.append(entry)
+                continue
+            if series:
+                per_series[series] = per_series.get(series, 0) + 1
             results.append(entry)
             if len(results) >= top_k:
                 break
 
+        if len(results) < top_k and overflow:
+            results.extend(overflow[: top_k - len(results)])
         return results

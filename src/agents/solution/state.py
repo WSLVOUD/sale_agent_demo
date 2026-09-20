@@ -8,6 +8,11 @@ class SolutionState(TypedDict):
 
     # 会话 ID（语义缓存按会话隔离；缺失时不复用任何跨会话结果）
     session_id: str
+
+    # 本会话是否已经给过推荐（"另外推荐一款" → 换一个没给过的型号）
+    already_recommended: bool
+    # 已经推荐过的型号
+    previous_recommended_models: Optional[List[str]]
     
     # Conversation history (auto-managed by add_messages)
     messages: Annotated[List[Dict[str, Any]], add_messages]

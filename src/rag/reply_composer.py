@@ -44,6 +44,56 @@ def _lang(language: str) -> str:
     return "zh" if str(language or "").lower().startswith("zh") else "en"
 
 
+# ── 回复语言兜底（客户口径：策略=en 时绝不能出现中文）────────────────────────
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]")
+
+_ENFORCE_EN_PROMPT = """Rewrite the customer reply below in English ONLY.
+
+Rules:
+1. Keep every fact, number, model code and question exactly as it is.
+2. Output English only — absolutely no Chinese characters.
+3. Keep the same conversational sales tone and roughly the same length.
+4. Do not add, remove or answer anything; just say the same thing in English.
+5. Output the rewritten reply only — no quotes, no explanation, no markdown.
+
+Reply:
+{text}"""
+
+
+def contains_cjk(text: str) -> bool:
+    """文本里是否含中日韩字符（用于"必须是英文"的语言护栏）。"""
+    return bool(_CJK_RE.search(str(text or "")))
+
+
+def enforce_english(text: str, *, message: str = "") -> str:
+    """语言护栏：策略为 en 时，保证发给客户的文本里没有中文。
+
+    - 没有中文 → 原样返回（不增加任何 LLM 调用）；
+    - 有中文 → 用**一次** LLM 调用重写成英文；
+    - 重写失败或结果仍是中文 → 返回空串，由调用方退回英文兜底话术，
+      绝不让中文发给客户。
+
+    策略为 ``auto`` 时不做任何处理（跟随客户语言是预期行为）。
+    """
+    text = str(text or "")
+    if not text or not contains_cjk(text):
+        return text
+    if reply_language(message) != "en":
+        return text
+    logger.warning("CJK reply detected under policy=en — rewriting to English: %r", text[:80])
+    try:
+        from src.core.llm import get_llm
+
+        response = get_llm(temperature=0).invoke(_ENFORCE_EN_PROMPT.format(text=text[:1500]))
+        rewritten = str(getattr(response, "content", response) or "").strip()
+        if rewritten and not contains_cjk(rewritten):
+            return rewritten
+        logger.warning("English rewrite still contains CJK — dropping it")
+    except Exception as exc:  # pragma: no cover - 网络/额度问题
+        logger.warning("English rewrite failed: %s", exc)
+    return ""
+
+
 # ── 复述客户刚给出的需求信息 ────────────────────────────────────────────────
 _PURPOSE_LABELS: Dict[str, Dict[str, str]] = {
     "en": {
@@ -1027,6 +1077,16 @@ def compose_requirement_reply(
     # 不再叠上去 —— 否则就是三句话各说各的，读起来很生硬。
     if vision_confirmation and _is_generic_ack(ack, lang):
         ack = ""
+    # 【实测 bug】图片确认句里刚说了"看起来是固定安装"，紧接着又问"是固装还是租赁" → 自相矛盾。
+    # 图片确认本身就是"跟客户核对这一项"，所以这一项本轮不再追问。
+    if question and vision_confirmation and slot and ack_conflicts_with_slot(
+        vision_confirmation, slot, lang
+    ):
+        logger.info(
+            "Dropping question for slot=%s — already covered by the vision confirmation",
+            slot,
+        )
+        question = ""
     # 图片识别结果先跟客户确认：放在"回应"之后、追问之前
     lead = " ".join(part for part in (ack, vision_confirmation) if part).strip()
 
@@ -1074,7 +1134,9 @@ __all__ = [
     "acknowledge",
     "availability_answer",
     "compose_requirement_reply",
+    "contains_cjk",
     "degraded_note",
+    "enforce_english",
     "has_no_product_phrase",
     "is_price_question",
     "missing_impact",

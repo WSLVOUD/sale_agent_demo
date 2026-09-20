@@ -182,6 +182,52 @@ orchestrator: DualAgentOrchestrator = None
 vectorstore = None
 
 
+_REQUIRED_METADATA = {
+    "indoor", "outdoor", "display_type",
+    "environment_metadata_version", "product_category",
+    # Phase 1/v2.0 新增的功能性字段：缺失说明语料 schema 变过，需要重建
+    "gob", "flexible", "modules_per_cabinet",
+}
+
+
+def _validate_vectorstore(store_dir: Path, expected_count: int):
+    """加载并校验一个向量库目录，返回 ``(vectorstore, count, reasons)``。
+
+    reasons 为空表示这个目录是"当前语料版本"的有效向量库，可以直接用。
+    """
+    try:
+        loaded = load_vectorstore(persist_dir=str(store_dir))
+    except Exception as error:
+        return None, 0, [f"加载失败: {error}"]
+
+    try:
+        collection = loaded._collection
+        count = collection.count()
+        metadatas = collection.get(include=["metadatas"]).get("metadatas", [])
+    except Exception as error:
+        return loaded, 0, [f"读取失败: {error}"]
+
+    reasons: list = []
+    if count == 0:
+        reasons.append("没有任何记录")
+    if len(metadatas) != count:
+        reasons.append(f"metadata 数量({len(metadatas)})与记录数({count})不一致")
+    if count != expected_count:
+        reasons.append(f"记录数 {count} != 期望 {expected_count}")
+    invalid = [
+        metadata for metadata in metadatas
+        if not metadata or not _REQUIRED_METADATA.issubset(metadata)
+        or not isinstance(metadata.get("indoor"), bool)
+        or not isinstance(metadata.get("outdoor"), bool)
+        or metadata.get("display_type") not in {"LED", "LCD", "IFP"}
+        or metadata.get("environment_metadata_version") != ENVIRONMENT_METADATA_VERSION
+        or metadata.get("level") != "model"
+    ]
+    if invalid:
+        reasons.append(f"{len(invalid)} 条记录的 metadata 是旧版本")
+    return loaded, count, reasons
+
+
 def get_documents_for_retrieval():
     """构建 Model 级检索语料（Phase 2 起为唯一产品语料来源）。
 
@@ -213,63 +259,48 @@ async def startup_event():
             raise RuntimeError("No product documents found; cannot initialize retrieval")
         logger.info("Retrieval corpus: %s", corpus_summary(corpus_documents))
 
-        # Check if vector store needs rebuild
-        store_path = Path(config.VECTORSTORE_DIR)
-        sqlite_path = store_path / "chroma.sqlite3"
-        must_rebuild = (
-            not store_path.exists()
-            or not sqlite_path.exists()
-            or os.path.getsize(sqlite_path) == 0
-        )
-        collection_count = 0
+        # Check if vector store needs rebuild.
+        # 依次尝试「主目录 → 稳定回退目录（<dir>_rebuilt）」：Windows 上主目录可能被
+        # 别的进程锁住，重建只能落到回退目录；下次启动若回退目录已经是**当前版本**的
+        # 有效向量库，就直接复用它，绝不再重新嵌入一遍（否则每次启动都要等一次全量重建）。
         fresh_documents = corpus_documents
         expected_count = len(fresh_documents)
+        primary_dir = Path(config.VECTORSTORE_DIR)
+        candidate_dirs = [primary_dir, Path(str(primary_dir) + "_rebuilt")]
 
-        if not must_rebuild:
-            vectorstore = load_vectorstore()
-            collection = vectorstore._collection
-            collection_count = collection.count()
-            stored_metadatas = collection.get(include=["metadatas"]).get("metadatas", [])
-            required_metadata = {
-                "indoor", "outdoor", "display_type",
-                "environment_metadata_version", "product_category",
-                # Phase 1/v2.0 新增的功能性字段：缺失说明语料 schema 变过，需要重建
-                "gob", "flexible", "modules_per_cabinet",
-            }
-            invalid_metadata = [
-                metadata for metadata in stored_metadatas
-                if not metadata or not required_metadata.issubset(metadata)
-                or not isinstance(metadata.get("indoor"), bool)
-                or not isinstance(metadata.get("outdoor"), bool)
-                or metadata.get("display_type") not in {"LED", "LCD", "IFP"}
-                or metadata.get("environment_metadata_version") != ENVIRONMENT_METADATA_VERSION
-                or metadata.get("level") != "model"
-            ]
-
-            must_rebuild = (
-                collection_count == 0
-                or len(stored_metadatas) != collection_count
-                or bool(invalid_metadata)
-                or collection_count != expected_count
-            )
-            if not must_rebuild:
-                logger.info(
-                    "Existing vector store has valid v%s metadata: %d records",
-                    ENVIRONMENT_METADATA_VERSION,
-                    collection_count,
-                )
-
-            if hasattr(vectorstore, "_client"):
-                try:
-                    vectorstore._client.reset()
-                except Exception:
-                    pass
-
-        if must_rebuild:
+        collection_count = 0
+        vectorstore = None
+        for candidate in candidate_dirs:
+            sqlite_path = candidate / "chroma.sqlite3"
+            if not sqlite_path.exists() or os.path.getsize(sqlite_path) == 0:
+                continue
+            loaded, collection_count, reasons = _validate_vectorstore(candidate, expected_count)
+            if loaded is not None and not reasons:
+                vectorstore = loaded
+                collection = vectorstore._collection
+                if str(candidate) != str(primary_dir):
+                    logger.warning(
+                        "主向量库不可用 → 直接复用已重建好的向量库：%s（%d 条记录）",
+                        candidate, collection_count,
+                    )
+                    config.VECTORSTORE_DIR = str(candidate)
+                else:
+                    logger.info(
+                        "Existing vector store has valid v%s metadata: %d records",
+                        ENVIRONMENT_METADATA_VERSION, collection_count,
+                    )
+                break
             logger.warning(
-                "Vector store needs rebuild: existing=%d chunks, expected=%d chunks",
-                collection_count,
-                len(fresh_documents),
+                "向量库 %s 需要重建：%s", candidate, "; ".join(reasons) or "未知原因"
+            )
+            # 释放进程内句柄，否则文件被自己锁住、删不掉（Windows）
+            from src.core.embeddings import _release_vectorstore_handles
+
+            _release_vectorstore_handles()
+
+        if vectorstore is None:
+            logger.warning(
+                "Vector store needs rebuild: expected=%d chunks", expected_count
             )
             vectorstore = recreate_vectorstore(fresh_documents)
             active_dir = getattr(vectorstore, "_active_persist_dir", config.VECTORSTORE_DIR)
@@ -462,7 +493,7 @@ async def get_memory(session_id: str, api_key: str = Depends(_verify_api_key)):
 # ── LLM Fallback ──────────────────────────────────────────────────────────
 _LLM_FALLBACK_RESPONSES = {
     "greeting": "Hello! I'm your LED display advisor. How can I help you today?",
-    "warranty": "Our products come with 1-2 years of warranty (varies by series). What scenario are you looking to use it for?",
+    "warranty": "Our products come with a 1-year warranty by default, and the warranty can be extended for an additional fee. What scenario are you looking to use it for?",
     "product_question": "Thanks for your question! We carry the full range: LED, LCD, and IFP displays. Is there anything specific you'd like to know more about?",
     "default": "Sorry, the system is busy right now. Please try again shortly, or reach out to our support team.",
 }
@@ -519,8 +550,8 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
         # 检查是否应该人工接管
         if fallback_manager.should_handover():
             handover_message = (
-                "抱歉，系统目前遇到一些问题，已通知人工客服跟进。"
-                "您也可以直接拨打客服热线：400-xxx-xxxx"
+                "Sorry, we're having some trouble on our side right now, and our team has been "
+                "notified to follow up with you. You can also reach our support line: 400-xxx-xxxx."
             )
             fallback_manager.reset_handover()
             return ChatResponse(
@@ -552,7 +583,18 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
     is_outdoor = bool(requirements.get("outdoor")) or location_type in (
         "户外", "室外", "外面", "露天", "全户外", "半户外", "户外使用", "室外使用",
     )
-    response_text = sanitize_customer_response(result.get("response", ""), outdoor=is_outdoor)
+    # 多屏回复（一个项目多块屏）里每块屏各自有环境：室内那块的型号本来就是
+    # 室内型号，不能拿"当前这块屏是室外"去整段过滤 —— 否则会出现
+    # "只推荐了一块屏"（实测 bug：Screen 1 的整段回复被删掉，只剩 Screen 2）。
+    response_text = sanitize_customer_response(
+        result.get("response", ""),
+        outdoor=is_outdoor and not result.get("multi_screen"),
+    )
+    # 语言护栏：策略=en 时绝不让中文发给客户（命中就用一次 LLM 重写成英文；
+    # 重写不了就退回英文兜底话术，见下面的 not response_text 分支）
+    from src.rag.reply_composer import enforce_english
+
+    response_text = enforce_english(response_text, message=request.question)
 
     if not response_text:
         # 【客户口径】没有匹配结果时不说"找不到"，改成邀请客户放宽某个条件
@@ -612,6 +654,10 @@ async def _stream_chat(request: ChatRequest):
         answer = str(result.get("response") or "")
         if not answer:
             answer = _get_fallback_response(question)
+        # 语言护栏：策略=en 时流式输出同样不能出现中文
+        from src.rag.reply_composer import enforce_english
+
+        answer = enforce_english(answer, message=question) or _get_fallback_response(question)
         # 追加的独立气泡（如推荐后的联系方式询问）在流式里也一并输出
         extras = [str(item) for item in (result.get("extra_messages") or []) if item]
         if extras:

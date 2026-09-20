@@ -66,6 +66,10 @@ def router(state: SalesState) -> SalesState:
             # 【M7】把 Sales 的 RequirementProfile 直接交给 Solution，
             # 让它消费同一份需求，而不是自己再从对话重建一遍
             profile=state.get("requirement_profile"),
+            # 客户是否已经拿到过推荐 + 已经给过哪些型号：
+            # "另外推荐一款"要换一个没给过的型号，而不是重新问需求
+            already_recommended=bool(state.get("already_recommended")),
+            previous_models=list(state.get("previous_recommended_models") or []),
         )
 
         # Extract products from result
@@ -76,7 +80,12 @@ def router(state: SalesState) -> SalesState:
         if recommendation:
             state["response"] = recommendation
         else:
-            state["response"] = "根据您的需求，我找到了几款合适的屏幕。您可以告诉我更具体的尺寸或预算，我来帮您筛选最合适的型号。"
+            # 对外话术一律英文（客户口径：回复里不能出现任何一句中文）
+            state["response"] = (
+                "Based on what you described, I've shortlisted some suitable screens. "
+                "Share a bit more detail, such as the target size or budget, and I'll narrow it down "
+                "to the best model for you."
+            )
 
         # Signal the orchestrator to proceed to Solution Agent
         state["next_action"] = "trigger_solution"
@@ -85,10 +94,16 @@ def router(state: SalesState) -> SalesState:
     except TimeoutError:
         logger.error("Solution Agent timed out")
         state["solutions"] = []
-        state["response"] = "检索超时了，您可以再说一次您的需求，我重新帮您匹配。"
+        state["response"] = (
+            "The search took too long. Could you tell me your requirements again? "
+            "I'll match the right screen for you."
+        )
     except Exception as e:
         logger.error(f"Error calling Solution Agent: {e}")
         state["solutions"] = []
-        state["response"] = "匹配过程出了点问题，您可以再说一次您的需求，我重新帮您找。"
+        state["response"] = (
+            "Something went wrong while matching the models. Could you repeat your requirements? "
+            "I'll look again for you."
+        )
 
     return state

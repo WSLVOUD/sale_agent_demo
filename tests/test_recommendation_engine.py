@@ -50,13 +50,19 @@ class TestRecommendationEngine:
         ))
         assert all(rec["outdoor"] for rec in result["recommendations"])
 
-    def test_outdoor_rental_returns_empty(self, engine):
-        """产品库没有户外租赁产品 → 必须返回空，不得用室内租赁替代"""
+    def test_outdoor_rental_uses_new_outdoor_rental_series(self, engine):
+        """2026-09-18 新增室外租赁系列后：户外租赁必须给出**户外**租赁型号，
+
+        绝不能用室内租赁型号替代。
+        """
         result = engine.recommend(profile=RequirementProfile.from_slots(
             {"environment": "outdoor", "installation": "rental"}
         ))
-        assert result["recommendations"] == []
-        assert result["candidate_count"] == 0
+        assert result["recommendations"], result
+        for rec in result["recommendations"]:
+            assert rec["outdoor"] is True and rec["indoor"] is False, rec
+            assert rec["installation"] == "rental", rec
+            assert "OR" in rec["series_id"], rec
 
     def test_explicit_pitch_is_respected(self, engine):
         result = engine.recommend(profile=RequirementProfile.from_slots(

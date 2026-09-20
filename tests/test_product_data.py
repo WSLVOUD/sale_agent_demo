@@ -39,14 +39,15 @@ class TestDataValidation:
 
     def test_expected_scale(self, validation):
         stats = validation["stats"]
-        assert stats["series"] == 9
-        assert stats["models"] == 49
+        # 2026-09-18：新增室外租赁 3 个系列（TW11-OR / TW31-ORHD / TW21-ORHD，7 个型号）
+        assert stats["series"] == 12
+        assert stats["models"] == 56
 
     def test_environment_and_installation_split(self, validation):
         stats = validation["stats"]
         assert stats["indoor_series"] == 6
-        assert stats["outdoor_series"] == 3
-        assert stats["rental_series"] == 3
+        assert stats["outdoor_series"] == 6
+        assert stats["rental_series"] == 6
         assert stats["fixed_series"] == 6
 
 
@@ -99,16 +100,40 @@ class TestPreviouslyKnownDataIssues:
             "TW11-3216", "TW21-3216", "TW31-COB",
             "TW11-IR", "TW21-IRHD", "TW31-IRHD",
             "TW11-OD", "TW21-OD", "TW31-HOD",
+            # 2026-09-18 新增：室外租赁
+            "TW11-OR", "TW31-ORHD", "TW21-ORHD",
         }
         assert {m.series_id for m in models} == expected
 
 
 class TestFunctionalFlags:
 
+    def test_new_outdoor_rental_series_are_present(self, models):
+        """2026-09-18：客户在 LED display.txt 里新增的 3 个室外租赁系列必须进库。
+
+        （语料以 led_products.json 为准 —— 只往 txt 里加是不会进向量库的。）
+        """
+        by_series = {}
+        for model in models:
+            by_series.setdefault(model.series_id, []).append(model)
+        for series_id, count in (("TW11-OR", 3), ("TW31-ORHD", 2), ("TW21-ORHD", 2)):
+            assert series_id in by_series, series_id
+            group = by_series[series_id]
+            assert len(group) == count, (series_id, [m.model for m in group])
+            for model in group:
+                assert model.outdoor is True and model.indoor is False, model.model
+                assert model.installation == "rental", model.model
+                assert model.waterproof is True, model.model
+                assert model.warranty_years == 1, model.model
+        assert by_series["TW11-OR"][0].brightness_nit == 3500
+        assert by_series["TW31-ORHD"][0].brightness_nit == 4500
+        # TW31-ORHD 是柔性租赁系列
+        assert all(m.flexible for m in by_series["TW31-ORHD"]), "TW31-ORHD 应为柔性屏"
+
     def test_flexible_flag_matches_features(self, models):
         flexible = [m.model for m in models if m.flexible]
-        assert flexible, "应有柔性屏型号（TW31-IRHD 系列）"
-        assert all("TW31-IRHD" in name for name in flexible)
+        assert flexible, "应有柔性屏型号（TW31-IRHD / TW31-ORHD 系列）"
+        assert all(("TW31-IRHD" in name) or ("TW31-ORHD" in name) for name in flexible)
         # 特性标签里必须真的是 flexible
         for model in models:
             if "flexible" in [f.lower() for f in model.features]:
@@ -121,5 +146,5 @@ class TestFunctionalFlags:
     def test_series_level_products_still_load(self):
         """Series 级数据（ProductFilter / fast_path 使用）仍需可用"""
         products = load_structured_products(DATA_DIR)
-        assert len(products) == 9
+        assert len(products) == 12
         assert all(p.led_data for p in products)

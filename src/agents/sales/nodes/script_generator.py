@@ -31,6 +31,7 @@ Requirements:
 2. Friendly tone
 3. Naturally ask about their needs
 4. Plain text only, no markdown
+5. {language_rule}
 
 Output the reply directly:"""
 
@@ -64,6 +65,8 @@ def _answer_objection_like(state: SalesState, message: str) -> str:
     if not sales_search:
         return "Got it, let me learn more about your needs."
     try:
+        from ....rag.query_understanding import response_language_rule
+
         docs = sales_search.similarity_search(message, k=2)
         reference_content = "\n\n".join([d.page_content for d in docs[:1]])
         prompt = SystemMessage(content=f"""You are a sales advisor for LED and LCD display products, speaking with a customer face-to-face.
@@ -78,6 +81,7 @@ Requirements:
 2. Short, 1-2 sentences
 3. Plain text only, no markdown
 4. Never invent specifications, prices or model names
+5. {response_language_rule(reply_language(message))}
 
 Reply directly:""")
         response = get_llm(temperature=0.3).invoke([prompt])
@@ -134,6 +138,8 @@ _QUESTION_POLISH_PROMPT = """你是 LED 显示屏产品的销售，正在微信�
    意思一模一样，但读起来不能是同一句话。
 5. **过渡词也要换着用**：不要每轮都用同一个（例如老用 "So" / "By the way"）；
    最近用过的开头和过渡必须避开，从第 1 条里挑别的或者用别的自然说法。
+5b. **不要举例**：不要罗列"会议室 / 教室 / 商场 / 广告位"这类例子，也不要写
+   "比如 / 例如 / such as / for example / like a …" 的开头——直接问问题本身。
 6. **不要**新增任何参数、型号、价格、方案、承诺或建议；不要解释任何知识；
    不要提"数据库/资料/检索"之类内部说法。
 7. 不要保留草稿里那种固定铺垫（例如 "That's okay —"、
@@ -277,6 +283,7 @@ def script_generator(state: SalesState) -> SalesState:
         ack = str(state.get("acknowledgement") or "")
         pending = str(state.get("pending_question") or "")
         if pending:
+            confirmation = _vision_confirmation(state)
             draft = compose_requirement_reply(
                 question=pending,
                 slot=str(state.get("pending_slot") or ""),
@@ -284,8 +291,12 @@ def script_generator(state: SalesState) -> SalesState:
                 seed=_turn_seed(state),
                 requirement=state.get("requirements") or {},
                 llm_ack=ack,
+                # 本轮带了图片 → 先把"图片里看到什么"跟客户核一遍，再问需求
+                # （实测 bug：只发了图片 + "i need this"，系统直接跳到问点间距）
+                vision_confirmation=confirmation,
             )
-            polished = _polish_question_message(draft, state=state)
+            # 图片确认句是系统精心写好的，不要让 LLM 改写（改写了也不好核对）
+            polished = "" if confirmation else _polish_question_message(draft, state=state)
             state["response"] = _strip_markdown(polished or draft)
         else:
             state["response"] = _strip_markdown(ack)
@@ -343,6 +354,7 @@ def script_generator(state: SalesState) -> SalesState:
         and not state.get("response")
     ):
         # 先按模板合成一版（问什么由 Gate 决定，这版是"意思基准"，也是兜底）
+        confirmation = _vision_confirmation(state)
         draft = compose_requirement_reply(
             question=pending_question,
             slot=str(state.get("pending_slot") or ""),
@@ -352,11 +364,17 @@ def script_generator(state: SalesState) -> SalesState:
             llm_ack=str(state.get("acknowledgement") or ""),
             # 需求重置时 runner 已经加过"我们重新来一遍"的确认语，这里不重复
             include_ack=not state.get("requirements_reset"),
-            vision_confirmation=_vision_confirmation(state),
+            vision_confirmation=confirmation,
         )
         # 客户口径：不要原封不动发模板，也不要是"接话 + 提问"两个画风 ——
         # 用低温度（默认 0.2）围绕这版草稿改写成一段自然的话（意思不变）。
-        polished = _polish_question_message(draft, state=state)
+        # 需求重置时 runner 已经加了"我们重新来一遍"的确认语；这里再让 LLM 改写
+        # 容易又叠一句客套（实测："Sure, let's collect… Sure, happy to help…"）
+        # 带图的这一轮也不改写：图片确认句要保持原样，客户才好核对。
+        polished = (
+            "" if (state.get("requirements_reset") or confirmation)
+            else _polish_question_message(draft, state=state)
+        )
         state["response"] = _strip_markdown(polished or draft)
         state["next_action"] = "ask"
         logger.info(
@@ -372,12 +390,18 @@ def script_generator(state: SalesState) -> SalesState:
     if intent == "greeting":
         if suppress_greeting:
             # 首次接待已完成，不需要再次问候，也不要再问姓名（首次接待已问过）
-            # 直接询问场景用途，进入需求挖掘流程
-            response_text = "What display scenario are you looking into? Meeting room, classroom, retail, advertising...?"
+            # 直接询问场景用途，进入需求挖掘流程（客户口径：不举例，直接问）
+            response_text = "What will the screen mainly be used for?"
             state["next_action"] = "ask"
             logger.info("Greeting suppressed (first contact completed), asking about scenario directly")
         else:
-            prompt = SystemMessage(content=GREETING_PROMPT)
+            from ....rag.query_understanding import response_language_rule
+
+            prompt = SystemMessage(
+                content=GREETING_PROMPT.format(
+                    language_rule=response_language_rule(reply_language(state["current_message"]))
+                )
+            )
             response = get_llm(temperature=0.3).invoke([prompt, HumanMessage(content=state["current_message"])])
             response_text = response.content.strip()
             state["next_action"] = "ask"
@@ -393,10 +417,8 @@ def script_generator(state: SalesState) -> SalesState:
             state["next_action"] = "trigger_solution"
             logger.info("need_query: Ready Gate 已放行 → 触发推荐")
         else:
-            response_text = (
-                "What kind of scenario will this display be used in? "
-                "Meeting room, classroom, exhibition, advertising, etc.?"
-            )
+            # 客户口径：问场景不举例，直接问问题
+            response_text = "What will this display mainly be used for?"
             state["next_action"] = "ask"
             state["response"] = _strip_markdown(response_text)
             logger.info("need_query: Gate 未就绪且无待问项 → 追问基础场景（不推荐）")

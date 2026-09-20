@@ -43,26 +43,31 @@ class TestRecommendationServiceGate:
         assert result["recommendation_status"] == "NEED_CLARIFICATION"
 
     def test_scene_installation_distance_partial_blocks(self, service):
-        # 环境+场景+固装（缺视距）→ 不推荐
+        # 客户口径（2026-09-18）：硬性条件 = 尺寸 + P值 + 室内外 + 固装/租赁。
+        # 环境+场景+固装（缺 P值/视距、缺尺寸）→ 不推荐
         result = service.recommend(_profile({
             "environment": "indoor", "purpose": "conference", "installation": "fixed",
         }))
         assert result["recommendation_status"] == "NEED_CLARIFICATION"
-        assert "viewing_distance" in result["missing_fields"]
+        assert "pixel_pitch" in result["missing_fields"]
+        assert "size" in result["missing_fields"]
 
-        # 环境+场景+视距（缺固装租赁）→ 不推荐
+        # 环境+场景+视距+尺寸（缺固装租赁）→ 不推荐
         result = service.recommend(_profile({
             "environment": "indoor", "purpose": "conference", "viewing_distance_m": 5,
+            "target_width_mm": 5000, "target_height_mm": 3000,
         }))
         assert result["recommendation_status"] == "NEED_CLARIFICATION"
         assert "installation" in result["missing_fields"]
 
     def test_shortcuts_allow_recommendation(self, service):
-        # 客户口径：点间距/亮度这类规格 + 价格质量取向 → 直接推荐
-        # （只给规格还不够，推荐前要问过"最看重价格还是质量"）
+        # 客户口径：硬性条件（尺寸 + P值 + 室内外 + 固装/租赁）齐了 → 直接推荐，
+        # 价格取向 / 内容类型这些非硬性项不再阻塞。
         for slots in (
-            {"pixel_pitch_mm": 2.5, "price_preference": "price"},
-            {"brightness_min_nit": 600, "price_preference": "price"},
+            {"environment": "indoor", "installation": "fixed", "pixel_pitch_mm": 2.5,
+             "target_width_mm": 5000, "target_height_mm": 3000},
+            {"environment": "outdoor", "installation": "fixed", "pixel_pitch_mm": 5.0,
+             "target_width_mm": 6000, "target_height_mm": 4000},
         ):
             result = service.recommend(_profile(slots))
             assert result["recommendation_status"] == "RECOMMENDED", slots
@@ -81,6 +86,7 @@ class TestRecommendationServiceGate:
             "environment": "indoor", "purpose": "conference",
             "content_type": "mixed", "price_preference": "price",
             "installation": "fixed", "viewing_distance_m": 5,
+            "target_width_mm": 5000, "target_height_mm": 3000,
         }))
         assert result["recommendation_status"] == "RECOMMENDED"
         assert result["recommendations"][0]["model"].startswith("TW")
@@ -175,3 +181,47 @@ class TestNoRecommendationLeak:
         answer = result["recommendation"]
         assert "TW" not in answer.upper()
         assert not any(ch in answer for ch in ("P2.5", "P1.8", "P3.0"))
+
+
+class TestIndoorHasNoSuchPitchUsesLargestIndoorPitch:
+    """客户口径（2026-09-18）：室内 100m 但室内没有 P10 → 用室内最大的 P 值，
+
+    **绝不能**改推室外型号（旧逻辑会"放宽环境"，那是错的）。
+    """
+
+    def test_indoor_long_distance_stays_indoor(self, service):
+        result = service.recommend(_profile({
+            "display_type": "LED", "environment": "indoor", "purpose": "church",
+            "content_type": "mixed", "installation": "fixed", "price_preference": "price",
+            "viewing_distance_m": 100,
+            "target_width_mm": 5000, "target_height_mm": 3000,
+        }))
+        assert result["recommendation_status"] in ("RECOMMENDED", "DEGRADED")
+        assert result["recommendations"], result
+
+        from src.config import config
+        from src.rag.json_loader import load_canonical_models
+
+        indoor = [m for m in load_canonical_models(config.DATA_DIR) if m.indoor and m.installation == "fixed"]
+        largest_indoor_pitch = max(m.pixel_pitch_mm for m in indoor)
+
+        top = result["recommendations"][0]
+        assert top["indoor"] is True and top["outdoor"] is False, top
+        assert top["pixel_pitch_mm"] == pytest.approx(largest_indoor_pitch), top
+
+    def test_outdoor_rental_now_uses_the_new_outdoor_rental_series(self, service):
+        """2026-09-18 新增室外租赁系列（TW11-OR / TW31-ORHD / TW21-ORHD）后，
+
+        "室外 + 租赁"必须能推荐出**室外租赁**型号，而不是退回"无匹配"或推室内型号。
+        """
+        result = service.recommend(_profile({
+            "display_type": "LED", "environment": "outdoor", "purpose": "advertising",
+            "installation": "rental", "pixel_pitch_mm": 3.0,
+            "target_width_mm": 5000, "target_height_mm": 3000,
+        }))
+        assert result["recommendation_status"] in ("RECOMMENDED", "DEGRADED")
+        assert result["recommendations"], result
+        for rec in result["recommendations"]:
+            assert rec["outdoor"] is True and rec["indoor"] is False, rec
+            assert rec["installation"] == "rental", rec
+            assert "OR" in rec["series_id"], rec

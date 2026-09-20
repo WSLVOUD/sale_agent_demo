@@ -130,6 +130,7 @@ class SalesAgentRunner:
 
         existing_profile = None
         recommended_before = False
+        previous_models: list = []
         if self.memory_store:
             if hasattr(self.memory_store, "get_requirement_profile"):
                 profile_data = self.memory_store.get_requirement_profile(session_id)
@@ -146,6 +147,11 @@ class SalesAgentRunner:
                         existing_profile = profile_data
             if hasattr(self.memory_store, "has_recommendation"):
                 recommended_before = self.memory_store.has_recommendation(session_id)
+            # 已经推荐过的型号：客户说"另外推荐一款"时要换一个没给过的
+            if hasattr(self.memory_store, "get_recommendation"):
+                previous_models = list(
+                    (self.memory_store.get_recommendation(session_id) or {}).get("models") or []
+                )
 
         reset = detect_requirement_reset(
             message,
@@ -205,6 +211,8 @@ class SalesAgentRunner:
             "reset_reason": reset.reason,
             # 本会话是否已经给过推荐：决定"客户后续提问时要不要再推荐一遍"
             "already_recommended": bool(recommended_before),
+            # 已经推荐过的型号（"另外推荐一款" → 换一个没给过的）
+            "previous_recommended_models": previous_models,
             # 本轮是否带图片：带图的这一轮要把"图片里看到什么"跟客户核一遍
             "vision_applied": bool(has_vision),
         }

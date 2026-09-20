@@ -32,14 +32,15 @@ class TestCase1InsufficientRequirements:
         decision = check_recommendation_ready(_profile("I need an LED display."))
         assert decision.ready is False
         assert decision.next_question
-        assert set(decision.missing) >= {"environment", "purpose"}
+        # 客户口径（2026-09-18）：硬性条件 = 室内外 / 固装租赁 / P值 / 尺寸
+        assert set(decision.missing) >= {"environment", "installation", "pixel_pitch", "size"}
 
 
 class TestCase2Church:
-    """Case 2：church → environment=indoor（来源 scenario_derived），并主动确认一次。
+    """Case 2：church → environment=indoor（来源 scenario_derived），**不再问室内外**。
 
-    客户口径（2026-09-17）：场景只是"系统推断"，不等于客户说过 ——
-    所以先跟客户确认一次室内/室外（确认型问法），问过一次就沿用场景默认值。
+    客户口径（2026-09-18）：明显的室内/室外场景（教堂、会议室、户外广告…）
+    直接确定环境，不再问"室内还是室外"；舞台/演唱会/租赁这类室内外都可能的才问。
     """
 
     def test_church_settles_indoor(self):
@@ -49,15 +50,10 @@ class TestCase2Church:
         assert profile.status["environment"] == "confirmed"
 
         decision = check_recommendation_ready(profile)
-        # 只推断没确认 → 主动跟客户核对一次
-        assert "environment" in decision.missing
-        assert "indoor" in (decision.next_question or "").lower()
-        assert not decision.ready  # 还缺安装方式 / 观看距离
-
-        # 问过一次之后就不再拦流程，直接沿用场景默认值
-        profile.record_ask("environment")
-        decision = check_recommendation_ready(profile)
+        # 明显场景 → 不问室内外；还缺硬性条件（固装租赁 / P值 / 尺寸）
         assert "environment" not in decision.missing
+        assert not decision.ready
+        assert "installation" in decision.missing
 
 
 class TestCase3Stadium:
@@ -78,9 +74,8 @@ class TestCase4InferredNeverOpensGate:
         assert profile.sources.get("viewing_distance_m") == "inferred"
         decision = check_recommendation_ready(profile)
         assert decision.ready is False
-        # purpose 只要"有来源"即可（它永远来自客户原话/LLM 对原话的抽取）；
-        # 真正需要 provenance 的是环境、安装方式、观看距离这类工程条件。
-        assert {"environment", "installation", "viewing_distance"} <= set(decision.missing)
+        # 真正需要 provenance 的是环境、安装方式、P值/视距、尺寸这类工程条件
+        assert {"environment", "installation"} <= set(decision.missing)
 
 
 class TestCase5DefaultDoesNotOpenGateAlone:
@@ -122,22 +117,20 @@ class TestCase6MultiTurnProfileAccumulates:
         assert profile.environment == "indoor"
         assert profile.installation == "fixed"
         assert profile.viewing_distance_m == pytest.approx(5.0)
-        # 客户口径：推荐前还要知道内容类型与"价格/质量"取向
-        assert check_recommendation_ready(profile).ready is False
-        profile = profile.merge(
-            RequirementProfile.from_slots(
-                {"content_type": "mixed", "price_preference": "price"},
-                explicit_keys={"content_type", "price_preference"},
-            )
-        )
-        # 环境是场景推断来的 → 还要跟客户确认一次（确认型问法），问过一次才放行
+        # 此时只差尺寸（硬性条件）；内容类型与价格取向已不再阻塞推荐
         decision = check_recommendation_ready(profile)
         assert decision.ready is False
-        assert decision.missing == ["environment"]
-        assert "indoor" in (decision.next_question or "").lower()
-
-        profile.record_ask("environment")
-        assert check_recommendation_ready(profile).ready is True
+        assert decision.missing == ["size"]
+        profile = profile.merge(
+            RequirementProfile.from_slots(
+                {"target_width_mm": 5000, "target_height_mm": 3000},
+                explicit_keys={"target_width_mm", "target_height_mm"},
+            )
+        )
+        # 硬性条件齐备（室内外由教堂场景判定，不再确认）→ 放行
+        decision = check_recommendation_ready(profile)
+        assert decision.ready is True
+        assert decision.missing == []
 
     def test_merge_slots_keeps_provenance_markers(self):
         base = extract_slots("church")

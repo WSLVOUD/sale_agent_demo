@@ -519,29 +519,36 @@ _SIZE_AXIS_PATTERNS: tuple[tuple[str, str], ...] = (
 
 # "数字 + 单位 + 方向词"的单条尺寸（支持 "45cm is the width" 这种语序）
 _AXIS_WORD = (
-    r"(?:length|long side|width|wide|height|tall|diagonal|diag"
+    r"(?:length|long|width|wide|height|tall|diagonal|diag"
     r"|长度|长边|长|宽度|宽|高度|高|对角线|对角)"
-)
-_AXIS_MEASUREMENT_RE = re.compile(
-    r"(?<![a-z0-9])(\d+(?:[.,]\d+)?)\s*" + _SIZE_UNIT_PATTERN + r"?\s*"
-    # 允许中间的少量填充词（is / are / the / us 这类错别字也放过）
-    r"(?:(?:is|are|as|us|the|a|an|of|it|its|和|是|为|的)\s+){0,4}"
-    r"(" + _AXIS_WORD + r")",
-    re.IGNORECASE,
-)
-# 方向词在前的语序："长1.29米" / "width: 45cm" / "高度 0.45 米"
-_AXIS_MEASUREMENT_PREFIX_RE = re.compile(
-    r"(" + _AXIS_WORD + r")(?:(?:\s*(?:is|are|of|是|为|:|：|=)\s*)|(?:\s*))"
-    r"(\d+(?:[.,]\d+)?)\s*" + _SIZE_UNIT_PATTERN,
-    re.IGNORECASE,
 )
 
 _AXIS_WORD_TO_SLOT: Dict[str, str] = {
-    "length": "length", "long side": "length", "长度": "length", "长边": "length", "长": "length",
+    "length": "length", "long": "length", "长度": "length", "长边": "length", "长": "length",
     "width": "width", "wide": "width", "宽度": "width", "宽": "width",
     "height": "height", "tall": "height", "高度": "height", "高": "height",
     "diagonal": "diagonal", "diag": "diagonal", "对角线": "diagonal", "对角": "diagonal",
 }
+
+# 一次扫描里的两种 token：方向词 / "数值 + 可选单位"
+_SIZE_UNIT_BODY = (
+    r"mm|cm|m|meters?|metres?|feet|foot|ft|inches?|inch|毫米|厘米|公分|米|英尺|英寸|寸"
+)
+_SIZE_TOKEN_RE = re.compile(
+    r"(?P<axis>(?<![A-Za-z])" + _AXIS_WORD + r"(?![A-Za-z]))"
+    r"|(?P<num>\d+(?:[.,]\d+)?)(?:\s*(?P<unit>" + _SIZE_UNIT_BODY + r"))?",
+    re.IGNORECASE,
+)
+
+# 数值与方向词之间的"填充词"只能是这样（不能夹着另一个数字或句号）
+_AXIS_GAP_RE = re.compile(
+    r"^[\s，,、:：=＝\-–—_()（）]*"
+    r"(?:(?:is|are|as|us|the|a|an|of|it|its|and|about|roughly|approx\.?)\s+)*"
+    r"[\s，,、:：=＝\-–—_()（）]*"
+    r"(?:是|为|的|约|大概|大约|有|宽|高|长)?"
+    r"[\s，,、:：=＝\-–—_()（）]*$",
+    re.IGNORECASE,
+)
 
 
 def _fix_unit_typos(text: str) -> str:
@@ -554,33 +561,57 @@ def _fix_unit_typos(text: str) -> str:
 
 
 def _extract_axis_measurements(text: str) -> List[tuple[str, float]]:
-    """抽出"带方向词的尺寸"（数字在前："45cm is the width"；方向词在前："长1.29米"）。"""
+    """抽出"带方向词的尺寸"，**从左到右扫描**，避免一个方向词被两次归给不同数字。
+
+    支持（客户口径：怎么写都要认）：
+      方向词在前："长是5，高是3" / "长1.29米，宽0.45米" / "width: 3m, height 5m"
+      数字在前：  "45cm is the width" / "3m wide 5m long" / "5米宽"
+      不带单位：  "长是5，高是3" → 5m / 3m（量级推断见 ``_size_to_mm``）
+    """
     fixed = _fix_unit_typos(str(text or ""))
     results: List[tuple[str, float]] = []
-    for match in _AXIS_MEASUREMENT_RE.finditer(fixed):
-        raw_value, unit, axis_word = match.group(1), match.group(2), match.group(3)
-        axis = _AXIS_WORD_TO_SLOT.get(str(axis_word).lower().strip())
-        if not axis:
+    pending_axis: Optional[str] = None          # 方向词在前，等后面的数值
+    pending_axis_end = -1
+    last_number: Optional[tuple[float, Optional[str]]] = None   # 数值在前，等后面的方向词
+    last_number_end = -1
+
+    for match in _SIZE_TOKEN_RE.finditer(fixed):
+        if match.group("axis"):
+            axis = _AXIS_WORD_TO_SLOT.get(match.group("axis").lower().strip())
+            if not axis:
+                continue
+            # 前面刚出现过一个数值，而且中间只有填充词 → 这个方向词是在修饰那个数值
+            if last_number is not None:
+                gap = fixed[last_number_end:match.start()]
+                if len(gap) <= 16 and _AXIS_GAP_RE.match(gap):
+                    value, unit = last_number
+                    mm = _size_to_mm(value, unit)
+                    if mm:
+                        results.append((axis, mm))
+                    last_number = None
+                    continue
+            pending_axis = axis
+            pending_axis_end = match.end()
             continue
+
+        # 数值 token
         try:
-            value = float(raw_value.replace(",", "."))
-        except ValueError:  # pragma: no cover - 防御式
+            value = float(str(match.group("num")).replace(",", "."))
+        except (TypeError, ValueError):  # pragma: no cover - 防御式
             continue
-        mm = _size_to_mm(value, unit.lower() if unit else None)
-        if mm:
-            results.append((axis, mm))
-    for match in _AXIS_MEASUREMENT_PREFIX_RE.finditer(fixed):
-        axis_word, raw_value, unit = match.group(1), match.group(2), match.group(3)
-        axis = _AXIS_WORD_TO_SLOT.get(str(axis_word).lower().strip())
-        if not axis:
-            continue
-        try:
-            value = float(raw_value.replace(",", "."))
-        except ValueError:  # pragma: no cover - 防御式
-            continue
-        mm = _size_to_mm(value, unit.lower() if unit else None)
-        if mm:
-            results.append((axis, mm))
+        unit = (match.group("unit") or "").lower() or None
+        if pending_axis is not None:
+            gap = fixed[pending_axis_end:match.start()]
+            if len(gap) <= 16 and _AXIS_GAP_RE.match(gap):
+                mm = _size_to_mm(value, unit)
+                if mm:
+                    results.append((pending_axis, mm))
+                pending_axis = None
+                last_number = None
+                continue
+            pending_axis = None
+        last_number = (value, unit)
+        last_number_end = match.end()
     return results
 
 
@@ -665,7 +696,8 @@ def _extract_target_size(text: str) -> tuple[Optional[float], Optional[float]]:
     """
     lowered = str(text).lower().strip()
     # 统一分隔符为 " x "
-    normalized = re.sub(r"\s*(?:x|×|\*|by|乘)\s*", " x ", lowered)
+    # （客户写法很随意：3*5 / 3x5 / 3×5 / 3✕5 / 3＊5(全角) / 3 by 5 / 3乘5 都要认）
+    normalized = re.sub(r"\s*(?:x|×|✕|╳|＊|\*|by|乘)\s*", " x ", lowered, flags=re.IGNORECASE)
 
     match = re.search(
         r"(\d+(?:[.,]\d+)?)\s*" + _SIZE_UNIT_PATTERN + r"?\s*x\s*"
@@ -687,6 +719,29 @@ def _extract_target_size(text: str) -> tuple[Optional[float], Optional[float]]:
             height_unit = width_unit
         # 两侧都没写单位 → 各自按量级推断
         return _size_to_mm(width, width_unit), _size_to_mm(height, height_unit)
+
+    # 客户不带分隔符："3米5米" / "3 m 5 m"（两个相邻的尺寸，中间没有 x）
+    if not match:
+        pair = re.search(
+            r"(?<![\w.,])(\d+(?:[.,]\d+)?)\s*" + _SIZE_UNIT_PATTERN
+            + r"\s*(?:,|，|、|和|and)?\s*"
+            r"(\d+(?:[.,]\d+)?)\s*" + _SIZE_UNIT_PATTERN,
+            normalized,
+        )
+        if pair:
+            # 别把"观看距离 5 米 + 尺寸 3 米"这种句子当成宽高
+            before = normalized[max(0, pair.start() - 14):pair.start()]
+            if not re.search(
+                r"视距|观看距离|可视距离|距离|distance|away|far", before, re.IGNORECASE
+            ):
+                width = _size_to_mm(
+                    float(pair.group(1).replace(",", ".")), (pair.group(2) or "").lower() or None
+                )
+                height = _size_to_mm(
+                    float(pair.group(3).replace(",", ".")), (pair.group(4) or "").lower() or None
+                )
+                if width and height:
+                    return width, height
 
     # 只给一个方向：宽 / 高
     single = re.search(
@@ -721,6 +776,13 @@ _CONTENT_IMAGE_KEYWORDS = (
 _PREFERENCE_BOTH_KEYWORDS = (
     # 强信号：本身就是"权衡"的说法
     "都看重", "都看中", "都重要", "都要好", "both matter", "either is fine", "both are important",
+    # 客户口径（2026-09-18）：问"最看重价格还是质量"时，客户只回
+    # "both are fine" / "either works" 这一类，也必须算"两者都行"（走默认档）。
+    # 注意：单独的 "both" / "都行" 有歧义（也可能是在回答"视频还是图片"），
+    # 由 RequirementExtractor 结合"上一轮问的是哪一项"落地，不放在这里。
+    "both are fine", "both is fine", "both are good", "both work", "both works",
+    "either works", "either one is fine", "either way is fine",
+    "两者都行", "两个都行", "两种都行", "两个都可以",
 )
 _PREFERENCE_BOTH_WEAK_KEYWORDS = (
     # 弱信号：需要上下文里出现价格/质量才算

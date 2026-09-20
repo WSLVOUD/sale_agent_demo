@@ -80,6 +80,170 @@ INDOOR_ROOM_JSON = """
 """
 
 
+class TestInstallationPrompt:
+    """客户口径（2026-09-18）：图片识别还要判断"固定安装（长期不动）还是租赁（快拆快装）"。"""
+
+    def test_prompt_covers_fixed_vs_rental_cues(self):
+        from src.vision.prompts import VISION_SYSTEM_PROMPT
+
+        text = VISION_SYSTEM_PROMPT
+        assert "installation" in text
+        # 租赁（快拆快装）的判断线索
+        for token in ("rental", "快锁", "桁架", "航空箱"):
+            assert token in text, token
+        # 固定安装（长期不动）的判断线索
+        for token in ("fixed", "嵌入墙体", "钢结构"):
+            assert token in text, token
+        # 看不出来必须 null / 只能写 inferred（后面还会跟客户核对）
+        assert "vision_inferred" in text
+        assert "null" in text
+
+    def test_user_prompt_also_reminds_installation(self):
+        """实测：模型最容易漏 installation（倾向直接 null）→ 用户提示词末尾再提醒一次。"""
+        from src.vision.prompts import build_user_prompt
+
+        prompt = build_user_prompt("看看这个屏")
+        assert "installation" in prompt
+        assert "rental" in prompt and "fixed" in prompt
+        assert "null" in prompt
+        # 没带文字时也要带上提醒
+        assert "installation" in build_user_prompt("")
+
+
+class TestInstallationRecognition:
+    """实测反馈：图片识别不给"永久固定安装 / 快装快拆租赁"。
+
+    两层原因都修了：
+      1. 提示词把 installation 明确成"必须判断"，并给了两边的判断线索；
+      2. 解析层的线索表补上了"快装/快拆/快锁/桁架/航空箱/钢结构…"，
+         且英文按整词匹配（避免 "installation" 里的 "install" 误判成 fixed）。
+    """
+
+    @pytest.mark.parametrize("value", [
+        "rental", "temporarily installed", "quick-lock cabinet", "quick release panels",
+        "mounted on truss", "flight case next to it", "portable event panel",
+        "快装快拆", "快锁箱体", "桁架吊挂", "旁边有航空箱", "临时搭建",
+    ])
+    def test_rental_cues(self, value):
+        result = VisionExtractor.from_payload({"installation": value})
+        assert result.installation is not None, value
+        assert result.installation.value == "rental", value
+
+    @pytest.mark.parametrize("value", [
+        "fixed", "permanent", "fixed installation", "permanently installed",
+        "embedded in the wall", "flush mounted in wall", "steel structure below the screen",
+        "wall mounted bracket", "永久固定安装", "固定安装", "嵌入墙体", "钢结构立柱",
+    ])
+    def test_fixed_cues(self, value):
+        result = VisionExtractor.from_payload({"installation": value})
+        assert result.installation is not None, value
+        assert result.installation.value == "fixed", value
+
+    def test_install_word_alone_does_not_mean_fixed(self):
+        """"installation: rental" 不能被 "install" 抢成 fixed（最长键 + 整词匹配）。"""
+        result = VisionExtractor.from_payload(
+            {"installation": {"value": "installation: rental", "source": "vision_explicit"}}
+        )
+        assert result.installation.value == "rental"
+        assert VisionExtractor.from_payload({"installation": "installation"}).installation is None
+
+    def test_evidence_is_used_when_value_is_the_cue_text(self):
+        """模型把线索原文当 value 返回时，仍然要能落成 fixed/rental。"""
+        result = VisionExtractor.from_payload({
+            "installation": {
+                "value": "steel structure below the screen",
+                "confidence": 0.6,
+                "source": "vision_inferred",
+                "evidence": "steel structure below the screen",
+            }
+        })
+        assert result.installation.value == "fixed"
+        assert result.installation.source == "vision_inferred"
+
+    def test_no_cue_stays_null(self):
+        assert VisionExtractor.from_payload({"installation": None}).installation is None
+        assert VisionExtractor.from_payload(
+            {"installation": {"value": None, "evidence": "no mounting structure visible"}}
+        ).installation is None
+
+    @pytest.mark.parametrize("notes,expected", [
+        ("LED wall mounted on a steel frame above the stage", "fixed"),
+        ("rental panels with quick locks and flight cases beside them", "rental"),
+        ("a big screen on the wall", None),
+    ])
+    def test_notes_can_decide_installation(self, notes, expected):
+        """模型把安装结构写在一句话描述（notes）里时，也要能用上。
+
+        从描述里推出来的只能算"推测"，不能算图片明确可见。
+        """
+        result = VisionExtractor.from_payload({"installation": None, "notes": notes})
+        if expected is None:
+            assert result.installation is None, notes
+        else:
+            assert result.installation.value == expected, notes
+            assert result.installation.source == "vision_inferred", notes
+
+    def test_low_confidence_explicit_is_downgraded(self):
+        """低置信度的"明确可见"要降级为推测 → Gate 会再问客户一次（图片判断可能看错）。"""
+        result = VisionExtractor.from_payload({
+            "environment": {"value": "indoor", "confidence": 0.9, "source": "vision_explicit",
+                            "evidence": "ceiling"},
+            "installation": {"value": "rental", "confidence": 0.4, "source": "vision_explicit",
+                             "evidence": "truss"},
+        })
+        assert result.installation.value == "rental"
+        assert result.installation.source == "vision_inferred"
+        merged, _ = apply_vision_to_profile(RequirementProfile(), result)
+        assert "installation" in check_recommendation_ready(merged).missing
+
+    def test_high_confidence_explicit_is_kept(self):
+        result = VisionExtractor.from_payload({
+            "installation": {"value": "fixed", "confidence": 0.95, "source": "vision_explicit",
+                             "evidence": "flush mounted in wall"},
+        })
+        assert result.installation.source == "vision_explicit"
+
+    @pytest.mark.parametrize("source", ["vision_explicit", "vision_inferred"])
+    def test_profile_merge_and_customer_confirmation(self, source):
+        """图片判定的安装方式要进档案，并在"跟客户核对"那一句里说出来。"""
+        from src.rag.reply_composer import vision_confirmation_sentence
+
+        result = VisionExtractor.from_payload({
+            "environment": {"value": "indoor", "confidence": 0.9, "source": "vision_explicit",
+                            "evidence": "ceiling"},
+            "installation": {"value": "快装快拆", "confidence": 0.8, "source": source,
+                             "evidence": "快锁箱体"},
+        })
+        merged, _ = apply_vision_to_profile(RequirementProfile(), result)
+        assert merged.installation == "rental"
+        assert merged.sources["installation"] == source
+        assert "installation" in merged.vision_confirmation_pending
+        sentence = vision_confirmation_sentence(merged, "en", 0)
+        assert "rental setup" in sentence, sentence
+
+    def test_inferred_installation_still_asked_by_gate(self):
+        """只是"推测"（vision_inferred）→ 不能算客户确认，Gate 仍要问固装/租赁。"""
+        result = VisionExtractor.from_payload({
+            "environment": {"value": "indoor", "confidence": 0.9, "source": "vision_explicit",
+                            "evidence": "ceiling"},
+            "installation": {"value": "rental", "confidence": 0.6, "source": "vision_inferred",
+                             "evidence": "quick-lock edges"},
+        })
+        merged, _ = apply_vision_to_profile(RequirementProfile(), result)
+        assert "installation" in check_recommendation_ready(merged).missing
+
+    def test_visually_explicit_installation_is_settled(self):
+        result = VisionExtractor.from_payload({
+            "environment": {"value": "indoor", "confidence": 0.9, "source": "vision_explicit",
+                            "evidence": "ceiling"},
+            "installation": {"value": "fixed", "confidence": 0.9, "source": "vision_explicit",
+                             "evidence": "flush mounted in wall"},
+        })
+        merged, _ = apply_vision_to_profile(RequirementProfile(), result)
+        # 图片明确可见 → 不用再单独问安装方式（但会跟客户核对一次）
+        assert "installation" not in check_recommendation_ready(merged).missing
+
+
 class TestParseResponse:
     def test_parses_fenced_json_with_prefix(self):
         payload = parse_vision_json("Here is the result:\n```json\n{\"a\": 1}\n```")
@@ -328,8 +492,10 @@ class TestGateWithVision:
         decision = check_recommendation_ready(self._profile_with_vision())
         assert decision.ready is False
         assert decision.status == "CONTINUE_ASKING"
-        # 图片看不清的项必须继续问（安装方式 / 观看距离）
-        assert "viewing_distance" in decision.missing
+        # 客户口径（2026-09-18）：硬性条件 = 室内外 / 固装租赁 / P值 / 尺寸。
+        # 图片能确定室内外，但"固装租赁 / P值 / 尺寸"仍要跟客户确认。
+        assert "installation" in decision.missing
+        assert {"pixel_pitch", "size"} & set(decision.missing)
 
     def test_clearly_visible_fields_are_not_asked_again(self):
         profile = self._profile_with_vision()

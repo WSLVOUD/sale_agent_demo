@@ -168,8 +168,8 @@ def _build_product_summary(products: list[dict]) -> str:
 
 _SALES_TEMPLATES: dict[str, str] = {
     "greeting": "Hello! I'm your LED display advisor. How can I help you today?",
-    "warranty": "We offer 1-2 years of warranty. Warranty duration varies by product series: {warranty_info}. Feel free to reach out if you have any questions.",
-    "objection_price": "I understand your concern about price. Our products stand out for:\n1. Kinglight LEDs: top quality, long lifespan\n2. 2-year warranty: industry-leading\n3. Full technical support: installation, commissioning, and maintenance\n\nCompared to lower-priced options, we focus on long-term value and stability. What matters most to you?",
+    "warranty": "Our products come with a 1-year warranty by default, and the warranty can be extended for an additional fee. Let me know if you'd like the details.",
+    "objection_price": "I understand your concern about price. Our products stand out for:\n1. Kinglight LEDs: top quality, long lifespan\n2. Full technical support: installation, commissioning, and maintenance\n3. Direct factory supply: no middleman, so the cost stays competitive\n\nCompared to lower-priced options, we focus on long-term value and stability. What matters most to you?",
     "objection_compare": "Our products have these key differentiators:\n1. COB technology: waterproof and impact-resistant, great for demanding environments\n2. HDR support: more vivid picture quality\n3. Kinglight LEDs: accurate colors, longer lifespan\n\nWhich specs matter most to you? Let me help you compare.",
     "small_talk": "Thanks for reaching out! We carry the full range: LED, LCD, and IFP displays. Do you have a specific use case in mind? Let me help you find the right fit.",
 }
@@ -178,13 +178,6 @@ _SALES_TEMPLATES: dict[str, str] = {
 def _select_template(template_type: str, **kwargs) -> str:
     """选择并填充销售模板。"""
     template = _SALES_TEMPLATES.get(template_type, _SALES_TEMPLATES["small_talk"])
-
-    if template_type == "warranty":
-        template = template.replace(
-            "{warranty_info}",
-            "TW11 series: 1 year, TW21/TW31 series: 2 years"
-        )
-
     return template
 
 

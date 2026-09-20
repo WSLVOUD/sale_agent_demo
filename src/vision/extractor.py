@@ -49,11 +49,47 @@ _ENVIRONMENT_ALIASES = {
 }
 
 _INSTALLATION_ALIASES = {
-    "fixed": "fixed", "permanent": "fixed", "install": "fixed", "fixed installation": "fixed",
-    "固定": "fixed", "固装": "fixed", "永久": "fixed",
-    "rental": "rental", "rent": "rental", "event": "rental", "temporary": "rental",
-    "租赁": "rental", "租用": "rental", "临时": "rental",
+    # ── rental：租赁 / 快拆快装（客户口径）──────────────────────────────
+    "quick-lock": "rental", "quick lock": "rental", "quicklock": "rental",
+    "quick-release": "rental", "quick release": "rental",
+    "quick install": "rental", "quick installation": "rental",
+    "quick assemble": "rental", "quick-assemble": "rental", "fast install": "rental",
+    "fly case": "rental", "flight case": "rental", "road case": "rental",
+    "truss": "rental", "on truss": "rental", "truss mount": "rental",
+    "portable": "rental", "detachable": "rental", "removable": "rental",
+    "temporary": "rental", "temporarily": "rental", "rental": "rental", "rent": "rental",
+    "event": "rental", "touring": "rental", "tour rig": "rental",
+    "快装": "rental", "快拆": "rental", "快锁": "rental", "快装快拆": "rental",
+    "租赁": "rental", "租用": "rental", "临时": "rental", "便携": "rental",
+    "桁架": "rental", "航空箱": "rental", "运输箱": "rental",
+    "巡演": "rental", "可拆装": "rental", "可移动": "rental",
+    # ── fixed：固定安装 / 长期不动 ─────────────────────────────────────
+    "fixed installation": "fixed", "permanently installed": "fixed",
+    "wall-mounted": "fixed", "wall mounted": "fixed", "wall mount": "fixed",
+    "embedded": "fixed", "built-in": "fixed", "built in": "fixed",
+    "recessed": "fixed", "flush mounted": "fixed", "long-term": "fixed",
+    "steel structure": "fixed", "steel frame": "fixed", "steel beam": "fixed",
+    "metal frame": "fixed", "column mounted": "fixed", "pole mounted": "fixed",
+    "mast mounted": "fixed", "ground mounted": "fixed", "bolted": "fixed",
+    "anchored": "fixed", "screwed to the wall": "fixed",
+    "fixed": "fixed", "permanent": "fixed",
+    "固定安装": "fixed", "永久固定": "fixed", "固定": "fixed", "固装": "fixed",
+    "永久": "fixed", "嵌入": "fixed", "嵌墙": "fixed", "钢结构": "fixed",
+    "立柱": "fixed", "长期": "fixed", "壁挂": "fixed", "挂墙": "fixed",
 }
+
+
+def _alias_hit(text: str, key: str) -> bool:
+    """别名命中判断：英文按**整词**匹配（允许 "wall-mounted"/"wall mounted"），
+
+    中文按子串匹配。整词匹配可以避免 "installation" 里的 "install"、
+    "parent" 里的 "rent" 这类误判。
+    """
+    if key and all(ord(ch) < 128 for ch in key) and any(ch.isalpha() for ch in key):
+        parts = [re.escape(part) for part in re.split(r"[\s\-]+", key) if part]
+        pattern = r"(?<![a-z])" + r"[-\s]*".join(parts) + r"(?![a-z])"
+        return bool(re.search(pattern, text))
+    return bool(key) and key in text
 
 _SPECIAL_ALIASES = {
     "waterproof": "waterproof", "防水": "waterproof", "ip65": "waterproof", "ip66": "waterproof",
@@ -285,7 +321,12 @@ class VisionExtractor:
         }
         data: Dict[str, Any] = {}
         for name, normalizer in core.items():
-            field = cls._coerce_field(payload.get(name), normalizer)
+            if name == "installation":
+                field = cls._coerce_installation(
+                    payload.get(name), notes=payload.get("notes")
+                )
+            else:
+                field = cls._coerce_field(payload.get(name), normalizer)
             if field is not None:
                 data[name] = field
 
@@ -340,6 +381,56 @@ class VisionExtractor:
             evidence=evidence,
         )
 
+    @classmethod
+    def _coerce_installation(cls, raw: Any, notes: Any = None) -> Optional[VisionField]:
+        """installation 专用：模型把线索原文当值返回时，再从 evidence 里兜底解析一次。
+
+        实测风险：模型可能返回
+            {"value": "steel structure below the screen", "evidence": "steel structure"}
+        或者 value 写成 "快装快拆" 这类线索词 —— 只要 evidence / value 里能识别出
+        fixed / rental 线索，就正常落库；两边都认不出才丢弃（交给客户确认）。
+
+        另外两条保护：
+          - 模型的 notes（一句话描述）里写了安装结构时，也拿来判断；
+          - confidence 很低的 "vision_explicit" 降级为 vision_inferred ——
+            图片判断本来就可能看错，低置信时让 Gate 再问客户一次更安全。
+        """
+        field = cls._coerce_field(raw, cls._installation)
+        if field is not None:
+            if field.source == VISION_EXPLICIT and field.confidence < 0.6:
+                logger.info(
+                    "Vision installation downgraded to inferred (confidence=%.2f): %s",
+                    field.confidence, field.value,
+                )
+                return VisionField(
+                    value=field.value,
+                    confidence=field.confidence,
+                    source=VISION_INFERRED,  # type: ignore[arg-type]
+                    evidence=field.evidence,
+                )
+            return field
+
+        candidates: List[Any] = []
+        if isinstance(raw, dict):
+            candidates.extend([raw.get("evidence"), raw.get("value")])
+        candidates.append(notes)
+        for candidate in candidates:
+            canonical = cls._installation(candidate)
+            if canonical:
+                logger.info(
+                    "Vision installation resolved from evidence: %r -> %s",
+                    candidate, canonical,
+                )
+                base: Dict[str, Any] = dict(raw) if isinstance(raw, dict) else {}
+                base["value"] = canonical
+                if candidate is notes:
+                    # 从"整体描述"里推出来的 → 只能算推断，绝不能当成图片明确可见
+                    base["source"] = VISION_INFERRED
+                    base["confidence"] = 0.5
+                    base["evidence"] = str(notes)[:200]
+                return cls._coerce_field(base, cls._installation)
+        return None
+
     @staticmethod
     def _display_type(value: Any) -> Optional[str]:
         text = str(value or "").strip().upper()
@@ -362,12 +453,16 @@ class VisionExtractor:
 
     @staticmethod
     def _installation(value: Any) -> Optional[str]:
+        """安装方式标准化：**最长的键优先**，避免 "installation" 里的 "install" 之类误判。
+
+        客户口径：fixed = 永久固定不动；rental = 快装快拆（可整体拆走）。
+        """
         text = str(value or "").strip().lower()
-        if text in _INSTALLATION_ALIASES:
-            return _INSTALLATION_ALIASES[text]
-        for key, canonical in _INSTALLATION_ALIASES.items():
-            if key and key in text:
-                return canonical
+        if not text:
+            return None
+        for key in sorted(_INSTALLATION_ALIASES, key=len, reverse=True):
+            if _alias_hit(text, key):
+                return _INSTALLATION_ALIASES[key]
         return None
 
     @staticmethod

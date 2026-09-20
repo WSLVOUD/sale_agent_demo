@@ -18,6 +18,11 @@ from src.config import config
 
 logger = logging.getLogger(__name__)
 
+# Chroma 遥测日志（未配置遥测时 posthog 会报 capture() 参数错误）—— 直接静音，
+# 避免每次启动/重建都刷一屏 ERROR。
+logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
+logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
+
 # Phase 11: 全局缓存（线程安全）— 避免每次请求都重新加载 Embedding 模型
 _embeddings_singleton: Optional[HuggingFaceEmbeddings] = None
 _embeddings_lock = threading.Lock()
@@ -42,6 +47,10 @@ def get_embeddings():
             # Double-check after acquiring lock
             return _embeddings_singleton
 
+        # transformers / sentence-transformers 加载时可能重置 warnings 过滤器
+        from src.config import silence_deprecation_noise
+
+        silence_deprecation_noise()
         model_path = config.EMBEDDING_MODEL_PATH
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -180,11 +189,19 @@ def recreate_vectorstore(documents: List[Document], persist_dir: str = None, col
     target_parent.mkdir(parents=True, exist_ok=True)
     logger.info("Recreating vector store at %s with %d documents", persist_dir, len(documents))
 
-    fallback = target_parent / f"{target.name}_rebuilt"
+    # 回退目录名要**稳定**：不能每次都在上一次的名字后面再拼 "_rebuilt"
+    # （否则会攒出 vectorstore_rebuilt_rebuilt…，每次启动都重复嵌入一遍）。
+    base_name = target.name
+    while base_name.endswith("_rebuilt"):
+        base_name = base_name[: -len("_rebuilt")]
+    fallback = target_parent / f"{base_name}_rebuilt"
     if fallback.exists():
         shutil.rmtree(fallback, ignore_errors=True)
 
     sqlite_path = target / "chroma.sqlite3"
+    # 关键：先把进程内的 Chroma 连接放掉，否则 Windows 上 chroma.sqlite3 会被自己锁住，
+    # 永远删不掉，只能一直往 "_rebuilt" 目录里重建。
+    _release_vectorstore_handles()
     can_reuse_target = (not sqlite_path.exists()) or _try_remove(sqlite_path)
 
     if can_reuse_target:
@@ -215,6 +232,26 @@ def recreate_vectorstore(documents: List[Document], persist_dir: str = None, col
     return instance
 
 
+def _release_vectorstore_handles() -> None:
+    """释放进程内 Chroma 客户端/SQLite 句柄（Windows 上才能删除向量库文件）。"""
+    global _vectorstore_singleton
+    if _vectorstore_singleton is not None:
+        try:
+            client = getattr(_vectorstore_singleton, "_client", None)
+            if client is not None and hasattr(client, "reset"):
+                client.reset()
+        except Exception as error:  # pragma: no cover - 防御式
+            logger.debug("Chroma reset before rebuild failed: %s", error)
+    _vectorstore_singleton = None
+    try:
+        from chromadb.api.shared_system_client import SharedSystemClient
+
+        SharedSystemClient.clear_system_cache()
+    except Exception as error:  # pragma: no cover - 防御式
+        logger.debug("clear_system_cache failed: %s", error)
+    gc.collect()
+
+
 def _try_remove(path: Path) -> bool:
     """Try to delete ``path``, swallowing Windows file-lock errors."""
     try:
@@ -227,6 +264,9 @@ def _try_remove(path: Path) -> bool:
 
 def _build_vectorstore(documents: List[Document], persist_dir: str, collection_name: Optional[str] = None) -> Chroma:
     """Create a Chroma collection at ``persist_dir`` and persist it eagerly."""
+    from src.config import silence_deprecation_noise
+
+    silence_deprecation_noise()
     embeddings = get_embeddings()
     chroma_kwargs: Dict[str, Any] = {"embedding": embeddings, "persist_directory": persist_dir}
     if collection_name:

@@ -204,6 +204,33 @@ def sanitize_customer_response(text: str, *, outdoor: bool = False) -> str:
     if not text:
         return text
 
+    # 客户口径（2026-09-18）：所有发给客户的话术统一过一遍"去僵硬"清洗 ——
+    #   ① 不许出现破折号 "—" / "–"（改成逗号）
+    #   ② 去掉固定的过渡词和客套开头（Got it / With that in mind / In the meantime /
+    #      No worries at all / On that note / Now, / By the way / That said）
+    # 放在这里是因为接话、问句、推荐话术都会经过这道清洗，一处覆盖全部路径。
+    text = str(text).replace("—", ", ").replace("–", ", ")
+    for _stiff in (
+        "With that in mind,", "That said,", "On that note,", "By the way,",
+        "In the meantime,", "Now,", "Got it,", "Got it.", "No worries at all,",
+        "No worries,", "No problem,", "No rush,",
+        "whenever you're ready.", "whenever you are ready.", "take your time.",
+    ):
+        if _stiff in text:
+            text = text.replace(_stiff, "")
+    text = re.sub(r"^[\s,，]+", "", text)
+    # 只压缩连续空格/制表符，保留换行 —— 否则多屏回复的 "Screen 1 / Screen 2"
+    # 会被并成一行，且整段当成一个句子处理（实测 bug）。
+    text = re.sub(r"[ \t]{2,}", " ", text).replace(" ,", ",")
+    # 去掉固定铺垫后句子会变成小写开头，这里把每句首字母重新大写
+    text = re.sub(
+        r"(^|[.!?]\s+)([a-z])",
+        lambda m: m.group(1) + m.group(2).upper(),
+        text,
+    ).strip()
+    if not text:
+        return text
+
     # 【客户口径】不允许对客户说"找不到 / 没有匹配的产品"：
     # 一旦出现这类话术，整段替换成"能不能放宽某个参数"的邀请（多种说法轮换）。
     try:
@@ -217,7 +244,9 @@ def sanitize_customer_response(text: str, *, outdoor: bool = False) -> str:
 
     kept_lines = []
     for line in str(text).splitlines():
-        sentences = re.split(r"(?<=[。！？!?])", line)
+        # 英文句子以 ". " 结尾（P2.5 这类小数点后面没有空格，不会被拆开）；
+        # 中文 / 感叹 / 问句仍按标点切分。
+        sentences = re.split(r"(?<=[。！？!?])|(?<=\.)\s+", line)
         kept_sentences = []
         for sentence in sentences:
             sentence = sentence.strip()
@@ -228,7 +257,8 @@ def sanitize_customer_response(text: str, *, outdoor: bool = False) -> str:
             if outdoor and _INDOOR_PRODUCT_RE.search(sentence):
                 continue
             kept_sentences.append(sentence)
-        cleaned_line = "".join(kept_sentences).strip()
+        # 用空格接回（英文句子之间需要空格），中文标点后的空格去掉
+        cleaned_line = re.sub(r"([。！？])\s+", r"\1", " ".join(kept_sentences)).strip()
         if cleaned_line:
             kept_lines.append(cleaned_line)
     return "\n".join(kept_lines).strip()

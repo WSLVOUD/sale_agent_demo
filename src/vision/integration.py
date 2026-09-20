@@ -177,9 +177,13 @@ def resolve_vision_confirmation(profile, message: str) -> Dict[str, Any]:
       - 客户说"对/是的" → 这些字段升级为**客户确认**（sources 从 vision_explicit → confirmed）；
       - 客户给了不同的值（"不是，是室外的"）→ 客户的值本来就已经按"客户优先"合并进档案，
         这里额外记一条纠正记录，便于回溯"图片说的 vs 客户说的"；
-      - 客户没回应就跳过，不再重复追问同一件事。
+      - 客户没纠正（没提这一项）→ **视为接受**（`accepted`）：因为识别结果已经摆在上一轮的
+        回复里请他核对了，再问一次就是重复 —— 实测客户反馈："你都说识别出是固定安装了，
+        为什么还问我固装还是租赁？"
     """
-    stats: Dict[str, Any] = {"confirmed": [], "corrected": [], "skipped": False}
+    stats: Dict[str, Any] = {
+        "confirmed": [], "accepted": [], "corrected": [], "skipped": False,
+    }
     if profile is None:
         return stats
     pending = list(getattr(profile, "vision_confirmation_pending", None) or [])
@@ -205,16 +209,22 @@ def resolve_vision_confirmation(profile, message: str) -> Dict[str, Any]:
                     corrections.append(note)
                 stats["corrected"].append(field)
                 logger.info("Vision correction on %s: image=%s → customer=%s", field, asserted, value)
-            elif affirmed and source == "vision_explicit":
+            elif affirmed:
                 sources[field] = "confirmed"
                 stats["confirmed"].append(field)
             continue
 
-        if affirmed and source == "vision_explicit":
-            sources[field] = "confirmed"
-            stats["confirmed"].append(field)
+        if source.startswith("vision"):
+            # 客户说"对" → 客户确认；客户没提这一项 → 视为"已核对过、没反对"（vision_accepted）。
+            # 两种都不再重复追问同一件事。
+            if affirmed:
+                sources[field] = "confirmed"
+                stats["confirmed"].append(field)
+            else:
+                sources[field] = "vision_accepted"
+                stats["accepted"].append(field)
 
-    if not stats["confirmed"] and not stats["corrected"]:
+    if not stats["confirmed"] and not stats["accepted"] and not stats["corrected"]:
         stats["skipped"] = True
 
     profile.sources = sources

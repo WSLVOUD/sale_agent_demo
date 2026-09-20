@@ -61,6 +61,29 @@ class TestScreenSizeUnits:
         assert b.get("target_width_mm") == 5000.0
         assert b.get("target_height_mm") == 3000.0
 
+    @pytest.mark.parametrize("text,width,height", [
+        # 客户口径（2026-09-18）：不是只有 "3*5" 才算尺寸，怎么写都要认
+        ("长是5，高是3", 5000.0, 3000.0),          # 中文方向词 + 无单位 → 默认按米
+        ("长5米，高3米", 5000.0, 3000.0),
+        ("宽是5米，高是3米", 5000.0, 3000.0),
+        ("高是3，长是5", 5000.0, 3000.0),
+        ("3米5米", 3000.0, 5000.0),                 # 两个尺寸连写、没有分隔符
+        ("3＊5", 3000.0, 5000.0),                   # 全角星号
+        ("width 3m height 5m", 3000.0, 5000.0),     # 英文方向词在前
+        ("3m wide 5m long", 5000.0, 3000.0),        # 数字在前（长→宽、宽→高）
+        ("长3米宽5米", 3000.0, 5000.0),
+        ("500cm x 300cm", 5000.0, 3000.0),
+    ])
+    def test_flexible_size_phrasings(self, text, width, height):
+        slots = extract_slots(text)
+        assert slots.get("target_width_mm") == pytest.approx(width), (text, slots)
+        assert slots.get("target_height_mm") == pytest.approx(height), (text, slots)
+
+    def test_size_never_crashes_on_odd_formats(self):
+        """奇怪的写法最多解析不出来（交给追问），绝不能抛异常。"""
+        for text in ("3 5", "尺寸的话", "五米乘三米", "3 meters 5", "???"):
+            extract_slots(text)
+
     def test_single_dimension(self):
         assert extract_slots("5米宽").get("target_width_mm") == 5000.0
         assert extract_slots("3米高").get("target_height_mm") == 3000.0
@@ -120,7 +143,8 @@ class TestRecommendNodeSizing:
         monkeypatch.setattr(recommend, "get_llm", lambda *a, **k: _Failing())
         result = recommend.recommend_node(self._state({}))
 
-        assert result["screen_calculation"] is None
+        # 客户口径：尺寸是硬性条件 → Gate 不放行，直接追问尺寸（还没进入计算）
+        assert result.get("screen_calculation") is None
         answer = result["recommendation"].lower()
         assert "width" in answer and "height" in answer, answer
 
@@ -155,6 +179,80 @@ class TestRecommendNodeSizing:
         slots = extract_slots("500cm x 300cm")
         result = recommend.recommend_node(self._state(slots))
         assert result["screen_calculation"]["cabinet_count"] == 56
+
+
+class TestTwoTilingOrientations:
+    """客户口径（2026-09-18）：箱体可以横拼也可以竖拼，推荐时必须两种都给。"""
+
+    def test_variants_have_different_layouts(self):
+        from src.tools.screen_calculator import calculate_screen_variants
+
+        variants = calculate_screen_variants("TW11-3216-P3.0", 5000, 3000)
+        assert set(variants) == {"landscape", "portrait"}
+        land, port = variants["landscape"], variants["portrait"]
+        # 横拼：箱体按原始方向（640x480）→ 8x7=56 箱
+        assert (land["columns"], land["rows"], land["cabinet_count"]) == (8, 7, 56)
+        assert (land["actual_width_m"], land["actual_height_m"]) == (5.12, 3.36)
+        # 竖拼：箱体旋转 90°（480x640）→ 11x5=55 箱，实际尺寸也不同
+        assert (port["columns"], port["rows"], port["cabinet_count"]) == (11, 5, 55)
+        assert (port["actual_width_m"], port["actual_height_m"]) == (5.28, 3.2)
+        assert port["orientation"] == "portrait"
+
+    def test_recommendation_mentions_both_layouts(self, monkeypatch):
+        import src.agents.solution.nodes.recommend as recommend
+
+        class _Failing:
+            def invoke(self, *args, **kwargs):
+                raise RuntimeError("offline")
+
+        monkeypatch.setattr(recommend, "get_llm", lambda *a, **k: _Failing())
+        state = {
+            "requirement": {},
+            "requirement_profile": _confirmed({
+                **RECOMMEND_READY,
+                "target_width_mm": 5000, "target_height_mm": 3000,
+            }),
+            "products": [],
+            "messages": [{"role": "user", "content": "church"}],
+            "current_message": "church",
+            "additional_requirements": [],
+        }
+        result = recommend.recommend_node(state)
+
+        answer = result["recommendation"]
+        assert result["screen_calculation_variants"]["portrait"]["cabinet_count"] == 55
+        # 两种排布的箱体数与实际尺寸都要出现（模板降级话术里也必须都有）
+        assert "56" in answer and "55" in answer, answer
+        assert "5.12" in answer and "5.28" in answer, answer
+
+    def test_prompt_demands_both_layouts(self, monkeypatch):
+        import src.agents.solution.nodes.recommend as recommend
+
+        captured = {}
+
+        class _Capture:
+            def invoke(self, prompt, *args, **kwargs):
+                captured["prompt"] = prompt if isinstance(prompt, str) else str(prompt)
+
+                class _R:
+                    content = "ok"
+                return _R()
+
+        monkeypatch.setattr(recommend, "get_llm", lambda *a, **k: _Capture())
+        from src.tools.screen_calculator import calculate_screen_variants
+
+        variants = calculate_screen_variants("TW11-3216-P3.0", 5000, 3000)
+        recommend._express_recommendation(
+            recommendations=[_TOP],
+            profile=_confirmed({**RECOMMEND_READY, "target_width_mm": 5000, "target_height_mm": 3000}),
+            calculation=variants["landscape"],
+            additional_requirements=[],
+            customer_text="church",
+            calculation_variants=variants,
+        )
+        prompt = captured["prompt"]
+        assert "BOTH tiling options" in prompt
+        assert "Horizontal tiling" in prompt and "Vertical tiling" in prompt
 
 
 class TestRecommendationWordingVaries:
@@ -236,6 +334,39 @@ class TestAlternativesReplyFormat:
                         "还有什么方案", "any other options?"):
             assert recommend._ALTERNATIVES_RE.search(message), message
         assert not recommend._ALTERNATIVES_RE.search("我需要便宜质量好的屏幕")
+
+    def test_another_recommendation_request_is_detected(self):
+        """客户说"另外帮我推荐一款"→ 换一个型号，不是重新采集需求。"""
+        import src.agents.solution.nodes.recommend as recommend
+
+        for message in ("另外帮我推荐一款", "另外推荐一款", "再帮我推荐一个",
+                        "recommend me another one"):
+            assert recommend._ALTERNATIVES_RE.search(message), message
+        assert not recommend._ALTERNATIVES_RE.search("我需要便宜质量好的屏幕")
+
+    def test_follow_up_skips_models_already_shown(self, monkeypatch):
+        """客户再要一个 → 给还没展示过的下一款，而不是把第二名重复一遍。"""
+        import src.agents.solution.nodes.recommend as recommend
+
+        class _Failing:
+            def invoke(self, *args, **kwargs):
+                raise RuntimeError("offline")
+
+        monkeypatch.setattr(recommend, "get_llm", lambda *a, **k: _Failing())
+
+        answer = recommend._express_recommendation(
+            recommendations=[_TOP, _ALT_BRIGHT, _ALT_PITCH],
+            profile=self._profile(),
+            calculation=None,
+            additional_requirements=[],
+            customer_text="再帮我推荐一个",
+            need_size_question=True,
+            follow_up=True,
+            previous_models=[_TOP["model"], _ALT_BRIGHT["model"]],
+        )
+        assert _ALT_PITCH["model"].lower() in answer.lower(), answer
+        assert _TOP["model"].lower() not in answer.lower(), answer
+        assert _ALT_BRIGHT["model"].lower() not in answer.lower(), answer
 
     def test_follow_up_switches_to_another_model(self, monkeypatch):
         """客户主动问"还有其他推荐吗" → 换一个型号（不是列一串条件式备选）。"""

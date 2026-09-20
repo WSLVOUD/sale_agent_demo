@@ -97,22 +97,29 @@ class TestRequirementProfile:
     def test_recommendation_ready_rules(self):
         # v2.0 Recommendation Ready Gate（见 src/rag/readiness.py）
         assert RequirementProfile.from_slots({"display_type": "LED"}).is_recommendation_ready() is False
-        # 客户明确给出技术规格 + 价格/质量取向 → 可推荐（v2.0 Case 4；客户口径：
-        # 推荐前要问过"最看重价格还是质量"）
+        # 客户口径（2026-09-18）：硬性条件（尺寸 / P值 / 室内外 / 固装租赁）齐 → 可推荐；
+        # 场景 / 内容类型 / 价格取向只记录、不阻塞。
         assert RequirementProfile.from_slots(
-            {"outdoor": True, "pixel_pitch": 2.5, "price_preference": "price"},
-            explicit_keys={"outdoor", "pixel_pitch", "price_preference"},
+            {
+                "environment": "outdoor", "installation": "fixed", "pixel_pitch": 2.5,
+                "target_width_mm": 5000, "target_height_mm": 3000,
+            },
+            explicit_keys={
+                "environment", "installation", "pixel_pitch",
+                "target_width_mm", "target_height_mm",
+            },
         ).is_recommendation_ready() is True
-        # v2.0 Case 2：室内外 + 场景仍然不够，需要安装方式与观看距离
+        # 只给室内外 → 仍然不够（缺固装租赁 / P值 / 尺寸）
         assert RequirementProfile.from_slots(
             {"environment": "indoor", "purpose": "conference"},
             explicit_keys={"environment", "purpose"},
         ).is_recommendation_ready() is False
-        # v2.0 Case 3：四类核心信息齐备（且均为客户明确给出）
+        # 硬性条件齐备（且均为客户明确给出）
         full = {
             "environment": "indoor", "purpose": "conference",
             "content_type": "mixed", "installation": "fixed", "viewing_distance_m": 5,
             "price_preference": "price",
+            "target_width_mm": 5000, "target_height_mm": 3000,
         }
         assert RequirementProfile.from_slots(full, explicit_keys=set(full)).is_recommendation_ready() is True
 
@@ -126,10 +133,8 @@ class TestRequirementProfile:
         profile = RequirementProfile.from_slots(guessed)
         decision = check_recommendation_ready(profile)
         assert decision.ready is False
-        # 现在 environment 也必须由客户明确说出，不能靠场景推断
-        assert set(decision.missing) == {
-            "environment", "content_type", "installation", "viewing_distance", "price_preference",
-        }
+        # 推断值不能算客户确认：室内外 / 固装租赁 / P值 / 尺寸 都必须问客户
+        assert set(decision.missing) >= {"environment", "installation", "pixel_pitch", "size"}
 
     def test_target_size_roundtrip(self):
         profile = RequirementProfile.from_slots({"target_width_mm": 5000, "target_height_mm": 3000})

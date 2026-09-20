@@ -68,6 +68,7 @@ def calculate_screen(
     target_width_mm: float,
     target_height_mm: float,
     data_dir: Optional[str] = None,
+    orientation: str = "landscape",
 ) -> Dict[str, Any]:
     """计算箱体 / 模组方案。
 
@@ -75,11 +76,16 @@ def calculate_screen(
         model: 实际销售型号，如 ``TW21-3216-P2.5``
         target_width_mm: 目标宽度（毫米）
         target_height_mm: 目标高度（毫米）
+        orientation: 箱体方向（客户口径：横拼 / 竖拼两种都要给）
+            ``landscape`` = 横拼（箱体按原始方向）
+            ``portrait``  = 竖拼（箱体旋转 90° 后拼装）
 
     Returns:
         dict，含列数、行数、箱体总数、实际尺寸、模组数量、分辨率、面积等。
     """
     product = get_model(model, data_dir)
+
+    portrait = str(orientation or "").lower().startswith(("port", "vert", "竖"))
 
     try:
         target_w = float(target_width_mm)
@@ -89,10 +95,12 @@ def calculate_screen(
     if target_w <= 0 or target_h <= 0:
         raise ValueError(f"目标尺寸必须为正数，收到 {target_w} x {target_h}")
 
-    cabinet_w = product.cabinet_width_mm
-    cabinet_h = product.cabinet_height_mm
+    cabinet_w = product.cabinet_height_mm if portrait else product.cabinet_width_mm
+    cabinet_h = product.cabinet_width_mm if portrait else product.cabinet_height_mm
     if not cabinet_w or not cabinet_h:
         raise ValueError(f"{model} 缺少箱体尺寸，无法计算")
+    module_w = product.module_height_mm if portrait else product.module_width_mm
+    module_h = product.module_width_mm if portrait else product.module_height_mm
 
     # 箱体排列：向上取整，保证覆盖客户目标尺寸
     columns = math.ceil(round(target_w / cabinet_w, 6))
@@ -116,6 +124,7 @@ def calculate_screen(
     result: Dict[str, Any] = {
         "model": product.model,
         "series_id": product.series_id,
+        "orientation": "portrait" if portrait else "landscape",
         "pixel_pitch_mm": pitch,
         "brightness_nit": product.brightness_nit,
         "environment": "outdoor" if product.outdoor else "indoor",
@@ -136,8 +145,8 @@ def calculate_screen(
         "actual_height_m": round(actual_h / 1000, 3),
         "area_sqm": area_sqm,
         # 模组
-        "module_width_mm": product.module_width_mm,
-        "module_height_mm": product.module_height_mm,
+        "module_width_mm": module_w,
+        "module_height_mm": module_h,
         "modules_per_cabinet": product.modules_per_cabinet,
         "total_modules": total_modules,
         # 分辨率
@@ -168,12 +177,39 @@ def format_screen_spec(calc: Dict[str, Any]) -> str:
     resolution_text = (
         f"{resolution[0]}x{resolution[1]}px" if resolution and resolution[0] else "n/a"
     )
+    label = (
+        "Vertical tiling (cabinets rotated 90 degrees)"
+        if calc.get("orientation") == "portrait"
+        else "Horizontal tiling"
+    )
     return (
-        f"{calc['model']}: {calc['columns']}x{calc['rows']} = {calc['cabinet_count']} cabinets, "
+        f"{label}: {calc['columns']}x{calc['rows']} = {calc['cabinet_count']} cabinets, "
         f"actual size {calc['actual_width_m']}m x {calc['actual_height_m']}m "
         f"({calc['area_sqm']} sqm), {calc['total_modules']} modules, "
         f"resolution {resolution_text}"
     )
+
+
+def calculate_screen_variants(
+    model: str,
+    target_width_mm: float,
+    target_height_mm: float,
+    data_dir: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """客户口径：同一个型号同时给"横拼 / 竖拼"两种排布方案。
+
+    横拼 = 箱体按原始方向拼（640x480mm）；竖拼 = 箱体旋转 90° 拼（480x640mm）。
+    两种方案的箱体数 / 实际尺寸通常不同，报价和安装方式也不同，必须都给客户。
+    """
+    variants: Dict[str, Dict[str, Any]] = {}
+    for key in ("landscape", "portrait"):
+        calc = calculate_screen(
+            model, target_width_mm, target_height_mm,
+            data_dir=data_dir, orientation=key,
+        )
+        calc["summary"] = format_screen_spec(calc)
+        variants[key] = calc
+    return variants
 
 
 def estimate_screen(
@@ -188,6 +224,7 @@ def estimate_screen(
 
 __all__ = [
     "calculate_screen",
+    "calculate_screen_variants",
     "estimate_screen",
     "format_screen_spec",
     "get_model",
