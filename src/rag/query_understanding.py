@@ -921,7 +921,7 @@ _AUDIENCE_RE = re.compile(
 _ROOM_AREA_RE = re.compile(
     r"(\d+(?:[.,]\d+)?)\s*"
     r"(?:sq\.?\s*m(?:etres?|eters?)?\.?|square\s*(?:metres?|meters?)|m2|m²|㎡|"
-    r"平米|平方米|个平方|平方)",
+    r"平米|平方米|个平方|平方|平)",
     re.IGNORECASE,
 )
 _ROOM_DEPTH_RES: Tuple["re.Pattern[str]", ...] = (
@@ -970,11 +970,123 @@ def _extract_space_facts(text: str) -> Dict[str, Any]:
         match = pattern.search(text)
         if not match:
             continue
+        # "the screen is 6m deep" 说的是屏，不是场地 → 不算场地纵深
+        if _screen_spoken_near(text, match.start()):
+            continue
         depth = _positive_number(match.group(1))
         if depth and 1 <= depth <= 200:
             facts["room_depth_m"] = round(float(depth), 2)
             break
     return facts
+
+
+# ── 场地尺寸（和"屏体尺寸"是两回事）─────────────────────────────────────────
+# 实测风险：客户说 "the room is 8m x 5m"（回答"场地多大"）时，旧解析会把它当成
+# **8×5m 的屏体**，算出完全错误的箱体。这里把"场地尺寸"单独识别出来，并从文本里
+# 挖掉，屏体尺寸继续按原来的规则解析（该问客户还是问客户）。
+_ROOM_CONTEXT_RE = re.compile(
+    r"\b(?:room|hall|venue|auditorium|lobby|space|floor)\b|房间|场地|屋里|大厅|空间|室内尺寸",
+    re.IGNORECASE,
+)
+_SCREEN_CONTEXT_RE = re.compile(
+    r"\b(?:screen|display|panel|video\s*wall|led\s*wall)\b|屏幕|屏体|显示屏|大屏",
+    re.IGNORECASE,
+)
+_DIM_PAIR_RE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(?:m|metres?|meters?|米)?\s*(?:x|×|✕|\*|by|乘)\s*"
+    r"(\d+(?:[.,]\d+)?)\s*(?:m|metres?|meters?|米)?",
+    re.IGNORECASE,
+)
+_ROOM_WIDE_RE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(?:m|metres?|meters?|米)?\s*(?:wide|宽|宽度)", re.IGNORECASE
+)
+_ROOM_DEEP_RE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(?:m|metres?|meters?|米)?\s*(?:deep|深|纵深|进深)",
+    re.IGNORECASE,
+)
+
+
+def _screen_spoken_near(text: str, position: int) -> bool:
+    """这个测量的上文是不是在说"屏幕"？"""
+    window = str(text or "")[max(0, position - 30): position]
+    return bool(_SCREEN_CONTEXT_RE.search(window))
+
+
+def _looks_like_room(text: str, position: int, implied: bool = False) -> bool:
+    """这个测量的上下文是在说"场地"吗（并且没说"屏幕"）？
+
+    ``implied=True``：整段话里出现了"深 / 纵深 / 进深"这类**只有场地才有**的说法
+    （屏幕不说"深"），于是同一段话里的"5 米宽"也按场地宽度理解。
+
+    判断用"最近的上下文词"：例如 "indoor fixed LED screen, the room is 8m x 5m"
+    里既出现 screen 又出现 room，但紧挨着数字的是 room → 按场地理解。
+    """
+    window = str(text or "")[max(0, position - 40): position]
+    room_hits = list(_ROOM_CONTEXT_RE.finditer(window))
+    screen_hits = list(_SCREEN_CONTEXT_RE.finditer(window))
+    last_screen = screen_hits[-1].start() if screen_hits else None
+    if room_hits and (last_screen is None or room_hits[-1].start() > last_screen):
+        return True
+    return implied and last_screen is None
+
+
+def _extract_room_dimensions(text: str) -> Tuple[Dict[str, Any], str]:
+    """抽出场地的宽 / 深，并把这些数字从文本里挖掉。
+
+    支持两种说法：
+
+        the room is 8m x 5m               → 面积 40㎡，纵深 8m
+        the hall is 10m wide and 6m deep  → 面积 60㎡，纵深 6m（"deep" 为准）
+        5米宽8米深                        → 同上
+
+    返回 ``(facts, masked_text)``：masked_text 里场地数字被空格替换，
+    后续"屏体尺寸"解析就不会把它误当成屏幕。
+    """
+    source = str(text or "")
+    facts: Dict[str, Any] = {}
+    masked = source
+    # "深 / 纵深 / 进深"本身就是场地词（屏幕不会说"深"）→ 同一段话按场地理解
+    implied_room = bool(_ROOM_DEEP_RE.search(source))
+    if not source or not (_ROOM_CONTEXT_RE.search(source) or implied_room):
+        return facts, masked
+
+    def _mask(start: int, end: int) -> None:
+        nonlocal masked
+        masked = masked[:start] + " " * (end - start) + masked[end:]
+
+    # ① "8m x 5m" 这种成对写法
+    for match in _DIM_PAIR_RE.finditer(source):
+        if not _looks_like_room(source, match.start(), implied=implied_room):
+            continue
+        first = _positive_number(match.group(1))
+        second = _positive_number(match.group(2))
+        if not first or not second:
+            continue
+        if not (1 <= first <= 100 and 1 <= second <= 100):
+            continue
+        wide, deep = max(first, second), min(first, second)
+        facts["room_area_sqm"] = round(float(wide * deep), 2)
+        facts["room_depth_m"] = round(float(wide), 2)
+        _mask(match.start(), match.end())
+        return facts, masked
+
+    # ② "10m wide … 6m deep" / "5米宽8米深"
+    width = depth = None
+    for match in _ROOM_WIDE_RE.finditer(source):
+        if _looks_like_room(source, match.start(), implied=implied_room):
+            width = _positive_number(match.group(1))
+            _mask(match.start(), match.end())
+            break
+    for match in _ROOM_DEEP_RE.finditer(source):
+        if _looks_like_room(source, match.start(), implied=implied_room):
+            depth = _positive_number(match.group(1))
+            _mask(match.start(), match.end())
+            break
+    if depth:
+        facts["room_depth_m"] = round(float(depth), 2)
+    if width and depth:
+        facts["room_area_sqm"] = round(float(width * depth), 2)
+    return facts, masked
 
 
 # ── 结果结构 ────────────────────────────────────────────────────────────────
@@ -1102,6 +1214,12 @@ def extract_slots(message: str) -> Dict[str, Any]:
         slots.setdefault("_default_slots", []).append("installation")
 
     # 5) 观看距离 / 目标尺寸
+    #    先摘出"场地尺寸"（房间/大厅多大）：那是场地，不是屏体 —— 摘掉之后
+    #    屏体尺寸仍然按原规则解析（客户没说屏多大就继续问客户）。
+    room_facts, text = _extract_room_dimensions(text)
+    if room_facts:
+        slots.update(room_facts)
+        logger.info("场地尺寸：%s（不计入屏体尺寸）", room_facts)
     distance = _extract_viewing_distance(text)
     if distance is not None:
         slots["viewing_distance_m"] = distance

@@ -54,6 +54,27 @@ class TestSpaceFactParsing:
     def test_room_area(self, message, expected):
         assert extract_slots(message).get("room_area_sqm") == pytest.approx(expected)
 
+    @pytest.mark.parametrize("message,expected_area,expected_depth", [
+        ("the room is 8m x 5m", 40, 8),
+        ("场地 8米x5米", 40, 8),
+        ("room 8m by 5m", 40, 8),
+        ("the hall is 10m wide and 6m deep", 60, 6),
+        ("5米宽8米深", 40, 8),
+    ])
+    def test_room_dimensions_are_not_the_screen(self, message, expected_area, expected_depth):
+        """场地尺寸 ≠ 屏体尺寸：不能把 8×5m 的**房间**当成 8×5m 的屏去算箱体。"""
+        slots = extract_slots(message)
+        assert slots.get("room_area_sqm") == pytest.approx(expected_area)
+        assert slots.get("room_depth_m") == pytest.approx(expected_depth)
+        assert "target_width_mm" not in slots, slots
+        assert "target_height_mm" not in slots, slots
+
+    def test_screen_dimensions_still_parse_as_screen(self):
+        """说了"屏幕"就还是屏体尺寸（别把屏当成房间）。"""
+        slots = extract_slots("the screen is 10m wide and 6m deep")
+        assert slots.get("target_width_mm") == pytest.approx(10000)
+        assert "room_depth_m" not in slots
+
     @pytest.mark.parametrize("message,expected", [
         ("the hall is 8 m deep", 8),
         ("room depth 12m", 12),
@@ -91,6 +112,12 @@ class TestViewingDistanceEstimation:
         small = estimate_viewing_distance({"audience_count": 50})
         large = estimate_viewing_distance({"audience_count": 100})
         assert large.farthest_m > small.farthest_m
+
+    def test_area_alone_is_enough(self):
+        """只知道面积也要能推（按座位区宽深比 2:1 → 进深 = √(面积÷2)）。"""
+        estimate = estimate_viewing_distance({"room_area_sqm": 50})
+        assert estimate.source == "room_area"
+        assert estimate.farthest_m == pytest.approx(4.5, abs=0.2)   # √25 − 0.5
 
     def test_area_source(self):
         estimate = estimate_viewing_distance({

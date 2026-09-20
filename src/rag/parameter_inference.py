@@ -242,6 +242,14 @@ def estimate_viewing_distance(facts: Dict[str, Any]) -> Optional[ViewingDistance
                 rows = max(1, int(round((float(people) / 2.0) ** 0.5)))
             farthest = rows * SEAT_ROW_DEPTH_M + FRONT_OFFSET_M
             source = "audience"
+    if farthest is None:
+        # 只知道面积（没有屏宽、没有人数）→ 按"座位区宽深比 2:1"估进深 = √(面积 ÷ 2)
+        area_only = facts.get("room_area_sqm")
+        if area_only:
+            derived_depth = (float(area_only) / 2.0) ** 0.5
+            if 1.0 <= derived_depth <= 200.0:
+                farthest = max(1.0, derived_depth - 0.5)
+                source = "room_area"
     if farthest is None and height_m:
         farthest = SCREEN_FAR_FACTOR * float(height_m)
         source = "screen_size"

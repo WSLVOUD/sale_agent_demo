@@ -1673,3 +1673,23 @@ DELEGATED 点间距 + 无视距 → 兜底档 → TW11-3216-P3.0（不再是 P1.
 测试：`tests/test_customer_response_intent.py`（拼写归一化）、`tests/test_deferred_fields.py`
 （问满上限守卫 / 环境问满转 BLOCK / 场地事实替代距离问题）、`tests/test_viewing_distance_derivation.py`
 （只有人数也能推）；全量 `python -m pytest tests/ -q` → **1190 passed, 4 skipped**。
+
+### 26.7.2 场地信息的解析补全（同日追加）
+
+客户回答"场地多大"时的说法必须接得住，而且**不能和屏体尺寸混在一起**：
+
+| 客户说法 | 解析结果 | 推导 | 推荐 |
+|---|---|---|---|
+| `the room is 25 sqm` / `大概 30 平` / `25㎡` / `25 m2` | 面积 | 无屏宽时进深 ≈ √(面积÷2) → 最远 3.0m | TW11-3216-P2.0 |
+| `the room is 8m x 5m` / `场地 8米x5米` / `room 8m by 5m` | 面积 40㎡ + 进深 8m | 最远 7.5m | TW11-3216-P3.0 |
+| `the hall is 10m wide and 6m deep` / `5米宽8米深` | 面积 60㎡ + 进深 6m | 最远 5.5m | TW11-3216-P3.0 |
+| `about 50 people` / `大约50个人` | 人数 | 座位区 2:1 → 5 排 → 最远 7.0m | TW11-3216-P3.0 |
+| `the screen is 10m wide and 6m deep` | **屏体尺寸**（不是场地） | 屏高 → 最近/最远 | 按屏尺寸推 |
+
+新增解析能力：面积支持 `平米 / 平方米 / ㎡ / m2 / sqm / square metres / 平（口语）`；
+场地尺寸支持"成对写法（x / × / by / 乘）"和"带方向词（wide / deep / 宽 / 深）"两种，
+并用"最近的上下文词"判断这句话说的是**房间**还是**屏幕**（`room/hall/场地/大厅` vs
+`screen/display/屏幕`）。命中场地时不写入屏体尺寸，屏体尺寸继续问客户。
+
+测试：`tests/test_viewing_distance_derivation.py`（新增 10 条，含"屏体尺寸不被误判为场地"
+与反向校验）；全量 `python -m pytest tests/ -q` → **1197 passed, 4 skipped**。
