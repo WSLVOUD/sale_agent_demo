@@ -659,23 +659,29 @@ def check_recommendation_ready(
             next_question=question_for(_first_missing(missing), language, variant_seed),
         )
 
-    # 0) 冲突（Phase 18）：客户明确说的与推断互相矛盾时不允许推荐
-    conflicts = list(getattr(profile, "conflicts", None) or [])
-    if conflicts:
-        missing = ["environment", "purpose", "installation", "viewing_distance"]
-        # 《智谱视觉接入计划》第十一阶段：图片推断与客户说法冲突时，
-        # 直接问**冲突的那一项**（例如图片像室内、客户说室外），而不是笼统问场景。
+    # 0) 冲突（v2.3 §9：Conflict 独立状态）—— 冲突未解决前禁止推荐
+    #    · 客户语义冲突（图片说室内、客户说室外…）：profile.conflicts
+    #    · 工程冲突（屏比房间还大、室内却要 P10…）：engineering.conflicts
+    from ..engineering import conflict_message, detect_engineering_conflicts
+
+    stored_conflicts = list(getattr(profile, "conflicts", None) or [])
+    engineering_conflicts = detect_engineering_conflicts(profile)
+    if stored_conflicts or engineering_conflicts:
+        # 图片推断与客户说法冲突时，直接问**冲突的那一项**，而不是笼统问场景。
         conflict_slot = next(
             (slot for slot in (getattr(profile, "conflict_slots", None) or []) if slot),
-            "purpose",
+            engineering_conflicts[0].slot if engineering_conflicts else "purpose",
         )
+        reasons = list(stored_conflicts) + [item.message for item in engineering_conflicts]
         return GateDecision(
-            ready=False, gate="recommendation", missing=missing,
-            reason="需求存在冲突，需要澄清：" + ", ".join(conflicts),
-            next_question=question_for(conflict_slot, language, variant_seed)
+            ready=False, gate="recommendation", missing=[conflict_slot],
+            reason="需求存在冲突，需要澄清：" + ", ".join(reasons),
+            next_question=conflict_message(profile)
+            or question_for(conflict_slot, language, variant_seed)
             or question_for("purpose", language, variant_seed),
-            status="CONTINUE_ASKING",
+            status="CONFLICT",
             unknown_slots=[],
+            blocked_slots=[conflict_slot],
         )
 
     # 1) 客户直接点名型号 / 系列

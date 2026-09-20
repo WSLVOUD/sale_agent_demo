@@ -73,16 +73,30 @@ def apply_vision_to_profile(
         if not isinstance(field, VisionField) or field.value in (None, "", [], {}):
             continue
 
+        # ── v2.3 §14：Vision 输出先过统一 Validation（字段 / 单位 / 范围）──────
+        # 非法值（例如荒谬的点间距 / 尺寸）不入档；这里不做"覆盖客户值"的判断，
+        # 那部分仍由下面的冲突逻辑处理（客户说过的值永远优先，并记录冲突）。
+        from ..rag.fact_validation import validate_incoming_facts
+
+        validated = validate_incoming_facts({name: field.value}, source="vision")
+        if name not in validated.accepted:
+            logger.info(
+                "Vision field %s=%r rejected by validation: %s",
+                name, field.value, validated.rejected.get(name),
+            )
+            continue
+        field_value = validated.accepted[name]
+
         current = getattr(profile, name, None)
         current_source = str(sources.get(name, "") or "")
 
         if current in (None, "", [], {}):
-            setattr(profile, name, field.value)
+            setattr(profile, name, field_value)
             sources[name] = field.source
             stats["merged_fields"] += 1
             continue
 
-        if field.value == current:
+        if field_value == current:
             # 图片与现有信息一致 → 只把来源升级（图片明确可见时）
             if _strength(field.source) > _strength(current_source):
                 sources[name] = field.source
@@ -91,17 +105,17 @@ def apply_vision_to_profile(
         if current_source in CONFIRMED_SOURCES:
             # 客户已经明说的 → 保留客户的值，记录冲突（第八 / 九阶段）
             slot = _conflict_slot(name)
-            message = f"customer said {current}, image suggests {field.value} ({slot})"
+            message = f"customer said {current}, image suggests {field_value} ({slot})"
             if message not in conflicts:
                 conflicts.append(message)
             if slot not in conflict_slots:
                 conflict_slots.append(slot)
             stats["conflict_count"] += 1
-            logger.info("Vision conflict on %s: keep customer=%s, image=%s", name, current, field.value)
+            logger.info("Vision conflict on %s: keep customer=%s, image=%s", name, current, field_value)
             continue
 
         if _strength(field.source) > _strength(current_source):
-            setattr(profile, name, field.value)
+            setattr(profile, name, field_value)
             sources[name] = field.source
             stats["merged_fields"] += 1
 

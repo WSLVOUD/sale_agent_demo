@@ -1,0 +1,101 @@
+"""v2.3 §4：Engineering Rule 的唯一入口。
+
+决策层的工程规则（观看距离推导、点间距窗口、屏体几何、产品约束、来源守卫、
+工程冲突、需求 A/B/C 分类）全部集中在本包；`parameter_inference.py` 只做协调调用。
+"""
+from .conflicts import (
+    EngineeringConflict,
+    conflict_message,
+    conflict_slots,
+    detect_engineering_conflicts,
+    has_conflict,
+)
+from .constants import (
+    BRIGHTNESS_BY_ENVIRONMENT,
+    DEFAULT_FALLBACK_PITCH_BAND,
+    DEFAULT_PITCH_TOLERANCE,
+    FALLBACK_PITCH_BAND,
+    FRONT_OFFSET_M,
+    INDOOR_PITCH_TABLE,
+    OUTDOOR_PITCH_TABLE,
+    PITCH_FAR_LIMIT_M_PER_MM,
+    PITCH_NEAR_LIMIT_M_PER_MM,
+    PITCH_OPTIMAL_M_PER_MM,
+    SCREEN_FAR_FACTOR,
+    SCREEN_NEAR_FACTOR,
+    SCREEN_SIZE_BY_DISTANCE,
+    SEAT_ROW_DEPTH_M,
+    SEAT_WIDTH_M,
+    VIEWING_DISTANCE_PITCH_TABLE,
+)
+from .constraints import brightness_range_for_environment, rental_from_facts
+from .pitch_window import (
+    fallback_pitch_band,
+    pitch_range_for_distance,
+    pitch_window_for_distances,
+    preferred_pitch_for_environment,
+)
+from .provenance import (
+    FieldValue,
+    ProvenanceReport,
+    build_provenance,
+    check_provenance,
+    slot_provenance,
+)
+from .requirement_classes import (
+    RequirementClassification,
+    classify_requirement,
+    semantic_only,
+)
+from .screen_geometry import screen_dims_m, screen_size_for_distance, suggest_screen_size
+from .viewing_distance import (
+    ViewingDistanceEstimate,
+    environment_from_facts,
+    estimate_viewing_distance,
+    parse_distance,
+)
+
+__all__ = [
+    "BRIGHTNESS_BY_ENVIRONMENT",
+    "DEFAULT_FALLBACK_PITCH_BAND",
+    "DEFAULT_PITCH_TOLERANCE",
+    "EngineeringConflict",
+    "FALLBACK_PITCH_BAND",
+    "FRONT_OFFSET_M",
+    "FieldValue",
+    "INDOOR_PITCH_TABLE",
+    "OUTDOOR_PITCH_TABLE",
+    "PITCH_FAR_LIMIT_M_PER_MM",
+    "PITCH_NEAR_LIMIT_M_PER_MM",
+    "PITCH_OPTIMAL_M_PER_MM",
+    "ProvenanceReport",
+    "RequirementClassification",
+    "SCREEN_FAR_FACTOR",
+    "SCREEN_NEAR_FACTOR",
+    "SCREEN_SIZE_BY_DISTANCE",
+    "SEAT_ROW_DEPTH_M",
+    "SEAT_WIDTH_M",
+    "VIEWING_DISTANCE_PITCH_TABLE",
+    "ViewingDistanceEstimate",
+    "brightness_range_for_environment",
+    "build_provenance",
+    "check_provenance",
+    "classify_requirement",
+    "conflict_message",
+    "conflict_slots",
+    "detect_engineering_conflicts",
+    "environment_from_facts",
+    "estimate_viewing_distance",
+    "fallback_pitch_band",
+    "has_conflict",
+    "parse_distance",
+    "pitch_range_for_distance",
+    "pitch_window_for_distances",
+    "preferred_pitch_for_environment",
+    "rental_from_facts",
+    "screen_dims_m",
+    "screen_size_for_distance",
+    "semantic_only",
+    "slot_provenance",
+    "suggest_screen_size",
+]

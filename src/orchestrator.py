@@ -535,6 +535,19 @@ class DualAgentOrchestrator:
         return result
 
     # ── 售后 / 服务类固定口径（说明书图纸 / 现场安装 / 质保）───────────────
+    def _response_coordinator(self):
+        """v2.3 §13：回复组装交给 ResponseCoordinator（Orchestrator 只做编排）。"""
+        coordinator = getattr(self, "_response_coordinator_instance", None)
+        if coordinator is None:
+            from .dialogue import ResponseCoordinator
+
+            coordinator = ResponseCoordinator(
+                store=getattr(self, "memory_store", None),
+                profile_lookup=self._stored_profile,
+            )
+            self._response_coordinator_instance = coordinator
+        return coordinator
+
     def _finalize_turn_response(self, result: Dict[str, Any], session_id: str, message: str) -> Dict[str, Any]:
         """本轮回复的最后两道加工（顺序固定）：
 
@@ -544,8 +557,11 @@ class DualAgentOrchestrator:
         实测 bug（客户日志）：客户只发了图片 + "i need this"，系统直接跳到问点间距，
         既没跟客户核对图片识别结果，客户也没机会纠正判错的"固定/租赁"。
         """
-        text = self._attach_service_faq(str(result.get("response") or ""), message)
-        text = self._attach_vision_confirmation(text, session_id, message)
+        text = self._response_coordinator().finalize(
+            str(result.get("response") or ""),
+            session_id=session_id,
+            message=message,
+        )
         if text:
             result["response"] = text
         return result

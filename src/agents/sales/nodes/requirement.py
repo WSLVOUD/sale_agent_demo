@@ -1029,6 +1029,43 @@ ack 的写法（很重要，销售不能只会追问）：
             # 其余意图（product_question / others）同样要产出待问项：
             # 由 orchestrator 把"回答客户问题"与"继续追问需求"拼成一句回复。
             if question and current_intent != "closing":
+                # v2.3 §10：提问只有一个出口 —— Question Planner 负责换说法 / 不重复
+                try:
+                    from ....dialogue import (
+                        get_conversation_state,
+                        plan_question,
+                        plan_response,
+                        stage_from_status,
+                    )
+
+                    conversation = get_conversation_state(_session_id)
+                    question_plan = plan_question(
+                        decision,
+                        profile,
+                        language="en",
+                        seed=_turn_seed,
+                        session_id=_session_id,
+                        conversation=conversation,
+                        slot=slot,
+                        question=question,
+                    )
+                    if question_plan.question:
+                        question = question_plan.question
+                        slot = question_plan.slot or slot
+                    response_plan = plan_response(
+                        decision, profile=profile, question_plan=question_plan
+                    )
+                    state["response_plan"] = response_plan.to_dict()
+                    conversation.note_turn(
+                        answer=current_msg_text,
+                        question=question,
+                        slot=slot,
+                        action=response_plan.action,
+                        intent=current_intent,
+                        stage=stage_from_status(decision.status),
+                    )
+                except Exception as exc:  # pragma: no cover - 表达层失败不影响追问
+                    logger.warning("Question/Response planning failed: %s", exc)
                 state["pending_question"] = question
                 state["pending_slot"] = slot
                 # Phase 5/6：记录"这一项已经问过一次"，下一轮最多再问一次；

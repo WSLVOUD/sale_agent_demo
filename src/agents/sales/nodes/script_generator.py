@@ -145,7 +145,25 @@ _QUESTION_POLISH_PROMPT = """你是 LED 显示屏产品的销售，正在微信�
 7. 不要保留草稿里那种固定铺垫（例如 "That's okay —"、
    "While we're at it,"、"Meanwhile —"），换成人话过渡；但不要跑题。
 8. 语言要求：{language_rule}
-9. 直接输出这段话，不要 JSON、不要引号、不要解释。"""
+9. 结构要求：{plan_rules}
+10. 直接输出这段话，不要 JSON、不要引号、不要解释。"""
+
+
+def _plan_rules_for_prompt(state: SalesState) -> str:
+    """v2.3 §19~§22：把 Response Planner 的表达结构翻译成给 LLM 的规则。"""
+    plan = state.get("response_plan") or {}
+    if not isinstance(plan, dict):
+        return "先自然接住客户这句话，再问这一个问题；不要像问卷，不要复述需求清单"
+    blocks = " → ".join(str(item) for item in (plan.get("blocks") or []))
+    parts = []
+    if blocks:
+        parts.append(f"按「{blocks}」的顺序组织这一段")
+    why = str(plan.get("why") or "").strip()
+    if why:
+        parts.append(f"用半句话说明为什么问它有用（{why}）")
+    parts.append("不要复述整份需求清单")
+    parts.append("不要像问卷，也不要连着问第二个问题")
+    return "；".join(parts)
 
 
 def _recent_question_texts(state: SalesState, limit: int = 3) -> str:
@@ -207,12 +225,14 @@ def _polish_question_message(
         message = str(state.get("current_message") or "")
         language = reply_language(message)
         llm = get_llm(temperature=_question_temperature())
+        plan_rules = _plan_rules_for_prompt(state)
         prompt = _QUESTION_POLISH_PROMPT.format(
             draft=draft,
             message=message[:200],
             requirement=state.get("requirements") or {},
             recent=_recent_question_texts(state),
             language_rule=response_language_rule(language),
+            plan_rules=plan_rules,
         )
         response = llm.invoke(prompt)
         text = response.content if hasattr(response, "content") else str(response)

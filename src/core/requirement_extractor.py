@@ -234,6 +234,21 @@ class RequirementExtractor:
         # 关键：规则解析器从**客户原话**里读出来的字段（尺寸/视距/点间距/明确关键词）
         # 本身就是客户说过的，必须算 explicit；只有它自己标了 inferred/default/
         # scenario_derived 的才算"系统推断"。
+        # ── v2.3 §14：统一 Validation ─────────────────────────────────────
+        # 非法字段 / 超范围数值 / 低优先级来源覆盖客户确认值 —— 一律不入档。
+        from ..rag.fact_validation import validate_incoming_facts
+
+        validation = validate_incoming_facts(
+            merged_slots,
+            source="llm" if llm_result else "rule",
+            profile=previous_profile,
+        )
+        if validation.rejected:
+            merged_slots = validation.accepted
+            logger.warning(
+                "[FactValidation] 丢弃非法字段：%s", validation.rejected
+            )
+
         rule_explicit = {k for k in rule_slots if not str(k).startswith("_")}
         for marker in ("_inferred_slots", "_default_slots", "_scenario_derived"):
             rule_explicit -= {str(x) for x in (rule_slots.get(marker) or [])}

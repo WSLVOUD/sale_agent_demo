@@ -2,7 +2,7 @@
 
 > 基于大模型（DeepSeek）的 LED/LCD/IFP 全品类显示产品智能销售助手，采用多 Agent 协作 + 混合检索（RAG）架构，为销售团队提供实时产品推荐和技术咨询能力。
 
-> **当前版本：v2.2.5（2026-09-20）** ｜ 全量测试：`python -m pytest tests/ -q` → **1261 passed, 4 skipped**
+> **当前版本：v2.3（2026-09-20）** ｜ 全量测试：`python -m pytest tests/ -q` → **1310 passed, 4 skipped**
 >
 > 当前行为口径集中在下面「当前行为口径」一节；历史版本的逐条变更见文末「变更明细」。
 
@@ -52,7 +52,34 @@ uvicorn src.api:app --port 8000
 
 ---
 
-## 当前行为口径（v2.2.5）
+## 当前行为口径（v2.3）
+
+### 0. 架构收敛（v2.3）
+
+```text
+RequirementProfile（唯一事实源）
+    ├── 字段值 + sources
+    ├── field_decisions（MISSING/CONFIRMED/INFERRED/UNKNOWN/DELEGATED/DECLINED/DEFERRED）
+    ├── conflicts / conflict_slots
+    └── FieldValue provenance（value / unit / source / status / confidence / formula_id）
+
+推荐唯一出口（src/rag/recommendation_coordinator.py）：
+    Conflict 检查 → Recommendation Gate → Engineering Derivation → Provenance Guard
+        → RecommendationEngine → Validation → Final Recommendation + 决策审计日志
+
+工程规则唯一来源：src/engineering/（constants / viewing_distance / pitch_window /
+    screen_geometry / constraints / provenance / conflicts / requirement_classes）
+```
+
+- **没有合法来源就不推荐**：点间距 / 室内外等关键参数必须能说清来源
+  （customer / confirmed / derived / inferred / vision）；凭空出现的值 → `REJECTED`。
+- **冲突独立状态**：如"屏比房间大""室内却要 P10" → `CONFLICT`，先澄清、不推荐。
+- **统一 Validation**：LLM / Vision 输出先过字段、单位、范围、来源、覆盖权限校验才入档。
+- **决策审计日志**：每条推荐记录 turn id / facts / decisions / 推导 / 约束 / Gate /
+  候选 / 被拒原因 / 选中型号 / provenance / 校验结果（`[DecisionAudit]` JSON）。
+- **对话层**：提问只有一个出口（Question Planner，自动换说法、不重复），
+  表达结构由 Response Planner 决定（ACKNOWLEDGE → EXPLAIN_WHY → ASK_ONE_QUESTION），
+  Conversation State 记住上一轮问了什么，推荐第一轮短、客户追问再展开。
 
 这一节描述**系统现在实际怎么说话、怎么决策**。实现的唯一入口是
 `src/rag/field_policy.py`（字段策略 + Action Planner）与 `src/rag/readiness.py`
@@ -155,6 +182,7 @@ uvicorn src.api:app --port 8000
 
 | 版本 | 内容 |
 |---|---|
+| v2.3 | 架构收敛：唯一事实源 + 统一工程规则 + Provenance Guard + 统一出口 + 统一 Validation + 冲突状态 + 决策审计 + 对话层（Response Planner / Conversation State） |
 | v2.2.5 | 客户说"不知道"先换下一问、最后一轮再问；服务口径自相矛盾清洗 |
 | v2.2.4 | 恢复使用场景 / 价位取向提问（硬性条件 vs 软问题分层）；Gate 回报 `next_slot` |
 | v2.2.3 | 追问话术不再漏出内部字段名；已有场地事实不再问观看距离 |
