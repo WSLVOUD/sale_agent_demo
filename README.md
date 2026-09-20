@@ -2,7 +2,7 @@
 
 > 基于大模型（DeepSeek）的 LED/LCD/IFP 全品类显示产品智能销售助手，采用多 Agent 协作 + 混合检索（RAG）架构，为销售团队提供实时产品推荐和技术咨询能力。
 
-> **当前版本：v2.3（2026-09-20）** ｜ 全量测试：`python -m pytest tests/ -q` → **1310 passed, 4 skipped**
+> **当前版本：v2.3.1（2026-09-20）** ｜ 全量测试：`python -m pytest tests/ -q` → **1329 passed, 4 skipped**
 >
 > 当前行为口径集中在下面「当前行为口径」一节；历史版本的逐条变更见文末「变更明细」。
 
@@ -52,9 +52,18 @@ uvicorn src.api:app --port 8000
 
 ---
 
-## 当前行为口径（v2.3）
+## 当前行为口径（v2.3.1）
 
-### 0. 架构收敛（v2.3）
+### 0. 架构收敛（v2.3 / v2.3.1）
+
+```text
+UserTurn → Orchestrator（只编排：1208 行 → 564 行）
+             ├── vision.pipeline        图片结果并进需求档案
+             ├── rag.multi_screen       多屏拆分 / 切换 / 共享 / 逐屏推荐
+             ├── Sales / Solution Agent（LangGraph，未改）
+             ├── rag.recommendation_coordinator  推荐唯一出口
+             └── dialogue.ResponseCoordinator    回复唯一出口
+```
 
 ```text
 RequirementProfile（唯一事实源）
@@ -71,6 +80,10 @@ RequirementProfile（唯一事实源）
     screen_geometry / constraints / provenance / conflicts / requirement_classes）
 ```
 
+- **Orchestrator 只做编排（v2.3.1）**：多屏业务在 `src/rag/multi_screen.py`、
+  Vision 接入在 `src/vision/pipeline.py`、性能埋点在 `src/observability/perf.py`、
+  回复组装在 `src/dialogue/response_coordinator.py`；旧方法保留同名薄包装（兼容层），
+  边界由 `tests/test_v231_orchestrator_boundary.py` 锁死。
 - **没有合法来源就不推荐**：点间距 / 室内外等关键参数必须能说清来源
   （customer / confirmed / derived / inferred / vision）；凭空出现的值 → `REJECTED`。
 - **冲突独立状态**：如"屏比房间大""室内却要 P10" → `CONFLICT`，先澄清、不推荐。
@@ -182,6 +195,7 @@ RequirementProfile（唯一事实源）
 
 | 版本 | 内容 |
 |---|---|
+| v2.3.1 | Orchestrator 职责收敛：多屏业务 / Vision 接入 / 性能埋点 / 回复组装迁出，Orchestrator 只编排（1208 → 564 行），旧接口保留兼容层 |
 | v2.3 | 架构收敛：唯一事实源 + 统一工程规则 + Provenance Guard + 统一出口 + 统一 Validation + 冲突状态 + 决策审计 + 对话层（Response Planner / Conversation State） |
 | v2.2.5 | 客户说"不知道"先换下一问、最后一轮再问；服务口径自相矛盾清洗 |
 | v2.2.4 | 恢复使用场景 / 价位取向提问（硬性条件 vs 软问题分层）；Gate 回报 `next_slot` |

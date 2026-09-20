@@ -76,6 +76,61 @@ class ResponseCoordinator:
         text = self.attach_vision_confirmation(text, session_id, message)
         return text
 
+    # ── 图片核对句（v2.3.1 从 Orchestrator 迁入）────────────────────────────
+    def vision_confirmation_sentence(self, session_id: str, message: str) -> str:
+        """图片识别结果的"跟客户核对"那一句（没有待确认字段时返回空串）。"""
+        if not session_id:
+            return ""
+        try:
+            profile = self._profile(session_id)
+            if profile is None or not getattr(profile, "vision_confirmation_pending", None):
+                return ""
+            from src.rag.reply_composer import reply_language, vision_confirmation_sentence
+
+            return vision_confirmation_sentence(profile, reply_language(message), 0)
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[Vision] confirmation sentence failed: %s", exc)
+            return ""
+
+    # ── 答复 + 继续追问（v2.3.1 从 Orchestrator 迁入）───────────────────────
+    def compose_with_requirement_question(
+        self,
+        *,
+        answer: str,
+        sales_result: Any,
+        message: str,
+        seed: int = 0,
+        session_id: str = "",
+    ) -> str:
+        """把"答复客户"与"继续追问需求"合成一句自然的销售回复。
+
+        需求还没问清时（Ready Gate 未放行），客户的问题照样要答 —— 但答完必须
+        把还缺的那个关键问题接上，否则销售就变成"只会问问题"或"答完就断线"。
+        """
+        sales_result = sales_result or {}
+        question = str(sales_result.get("pending_question") or "")
+        if not question:
+            return answer
+        try:
+            from src.rag.reply_composer import compose_requirement_reply, reply_language
+
+            return compose_requirement_reply(
+                answer=answer,
+                question=question,
+                slot=str(sales_result.get("pending_slot") or ""),
+                message=message,
+                language=reply_language(message),
+                seed=seed,
+                requirement=sales_result.get("requirements") or {},
+                include_ack=not sales_result.get("requirements_reset", False),
+                llm_ack=str(sales_result.get("acknowledgement") or ""),
+                # 带图的那一轮：图片识别结果要跟客户核对（而且不能一边核对一边又问同一项）
+                vision_confirmation=self.vision_confirmation_sentence(session_id, message),
+            )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("Compose requirement reply failed: %s", exc)
+            return answer or question
+
     # ── 内部 ────────────────────────────────────────────────────────────
     def _profile(self, session_id: str) -> Optional[Any]:
         if not session_id:
