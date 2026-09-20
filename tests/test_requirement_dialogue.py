@@ -56,11 +56,12 @@ def sales_llm(monkeypatch):
     return sales_req
 
 
-def _run_turn(sales_req, message, requirements=None, messages=None):
+def _run_turn(sales_req, message, requirements=None, messages=None, session=None, profile=None):
     """驱动一轮 Sales Agent 需求挖掘。"""
     state = {
         "messages": list(messages or []) + [{"role": "user", "content": message}],
         "current_message": message,
+        "session_id": str((session or {}).get("id") or "requirement-dialogue"),
         "requirements": dict(requirements or {}),
         "additional_requirements": [],
         "intent": "need_query",
@@ -68,6 +69,8 @@ def _run_turn(sales_req, message, requirements=None, messages=None):
         "should_generate_solution": False,
         "response": "",
     }
+    if profile is not None:
+        state["requirement_profile"] = profile
     return sales_req.requirement_mining(state)
 
 
@@ -299,19 +302,20 @@ class TestScenario5bSizeDoesNotBreakSelection:
 
 
 class TestScenario6MultiTurn:
-    """场景 6：多轮采集（场景 → 环境 → 安装方式 → 观看距离 → 推荐）
+    """场景 6：多轮采集（v2.4：顺序随机、问过不再重复、硬性条件一轮后复问）
 
-    直接驱动 Sales Agent 的 ``requirement_mining`` 节点（LLM 被 mock 掉），
-    验证 Gate 在真实节点里按预期逐轮放行。
+    直接驱动 Sales Agent 的 ``requirement_mining`` 节点（LLM 被 mock 掉）。
+    客户口径（2026-09-20）：光把硬性条件凑齐不自动推荐；客户明确要推荐才推荐。
     """
 
     def test_multi_turn_asks_then_recommends(self, sales_llm):
         messages = []
         requirements = {}
         asked = []
+        session = {"id": "multi-turn-v24"}
 
         # 第 1 轮：只给产品类型 → 追问
-        turn = _run_turn(sales_llm, "I need an LED display", requirements, messages)
+        turn = _run_turn(sales_llm, "I need an LED display", requirements, messages, session)
         assert turn["should_generate_solution"] is False
         assert turn.get("pending_question")
         asked.append(turn.get("pending_question"))
@@ -319,7 +323,7 @@ class TestScenario6MultiTurn:
         messages = list(turn["messages"])
 
         # 第 2 轮：给出场景 → 仍然追问（v2.0 Case 2）
-        turn = _run_turn(sales_llm, "It is for a conference room", requirements, messages)
+        turn = _run_turn(sales_llm, "It is for a conference room", requirements, messages, session)
         assert turn["should_generate_solution"] is False, "只有场景时不应触发推荐"
         # 客户口径：明显的室内场景（会议室）不再问"室内还是室外"
         assert turn["requirement_profile"].environment == "indoor"
@@ -327,39 +331,49 @@ class TestScenario6MultiTurn:
         requirements = dict(turn["requirements"])
         messages = list(turn["messages"])
 
-        # 第 3 轮：给出安装方式 → 还缺点间距，继续追问
-        turn = _run_turn(sales_llm, "Fixed installation", requirements, messages)
-        assert turn["should_generate_solution"] is False
-        asked.append(turn.get("pending_question"))
-        requirements = dict(turn["requirements"])
-        messages = list(turn["messages"])
+        # 第 3-6 轮：把剩下的问题答完（顺序随机 → 按问到的槽位给答案）
+        answers = {
+            "installation": "Fixed installation",
+            "pixel_pitch": "I don't know",
+            "viewing_distance": "Viewing distance is about 5 meters",
+            "size": "The screen is 5m x 3m",
+            "purpose": "It is for a conference room",
+            "price_preference": "price first",
+        }
+        for _ in range(6):
+            slot = str(turn.get("pending_slot") or "")
+            if not slot:
+                break
+            turn = _run_turn(
+                sales_llm, answers.get(slot, "it's a fixed installation"),
+                requirements, messages, session, turn.get("requirement_profile"),
+            )
+            asked.append(turn.get("pending_question"))
+            requirements = dict(turn["requirements"])
+            messages = list(turn["messages"])
 
-        # 第 4 轮：点间距不知道 → 按规则转问观看距离
-        turn = _run_turn(sales_llm, "I don't know", requirements, messages)
-        assert turn["should_generate_solution"] is False
-        asked.append(turn.get("pending_question"))
-        requirements = dict(turn["requirements"])
-        messages = list(turn["messages"])
-
-        # 第 5 轮：补观看距离 → 还缺尺寸
-        turn = _run_turn(sales_llm, "Viewing distance is about 5 meters", requirements, messages)
-        assert turn["should_generate_solution"] is False
-        asked.append(turn.get("pending_question"))
-        requirements = dict(turn["requirements"])
-        messages = list(turn["messages"])
-
-        # 第 6 轮：补尺寸 → 硬性条件齐备，Gate 放行（不再问内容类型/价格取向）
-        turn = _run_turn(sales_llm, "The screen is 5m x 3m", requirements, messages)
+        # v2.4：顺序随机、同一项不会连着问两遍以上
+        assert len(asked) >= 4, asked
+        # 客户明确要推荐 → 硬性条件齐备后立即推荐
+        turn = _run_turn(
+            sales_llm, "please recommend one", requirements, messages, session,
+            turn.get("requirement_profile"),
+        )
         assert turn["should_generate_solution"] is True, (
-            f"信息齐备后应触发推荐；已问过: {asked}"
+            f"客户要推荐且信息齐备后应触发推荐；已问过: {asked}"
         )
         assert turn["requirement_profile"].has_target_size
 
     def test_explicit_specs_shortcut_the_dialogue(self, sales_llm):
-        """客户一上来就给足规格 → 第一轮即推荐"""
+        """客户一上来就给足规格**并且明确要推荐** → 第一轮即推荐。
+
+        v2.4 客户口径：光把硬性条件凑齐不自动推荐，要先走完随机轮；
+        但客户明确说"推荐一个"时立即推荐。
+        """
         turn = _run_turn(
             sales_llm,
-            "I need an indoor fixed LED screen, P2.5, 5m x 3m, for a conference room",
+            "I need an indoor fixed LED screen, P2.5, 5m x 3m, for a conference room "
+            "- please recommend one",
             {},
             [],
         )
@@ -973,7 +987,11 @@ class TestObviousSceneSettlesEnvironment:
         assert profile.sources.get("environment") == "scenario_derived"
         assert result["pending_slot"] != "environment", "明显场景不再问室内外"
         assert "indoor or outdoor" not in (result["pending_question"] or "").lower()
-        assert result["pending_slot"] == "installation"
+        # v2.4：提问顺序随机 → 只要求"这一轮问的是还没问过的问题"，
+        # 具体先问哪一个（安装方式 / P值 / 尺寸 / 价位取向…）由随机轮决定
+        from src.dialogue import ASK_POOL
+
+        assert result["pending_slot"] in ASK_POOL
 
     def test_outdoor_advertising_fills_outdoor_without_asking(self, monkeypatch):
         sales_req = self._fake_llm(monkeypatch, "outdoor advertising")
@@ -986,12 +1004,15 @@ class TestObviousSceneSettlesEnvironment:
         assert result["pending_slot"] != "environment", "明显场景不再问室内外"
 
     def test_stage_still_asks_environment(self, monkeypatch):
-        """舞台 / 演唱会室内外都可能 → 必须继续问。"""
+        """舞台 / 演唱会室内外都可能 → 环境仍然是待问项（随机轮里迟早会问到）。"""
         sales_req = self._fake_llm(monkeypatch, "stage performance")
         result = self._turn(sales_req, "stage performance screen", {"display_type": "LED"})
 
-        assert result["pending_slot"] == "environment"
         assert result["requirement_profile"].environment is None
+        # 环境还没定：要么这一轮正在问它，要么它已经问过一次、等最后一轮复问
+        assert result["requirement_profile"].field_decision("environment") in (
+            "MISSING", "UNKNOWN",
+        )
 
     def test_ai_judged_scene_settles_environment(self):
         """客户口径：不要只锁定几个场景词，要让 AI 从客户原话判断"明显室内/室外"。

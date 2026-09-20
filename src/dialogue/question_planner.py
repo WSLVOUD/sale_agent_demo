@@ -27,6 +27,7 @@ class QuestionPlan:
     easier: bool = False
     reason: str = ""
     reused: bool = False          # 这句话本会话里问过（换了说法）
+    why: str = ""                 # v2.4：复问硬性条件时的"为什么需要知道"（英文一句）
 
 
 def plan_question(
@@ -39,6 +40,9 @@ def plan_question(
     conversation: Optional[ConversationState] = None,
     slot: Optional[str] = None,
     question: Optional[str] = None,
+    easier: Optional[bool] = None,
+    reason: str = "",
+    why: str = "",
 ) -> QuestionPlan:
     """把 Gate 的决策（slot + 草稿问句）变成这一轮实际要问的那句话。
 
@@ -54,9 +58,10 @@ def plan_question(
         return QuestionPlan()
 
     conversation = conversation or (get_conversation_state(session_id) if session_id else None)
-    easier = status.upper() == "CONFLICT" or bool(
-        profile is not None and getattr(profile, "is_unknown", lambda *_: False)(slot)
-    )
+    if easier is None:
+        easier = status.upper() == "CONFLICT" or bool(
+            profile is not None and getattr(profile, "is_unknown", lambda *_: False)(slot)
+        )
 
     question = draft
     reused = False
@@ -72,13 +77,14 @@ def plan_question(
             question = alternative
             reused = True
 
-    reason = {
-        "CONFLICT": "conflict_clarification",
-        "CONTINUE_ASKING": "narrow_recommendation_window",
-    }.get(status.upper(), "keep_collecting")
+    if not reason:
+        reason = {
+            "CONFLICT": "conflict_clarification",
+            "CONTINUE_ASKING": "narrow_recommendation_window",
+        }.get(status.upper(), "keep_collecting")
     return QuestionPlan(
         slot=slot, question=question, action="ASK", easier=easier,
-        reason=reason, reused=reused,
+        reason=reason, reused=reused, why=str(why or ""),
     )
 
 

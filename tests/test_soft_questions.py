@@ -194,6 +194,10 @@ class TestQuestionOrderThroughTheSalesNode:
         return module.requirement_mining(state)
 
     def test_question_sequence(self, sales_node):
+        """v2.4：顺序随机（同一会话内稳定），客户答完随机轮并要推荐后 → 推荐。
+
+        客户口径：不再按固定优先级提问；"客户不知道 / 没回答"的问题本轮不再重复。
+        """
         answers = {
             "environment": "indoor",
             "purpose": "it's for a church",
@@ -201,10 +205,11 @@ class TestQuestionOrderThroughTheSalesNode:
             "price_preference": "both are fine",
             "pixel_pitch": "P3",
             "size": "5m x 3m",
+            "viewing_distance": "about 8 meters",
         }
         out = self._turn(sales_node, "I need an LED screen")
         asked = []
-        for _ in range(8):
+        for _ in range(10):
             slot = out["pending_slot"]
             if out["should_generate_solution"] or not slot:
                 break
@@ -212,10 +217,21 @@ class TestQuestionOrderThroughTheSalesNode:
             out = self._turn(sales_node, answers.get(slot, "indoor"),
                              out["requirement_profile"])
 
-        assert asked[:6] == [
-            "environment", "purpose", "installation",
-            "price_preference", "pixel_pitch", "size",
-        ], asked
+        from src.dialogue import ASK_POOL
+
+        # 随机轮里每个问题只问一次（问过就换下一个）
+        first_seen = []
+        for slot in asked:
+            if slot not in first_seen:
+                first_seen.append(slot)
+        assert set(first_seen) <= set(ASK_POOL), asked
+        assert len(first_seen) >= 4, asked
+        # 顺序不是固定优先级（随机化生效；同一会话内可复现，见 test_v24_question_flow）
+        assert first_seen != ["environment", "purpose", "installation",
+                              "price_preference", "pixel_pitch", "size"], asked
+
+        # 客户明确要推荐 → 立即推荐
+        out = self._turn(sales_node, "please recommend one", out["requirement_profile"])
         assert out["should_generate_solution"] is True
         profile = out["requirement_profile"]
         assert profile.purpose == "church"

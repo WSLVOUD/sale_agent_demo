@@ -935,7 +935,60 @@ ack 的写法（很重要，销售不能只会追问）：
         )
         current_intent = str(state.get("intent") or "")
 
-        if decision.ready:
+        # ── v2.4：提问顺序随机化 + "一轮走完再回头问硬性条件" ────────────────
+        # 客户口径（2026-09-20）：
+        #   · 提问顺序随机（同一会话内稳定），客户说"不知道/没答"的问题本轮不再重复问；
+        #   · 所有问题随机问完一遍后，才回头问还缺的**硬性条件**，并说明为什么需要；
+        #   · 只有客户**明确要推荐**时才跳过随机轮直接推荐；
+        #     光把硬性条件凑齐不算"要推荐"。
+        customer_wants_recommendation = bool(
+            _EXPLICIT_RECO_REQUEST_RE.search(str(current_msg_text or ""))
+        )
+        # "你决定 / 你推荐就行 / 都行" 这类授权，也等于"客户想让我们现在定"→ 立即推荐
+        if not customer_wants_recommendation:
+            try:
+                from ....core.customer_response import detect_response_intents
+
+                customer_wants_recommendation = any(
+                    item.intent == "delegated"
+                    for item in detect_response_intents(
+                        str(current_msg_text or ""),
+                        last_asked_slot=str(getattr(profile, "last_asked_slot", "") or ""),
+                    )
+                )
+            except Exception:  # pragma: no cover - 防御式
+                customer_wants_recommendation = False
+        flow_plan = None
+        conversation = None
+        if str(decision.status or "").upper() != "CONFLICT" and not (
+            getattr(profile, "conflicts", None) or []
+        ):
+            try:
+                from ....dialogue import get_conversation_state, next_question_plan
+
+                conversation = get_conversation_state(_session_id)
+                flow_plan = next_question_plan(
+                    profile,
+                    session_id=_session_id,
+                    language="en",
+                    seed=_turn_seed,
+                    customer_wants_recommendation=customer_wants_recommendation,
+                    conversation=conversation,
+                    exclude=set(
+                        str(x) for x in (getattr(profile, "vision_confirmation_pending", None) or [])
+                    ),
+                )
+            except Exception as exc:  # pragma: no cover - 防御式
+                logger.warning("Question flow planning failed: %s", exc)
+                flow_plan = None
+        if flow_plan is not None:
+            logger.info(
+                "[QuestionFlow] ask slot=%s reason=%s easier=%s why=%r (gate=%s, want_reco=%s)",
+                flow_plan.slot, flow_plan.reason, flow_plan.easier, flow_plan.why,
+                decision.status, customer_wants_recommendation,
+            )
+
+        if decision.ready and flow_plan is None:
             # Gate 放行：触发推荐（后面的 greeting/closing 分支仍可再否决）
             #
             # 【关键】已经推荐过一次之后，客户这一轮如果只是"接着问问题"
@@ -973,15 +1026,20 @@ ack 的写法（很重要，销售不能只会追问）：
             # Gate 未放行：本轮不推荐，改为追问一个关键问题
             # 追问内容以 Gate 的 missing 为准（保证问的就是拦住推荐的那一项），
             # 没有对应模板时再退回 question_planner 的扩展问题（如预算）。
-            question = decision.next_question or ""
-            # v2.2.4：优先用 Gate 实际问的那个槽位（可能是插在硬性条件之间的
-            # 软问题：场景 / 价位取向）。用 missing 推槽位会导致
-            # "客户回答的是哪一个问题"对不上（例如 bare "both" 落到错误的字段）。
-            slot = (
-                str(getattr(decision, "next_slot", "") or "")
-                or first_missing_slot(decision.missing)
-                or ""
-            )
+            if flow_plan is not None:
+                # v2.4：这一轮问哪个由"随机轮 / 硬性条件复问"决定
+                question = flow_plan.question or ""
+                slot = flow_plan.slot or ""
+            else:
+                question = decision.next_question or ""
+                # v2.2.4：优先用 Gate 实际问的那个槽位（可能是插在硬性条件之间的
+                # 软问题：场景 / 价位取向）。用 missing 推槽位会导致
+                # "客户回答的是哪一个问题"对不上（例如 bare "both" 落到错误的字段）。
+                slot = (
+                    str(getattr(decision, "next_slot", "") or "")
+                    or first_missing_slot(decision.missing)
+                    or ""
+                )
             # 【关键】图片里已经"看到"、并且这一轮正要跟客户核对的字段，**不要再问同一个问题**。
             # 实测 bug：回复里刚说完 "it looks like … a fixed installation … correct me if I've
             # misread it"，紧接着又问 "is this a long-term installation, or rental?" —— 自相矛盾。
@@ -990,7 +1048,7 @@ ack 的写法（很重要，销售不能只会追问）：
                 str(x) for x in (getattr(profile, "vision_confirmation_pending", None) or [])
             }
             vision_covered_everything = False
-            if vision_pending and slot and slot in vision_pending:
+            if vision_pending and slot and slot in vision_pending and flow_plan is None:
                 from ....rag.query_understanding import (  # noqa: PLC0415
                     detect_language,
                 )
@@ -1032,13 +1090,15 @@ ack 的写法（很重要，销售不能只会追问）：
                 # v2.3 §10：提问只有一个出口 —— Question Planner 负责换说法 / 不重复
                 try:
                     from ....dialogue import (
-                        get_conversation_state,
                         plan_question,
                         plan_response,
                         stage_from_status,
                     )
 
-                    conversation = get_conversation_state(_session_id)
+                    if conversation is None:
+                        from ....dialogue import get_conversation_state
+
+                        conversation = get_conversation_state(_session_id)
                     question_plan = plan_question(
                         decision,
                         profile,
@@ -1048,6 +1108,10 @@ ack 的写法（很重要，销售不能只会追问）：
                         conversation=conversation,
                         slot=slot,
                         question=question,
+                        # v2.4：把"随机轮 / 硬性条件复问"的决策透传给表达层
+                        easier=(flow_plan.easier if flow_plan is not None else None),
+                        reason=(flow_plan.reason if flow_plan is not None else ""),
+                        why=(flow_plan.why if flow_plan is not None else ""),
                     )
                     if question_plan.question:
                         question = question_plan.question

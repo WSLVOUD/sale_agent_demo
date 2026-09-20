@@ -217,8 +217,8 @@ class TestPlanTestCases:
         )
 
     def test_3_unknown_twice_then_stop_asking(self, sales_llm):
-        """v2.2.5：客户一直说"不知道" → 换着问；最后一轮每个字段再问一次；
-        第二次仍不知道 → DEFERRED，同一个字段绝不被问第三遍。"""
+        """v2.4：客户一直说"不知道" → 随机轮里每个问题只问一次（问过就换下一个）；
+        一轮走完后回头复问**硬性条件**；第二次仍不知道 → DEFERRED，绝不被问第三遍。"""
         turn = _turn(sales_llm, "we need an indoor led screen for a church", None, {})
         asked_slots = []
         for _ in range(12):
@@ -236,9 +236,16 @@ class TestPlanTestCases:
         assert all(
             count <= MAX_ASKS_PER_SLOT for count in profile.ask_counts.values()
         ), profile.ask_counts
-        # 换着问：同一轮不会连着重复同一个槽位
-        for before, after in zip(asked_slots, asked_slots[1:]):
-            assert before != after, asked_slots
+        # 随机轮：每个槽位的**第一次**出现不重复（问过没答就换下一个）
+        first_seen = []
+        for slot in asked_slots:
+            if slot not in first_seen:
+                first_seen.append(slot)
+        assert len(first_seen) >= 4, asked_slots
+        # 复问只针对硬性条件（P值/视距/尺寸/安装方式/室内外）
+        from src.dialogue import HARD_SLOTS
+
+        assert set(first_seen) <= set(HARD_SLOTS) | {"purpose", "price_preference"}
         # 客户说过不知道的硬性条件最终都被延后（不再追问）
         assert profile.field_decision("viewing_distance") == "DEFERRED"
         assert profile.is_exhausted("viewing_distance") is True

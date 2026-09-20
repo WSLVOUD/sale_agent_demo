@@ -110,6 +110,8 @@ def plan_response(
     status = str(getattr(decision, "status", "") or "").upper()
     slot = str(getattr(question_plan, "slot", "") or getattr(decision, "next_slot", "") or "")
     question = str(getattr(question_plan, "question", "") or getattr(decision, "next_question", "") or "")
+    # v2.4：复问硬性条件时用 Question Flow 给的"为什么需要知道"（英文一句）
+    why_override = str(getattr(question_plan, "why", "") or "")
 
     if status == "CONFLICT":
         return ResponsePlan(
@@ -137,7 +139,7 @@ def plan_response(
             slot=slot,
             strategy=UNKNOWN,
             blocks=[REASSURE, OFFER_SIMPLE_ALTERNATIVE, ASK_ONE_QUESTION],
-            why=_WHY.get(slot, ""),
+            why=why_override or _WHY.get(slot, ""),
             reason="customer_does_not_know",
             question=question,
         )
@@ -147,7 +149,7 @@ def plan_response(
         slot=slot,
         strategy=ASK,
         blocks=[ACKNOWLEDGE, EXPLAIN_WHY, ASK_ONE_QUESTION],
-        why=_WHY.get(slot, ""),
+        why=why_override or _WHY.get(slot, ""),
         reason=str(getattr(question_plan, "reason", "") or "keep_collecting"),
         question=question,
     )

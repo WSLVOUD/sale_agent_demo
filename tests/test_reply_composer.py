@@ -489,8 +489,8 @@ class TestSalesGraphAcksThenAsks:
         assert profile.viewing_distance_m is not None
         assert abs(profile.viewing_distance_m - 30.48) < 0.01
         assert profile.sources.get("viewing_distance_m") == "explicit"
-        # 已经拿到的信息不再追问：问的是还缺的环境
-        assert result["pending_slot"] == "environment"
+        # 已经拿到的信息不再追问：问的是别的还没问过的问题（v2.4：顺序随机）
+        assert result["pending_slot"] != "viewing_distance"
         assert "viewing distance" not in result["pending_question"].lower()
 
     def test_bare_measurement_stays_in_requirement_flow(self, fake_llm, monkeypatch):
@@ -558,8 +558,9 @@ class TestBareMeasurementEndToEnd:
             second = runner.run(session_id, "it is the width")
             profile = memory.get_requirement_profile(session_id) or {}
             assert abs(float(profile.get("target_width_m") or 0) - 1.292) < 1e-6, profile
-            # 已经确认过的不再追问：下一问是环境
-            assert second["pending_slot"] == "environment"
+            # 已经确认过的不再追问（v2.4：下一问按随机顺序，但不该再问尺寸方向）
+            assert second["pending_slot"] != "size_axis"
+            assert second["pending_slot"]
             assert "129.2 cm" not in second["response"]
         finally:
             memory.clear(session_id)

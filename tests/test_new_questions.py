@@ -463,14 +463,16 @@ class TestTwoAskLimitForNewQuestions:
             price_preference=None,
         )
         turn = self._turn(sales_node, "hello", profile)
-        # 硬性条件齐 → 这一轮就应该推荐（不会再去问价格取向）
-        assert turn["should_generate_solution"] is True
+        # v2.4：硬性条件齐也不自动推荐 —— 先把还没问过的（价位取向）随机问完
+        assert turn["pending_slot"] == "price_preference"
+        assert turn["should_generate_solution"] is False
 
         turn = self._turn(
             sales_node, "both", turn["requirement_profile"], last="price_preference"
         )
         assert turn["requirement_profile"].price_preference == "both"
         assert turn["requirement_profile"].budget_level == "low"
+        # 随机轮走完 + 客户给了答案 → 这一轮推荐
         assert turn["should_generate_solution"] is True
 
     def test_price_preference_never_blocks_recommendation(self, sales_node):
