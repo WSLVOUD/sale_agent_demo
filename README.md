@@ -112,6 +112,38 @@
 | "both are fine" / "都行" / 只回一个 "both" | `price_preference=both` | `budget_level=low`（默认档） |
 | 两次都没答上来 | 该字段 DEFERRED（问满上限守卫） | 不影响推荐（软问题本来不阻塞） |
 
+### 客户说"不知道"之后的追问节奏（v2.2.5）
+
+实测反馈：客户回一句 "I don't know"，系统紧接着又问同一个问题，客户很烦。现在的节奏：
+
+```text
+第一次问 A → 客户"不知道" → 不再问 A，换 B、C、D…
+其它都问完、真的要推荐时 → 回头用"降门槛"的说法再问 A 一次
+第二次仍"不知道" → DEFERRED（不再问第三次），按降级推荐
+客户后来主动补上 → 直接采纳（DEFERRED 不是"客户确认过的值"）
+```
+
+细节：
+
+- 软问题（场景 / 价位取向）客户说"不知道"就**不再回头问**（它们不影响推荐）；
+- 每个字段最多两次接触，这是由提问记账保证的，跟能不能听懂客户的话无关；
+- 客户在任意一轮主动给出值 → 立即采纳并清除之前的 DEFERRED / UNKNOWN 状态。
+
+### 服务口径不能自相矛盾（v2.2.5）
+
+实测日志里出现过一段自相矛盾的回复：
+
+```text
+We usually don't provide on-site installation ... but every order includes an
+installation guide that ships with your goods. Yes, installation is included.
+```
+
+前一句是公司口径（不提供现场安装，只随货提供安装指导说明书），后一句是模型把
+"随货说明书"说成了"包安装"。现在有两道防线：润色提示词里明确写"随货说明书≠包安装"；
+并且有一个确定性清洗函数 `strip_contradictory_installation_claims()`，会把任何来源
+（模型润色 / 自由问答）里出现的 "installation is included"、"we can provide on-site
+installation"、"包安装" 这类句子删掉，再接标准回答。
+
 实测输出（同一个 10×5m 室内固装墙屏）：
 
 | 客户说法 | 推导出的距离区间 | 点间距窗口 | 推荐 |

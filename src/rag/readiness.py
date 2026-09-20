@@ -697,6 +697,7 @@ def check_recommendation_ready(
     from .field_policy import (
         ASK,
         ASK_EASIER,
+        ASK_LATER,
         BLOCK,
         DEFER,
         DEFER_CALCULATION,
@@ -750,20 +751,30 @@ def check_recommendation_ready(
         if action in (DEFER, DEGRADE, DEFER_CALCULATION)
     ]
     askable = [
-        (slot, action) for slot, action in actions.items() if action in (ASK, ASK_EASIER)
+        (slot, action) for slot, action in actions.items()
+        if action in (ASK, ASK_EASIER, ASK_LATER)
     ]
     askable.sort(key=lambda item: policy_for(item[0]).ask_priority)
+    # v2.2.5：客户说过"不知道"的字段（ASK_LATER）**不马上重复问** ——
+    #   先把其它问题问完（immediate），最后才回头用降门槛的问法问一次（parked）。
+    immediate = [(slot, action) for slot, action in askable if action != ASK_LATER]
+    parked = [(slot, action) for slot, action in askable if action == ASK_LATER]
     # v2.2.4：硬性条件（室内外 / 固装租赁 / P值 / 尺寸）与软问题（场景 / 价位取向）
     #   · 只要还有硬性条件没问完 → 按优先级问（软问题插在中间，保留销售话术）；
     #   · 硬性条件都齐了 → 软问题一律不再问，直接推荐
     #     （客户口径：硬性条件齐了就推荐，不要再问别的）。
-    hard_asks = [(slot, action) for slot, action in askable if is_hard_condition(slot)]
+    hard_asks = [(slot, action) for slot, action in immediate if is_hard_condition(slot)]
     # `missing` 只列还要问的硬性条件：它表示"什么在拦住推荐"。
     # 软问题（场景 / 价位取向）不算拦住推荐；已延后 / 客户不提供的字段也不算
     # （它们放在 deferred_slots，追问侧不会再问）。
-    blocking_missing = [slot for slot, _ in hard_asks]
+    blocking_missing = [slot for slot, _ in hard_asks] + [
+        slot for slot, _ in parked if is_hard_condition(slot)
+    ]
+    # 还有硬性条件没解决（不管是"还没问过"还是"客户说过不知道、最后一轮再问"），
+    # 才继续问；硬性条件全齐了就直接推荐，软问题不再问。
+    pending_hard = bool(hard_asks) or any(is_hard_condition(slot) for slot, _ in parked)
     inferred = [slot for slot, action in actions.items() if action == INFER]
-    unknown_slots = [slot for slot, action in actions.items() if action == ASK_EASIER]
+    unknown_slots = [slot for slot, _ in parked]
 
     # 结构化日志（计划第 20 节）：一眼看出"为什么问 / 为什么不问"
     logger.info(
@@ -792,9 +803,9 @@ def check_recommendation_ready(
             next_slot=slot,
         )
 
-    if hard_asks:
+    if immediate and pending_hard:
         # 还有硬性条件要问 → 本轮按优先级问一个问题（可能是插在中间的软问题）
-        slot, action = askable[0]
+        slot, action = immediate[0]
         easier = action == ASK_EASIER or profile.ask_count(slot) >= 1
         question = (
             _size_axis_question(profile, language, variant_seed)
@@ -810,6 +821,24 @@ def check_recommendation_ready(
             reason="继续追问（其余字段已决策 / 延后）：" + ", ".join(
                 [s for s, _ in hard_asks] + [slot]
             ),
+            next_question=question, status="CONTINUE_ASKING",
+            unknown_slots=unknown_slots, deferred_slots=deferred,
+            next_slot=slot,
+        )
+
+    # 最后一轮只回头问**硬性条件**（软问题客户不知道就不问了：它们不影响推荐）
+    parked_hard = [(slot, action) for slot, action in parked if is_hard_condition(slot)]
+    if parked_hard:
+        # 其它都问完了，只剩下客户说过"不知道"的硬性条件 → 按降门槛的问法再问一次
+        # （客户口径：等到要推荐的时候，再问一次他说不知道的那一项）
+        slot, _action = parked_hard[0]
+        question = question_for(slot, language, variant_seed, easier=True)
+        question = _with_size_hint(profile, slot, language, question)
+        logger.info("[ActionPlanner] 最后一轮：对 %s 用降门槛问法再问一次", slot)
+        return GateDecision(
+            ready=False, gate="recommendation",
+            missing=blocking_missing,
+            reason="其它条件已问完，回头确认客户说过不知道的字段：" + slot,
             next_question=question, status="CONTINUE_ASKING",
             unknown_slots=unknown_slots, deferred_slots=deferred,
             next_slot=slot,

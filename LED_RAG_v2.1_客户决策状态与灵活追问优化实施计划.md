@@ -1749,3 +1749,38 @@ v2.1 把 `purpose` / `content_type` / `price_preference` 设成"不主动问"之
 测试：`tests/test_soft_questions.py`（21 条：硬性/软问题分类、提问顺序、
 价位回答 → 价位档映射、bare "both" 归属、硬性条件齐了不追问）；全量
 `python -m pytest tests/ -q` → **1250 passed, 4 skipped**。
+
+### 26.7.5 两个实测问题的修复（同日追加）
+
+**① 客户说"不知道"之后不要再追问同一件事。**
+
+实现：新增动作 `ASK_LATER`（稍后再问）：
+
+- 字段状态 UNKNOWN（客户说过不知道，且还没问满两次）→ 动作 = `ASK_LATER`：
+  本轮不再问它，换下一个问题；
+- 等到"还没问过"的问题都问完（immediate 为空）、且还有硬性条件没解决，
+  才回头用降门槛的问法再问一次（`parked_hard`）；
+- 第二次仍然不知道 → DEFERRED（问满上限，绝不再问第三次）；
+- 软问题（场景 / 价位取向）客户说不知道就不再回头问（它们不影响推荐）；
+- 客户后来主动补上值 → 立即采纳（DEFERRED 不等于客户确认过的值）。
+
+实测走向（客户连说 9 次"不知道"）：安装方式 → 价位取向 → P值 → 观看距离 → 尺寸
+→ 安装方式（第二轮）→ 价位取向（第二轮）→ 观看距离（第二轮）→ 尺寸（第二轮）
+→ 推荐（DEGRADED_READY）；同一轮绝不会连着问同一个槽位。
+
+**② 安装服务口径自相矛盾。**
+
+实测日志：`we do not provide on-site installation ... Yes, installation is included.`
+（后一句是模型把"随货安装指导说明书"说成了"包安装"）。两道防线：
+
+1. 润色提示词里明确写"随货提供安装指导说明书"不等于"提供现场安装服务"，
+   出现矛盾说法的润色结果直接丢弃、退回标准回答；
+2. 新增 `strip_contradictory_installation_claims()` / `sanitize_service_reply()`，
+   在编排层把回复里任何来源的 "installation is included"、"we can provide on-site
+   installation"、"包安装" 一类句子删掉，再接标准回答；同时用否定句保护
+   （"we do not provide on-site installation" 不会被误删），并保证不切断
+   "TW11-3216-P3.0" 这样的型号名。
+
+测试：`tests/test_service_faq_consistency.py`（11 条）+
+`tests/test_unknown_tolerance.py` 更新为新的追问节奏；全量
+`python -m pytest tests/ -q` → **1261 passed, 4 skipped**。

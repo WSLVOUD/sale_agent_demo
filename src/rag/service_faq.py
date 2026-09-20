@@ -68,6 +68,8 @@ _FAQ_POLISH_PROMPT = """你是 LED 显示屏产品的销售，正在微信上和
 硬性规则：
 1. 意思必须和标准回答**完全一致**：不能增加、不能删减、不能改动任何事实或数字；
    不要承诺标准回答里没有的内容（不提价格、不提交期、不提额外承诺）。
+   特别注意：标准回答里"随货提供安装指导说明书"**不等于**提供现场安装服务，
+   绝不能说成 "installation is included" / "we can install it for you"。
 2. 只回答客户问的这件事，**不要反问**客户的需求（系统会另外接需求问题）。
 3. 1~2 句话，口语化，像真人销售说话；不要客套话堆砌。
 4. 不要用 "—"，不要用 markdown，不要用引号，不要换行。
@@ -102,6 +104,59 @@ def _numbers(text: str) -> set:
     return set(re.findall(r"\d+(?:[.,]\d+)?", str(text or "")))
 
 
+# ── 与"不提供现场安装"相矛盾的说法（实测 bug）──────────────────────────────
+# 客户日志：回复里同时出现 "we do not provide on-site installation" 和
+# "Yes, installation is included." —— 后者是 LLM 把"随货说明书"说成了"包安装"。
+_INSTALLATION_CONTRADICTIONS = re.compile(
+    r"\byes\b[^.!?]{0,40}\binstallation\b"
+    r"(?!\s*(?:guide|manual|drawings?|instructions?|documents?))"
+    r"[^.!?]{0,20}\b(?:included|provided|covered)\b|"
+    r"\binstallation\b(?!\s*(?:guide|manual|drawings?|instructions?|documents?))"
+    r"[^.!?]{0,20}\b(?:is|will be|would be)\b[^.!?]{0,20}"
+    r"\b(?:included|provided|covered|part of the (?:order|price|package))\b|"
+    r"\bwe\b(?![^.!?]{0,40}\b(?:not|never|no)\b)[^.!?]{0,40}"
+    r"\b(?:provide|offer|arrange|handle|include)\b[^.!?]{0,30}"
+    r"\bon-?site installation\b|"
+    r"\b(?:we|i)(?:'ll| will| can)?\s+install\s+(?:it|the screen|the display|the wall)\b|"
+    r"包安装|含安装|提供安装服务|上门安装",
+    re.IGNORECASE,
+)
+
+# 已经说清"不提供现场安装"的句子 → 不能当成矛盾删掉
+_INSTALLATION_NEGATION = re.compile(
+    r"(?:\bdo(?:es)?\s+not\b|\bdo(?:n'?t|esn'?t)\b|\bcannot\b|\bcan'?t\b|\bnever\b|\bno\b"
+    r"|不提供|不含|不包|没有)",
+    re.IGNORECASE,
+)
+
+
+def strip_contradictory_installation_claims(text: str) -> str:
+    """删掉"包安装 / installation is included"这类与标准口径矛盾的句子。"""
+    source = str(text or "")
+    if not source:
+        return ""
+    # 只在"句末 + 空白"处切句，避免把 "TW11-3216-P3.0" 这种型号切断
+    sentences = re.split(r"(?<=[.!?。！？])(?=\s)", source)
+    kept = [
+        sentence for sentence in sentences
+        if sentence.strip() and not (
+            _INSTALLATION_CONTRADICTIONS.search(sentence)
+            and not _INSTALLATION_NEGATION.search(sentence)
+        )
+    ]
+    dropped = len([s for s in sentences if s.strip()]) - len(kept)
+    if dropped:
+        logger.warning("ServiceFAQ: dropped %d contradictory installation claim(s)", dropped)
+    return " ".join(sentence.strip() for sentence in kept).strip()
+
+
+def sanitize_service_reply(response: str, kind: Optional[str]) -> str:
+    """按服务口径清掉回复里自相矛盾的说法（目前只有"现场安装"这一类）。"""
+    if kind == FAQ_INSTALLATION:
+        return strip_contradictory_installation_claims(response)
+    return str(response or "")
+
+
 def service_faq_reply(message: str, *, language: str = "en") -> Optional[str]:
     """客户问了这类问题 → 返回**英文润色**后的回答；没问则返回 None。
 
@@ -131,6 +186,11 @@ def service_faq_reply(message: str, *, language: str = "en") -> Optional[str]:
             raise ValueError("polished reply contains CJK")
         if not _numbers(text).issubset(_numbers(fact)):
             raise ValueError("polished reply invented numbers")
+        if detect_service_faq(message) == FAQ_INSTALLATION and (
+            _INSTALLATION_CONTRADICTIONS.search(text)
+        ):
+            # 把"随货说明书"说成"包安装"这类自相矛盾 → 直接用标准回答
+            raise ValueError("polished reply contradicts the installation policy")
         return text
     except Exception as exc:  # pragma: no cover - 网络/额度问题
         logger.warning("Service FAQ polish failed, using standard answer: %s", exc)
@@ -145,4 +205,6 @@ __all__ = [
     "detect_service_faq",
     "service_faq_fact",
     "service_faq_reply",
+    "sanitize_service_reply",
+    "strip_contradictory_installation_claims",
 ]

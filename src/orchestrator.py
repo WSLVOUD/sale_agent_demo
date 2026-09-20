@@ -597,9 +597,16 @@ class DualAgentOrchestrator:
         """
         try:
             from .rag.reply_composer import reply_language
-            from .rag.service_faq import service_faq_reply
+            from .rag.service_faq import (
+                detect_service_faq,
+                sanitize_service_reply,
+                service_faq_reply,
+            )
 
             answer = service_faq_reply(message, language=reply_language(message))
+            # 回复里如果有和标准口径矛盾的说法（实测："Yes, installation is included."
+            # 紧随"我们不提供现场安装"）→ 先把矛盾的句子清掉，再接标准回答
+            response = sanitize_service_reply(response, detect_service_faq(message))
         except Exception as exc:  # pragma: no cover - 防御式
             logger.warning("[ServiceFAQ] failed: %s", exc)
             return response

@@ -205,36 +205,47 @@ class TestPlanTestCases:
             last_asked="viewing_distance",
         )
         profile = turn["requirement_profile"]
-        # 客户第一次说不知道：记下原因，而且**不放弃**这一项
-        # v2.1：字段状态是 UNKNOWN（还没到 DEFERRED）
+        # v2.2.5 客户口径：第一次说"不知道" → 先**换下一个问题**，
+        # 不马上追着问同一件事；等到其它都问完、真的要推荐时再问一次。
         assert profile.field_decision("viewing_distance") == "UNKNOWN"
         assert profile.unknown_reasons
-        assert profile.ask_count("viewing_distance") <= MAX_ASKS_PER_SLOT
-        # 第二次问同一个槽位 → 降低门槛的问法（给区间 / 二选一），不是机械重复
-        assert turn["pending_slot"] == "viewing_distance"
-        question = turn["pending_question"].lower()
-        assert any(word in question for word in ("close", "metres", "meters", "10"))
-        assert question != asked["pending_question"].lower()
+        assert profile.ask_count("viewing_distance") == 1
+        assert turn["pending_slot"] != "viewing_distance", "不要立刻重复问同一个问题"
+        assert turn["pending_slot"], "必须换一个问题继续问"
+        assert "viewing_distance" in (
+            turn["recommendation_gate"].get("unknown_slots") or []
+        )
 
     def test_3_unknown_twice_then_stop_asking(self, sales_llm):
-        """v2.1 / v2.2：同一个字段最多问两次（第二次换"降门槛"的问法），
-        第三次一律不再问 —— 观看距离问不出来就延后，由人数 / 面积 / 屏尺寸推导。
+        """v2.2.5：客户一直说"不知道" → 换着问；最后一轮每个字段再问一次；
+        第二次仍不知道 → DEFERRED，同一个字段绝不被问第三遍。"""
+        turn = _turn(sales_llm, "we need an indoor led screen for a church", None, {})
+        asked_slots = []
+        for _ in range(12):
+            slot = turn["pending_slot"]
+            if not slot:
+                break
+            asked_slots.append(slot)
+            turn = _turn(
+                sales_llm, "I don't know", turn["requirement_profile"], {},
+                last_asked=slot,
+            )
+        profile = turn["requirement_profile"]
 
-        （旧口径"硬性条件不能跳过、必须一直问"被《客户决策状态与灵活追问
-        优化实施计划》第 4.1 节取代；实测客户回"i dont konw"被反复追问的 bug
-        就是这条口径加上意图识别漏判造成的。）
-        """
-        first = _reach_viewing_distance_question(sales_llm)
-        second = _turn(sales_llm, "I don't know", first["requirement_profile"], {}, last_asked="viewing_distance")
-        third = _turn(sales_llm, "still don't know", second["requirement_profile"], {}, last_asked="viewing_distance")
-
-        profile = third["requirement_profile"]
-        assert profile.ask_count("viewing_distance") >= 1
+        # 每个字段最多问两次
+        assert all(
+            count <= MAX_ASKS_PER_SLOT for count in profile.ask_counts.values()
+        ), profile.ask_counts
+        # 换着问：同一轮不会连着重复同一个槽位
+        for before, after in zip(asked_slots, asked_slots[1:]):
+            assert before != after, asked_slots
+        # 客户说过不知道的硬性条件最终都被延后（不再追问）
         assert profile.field_decision("viewing_distance") == "DEFERRED"
-        assert third["pending_slot"] != "viewing_distance", "同一个问题不许问第三遍"
+        assert profile.is_exhausted("viewing_distance") is True
+
         # 客户后来真的给出视距 → 立刻采用（DEFERRED 不是"客户确认过的值"）
         fourth = _turn(
-            sales_llm, "about 8 meters", third["requirement_profile"], {},
+            sales_llm, "about 8 meters", profile, {},
             last_asked="viewing_distance",
         )
         assert fourth["requirement_profile"].viewing_distance_m == pytest.approx(8.0)

@@ -28,6 +28,7 @@ USE = "use"                       # 已有值（客户确认 / 系统推断）�
 INFER = "infer"                   # 客户授权 AI 决定 / 可推导 → 交给 Python 推导
 ASK = "ask"                       # 从没问过 → 正常问
 ASK_EASIER = "ask_easier"         # 客户说过不知道 → 降门槛再问一次
+ASK_LATER = "ask_later"           # 客户说过不知道 → **先换别的问题**，最后一轮再问一次
 DEFER = "defer"                   # 不再追问，且不阻塞推荐
 DEGRADE = "degrade"               # 不再追问，按降级推荐（记录缺失）
 DEFER_CALCULATION = "defer_calculation"   # 不阻塞推荐，只延后箱体/模组计算
@@ -36,6 +37,7 @@ SKIP = "skip"                     # 不关心（非硬性且不打算问）
 
 ACTION_LABELS: Dict[str, str] = {
     USE: "已具备", INFER: "推导", ASK: "询问", ASK_EASIER: "降门槛询问",
+    ASK_LATER: "稍后再问",
     DEFER: "延后", DEGRADE: "降级推荐", DEFER_CALCULATION: "延后计算", BLOCK: "阻塞",
     SKIP: "跳过",
 }
@@ -191,7 +193,7 @@ def field_action(profile: Any, slot: str) -> str:
     if profile is None:
         return ASK
 
-    from src.models.requirement import canonical_slot
+    from src.models.requirement import MAX_ASKS_PER_SLOT, canonical_slot
 
     key = canonical_slot(slot)
     policy = policy_for(key)
@@ -222,7 +224,12 @@ def field_action(profile: Any, slot: str) -> str:
         if key == "viewing_distance_m" and _space_facts_given(profile):
             # 客户已经给了人数 / 面积 / 进深 → 观看距离可以推导，不用再问
             return INFER
-        return ASK_EASIER
+        if profile.ask_count(key) >= MAX_ASKS_PER_SLOT:
+            # 已经问过两次（第二次是"最后一轮"的降门槛问法）→ 不再问
+            return _exhausted_action(policy)
+        # 客户口径：说了"不知道"就**先换下一个问题**，不要立刻追着问同一件事；
+        # 等到其它都问完了、真的要推荐时，再用降门槛的问法问一次（见 Gate 的 parked）。
+        return ASK_LATER
 
     # state == MISSING
     if not policy.askable:
@@ -234,8 +241,6 @@ def field_action(profile: Any, slot: str) -> str:
     #   实测 bug：客户的回答没被解析出来（拼写错误 / 答非所问 / 系统没听懂）时，
     #   字段一直停在 MISSING，于是同一个问题被问了第 3 遍、第 4 遍……
     #   "问满两次就不许再问"必须由记账保证，**不能依赖意图识别是否命中**。
-    from src.models.requirement import MAX_ASKS_PER_SLOT
-
     if profile.ask_count(key) >= MAX_ASKS_PER_SLOT:
         logger.info(
             "[ActionPlanner] slot=%s 已问 %d 次仍无值 → 按 %s 处理（不再追问）",
@@ -340,6 +345,7 @@ __all__ = [
     "ACTION_LABELS",
     "ASK",
     "ASK_EASIER",
+    "ASK_LATER",
     "BLOCK",
     "CALCULATION_SLOTS",
     "DEFER",
