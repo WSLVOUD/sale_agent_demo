@@ -1648,3 +1648,28 @@ DELEGATED 点间距 + 无视距 → 兜底档 → TW11-3216-P3.0（不再是 P1.
 
 测试：`tests/test_viewing_distance_derivation.py`（36 条）；全量 `python -m pytest tests/ -q`
 → **1171 passed, 4 skipped**。
+
+### 26.7.1 追问循环兜底（同日追加，源自客户实测日志）
+
+实测日志：客户连回两次 `i dont konw`（know 拼错），系统把同一个问题问了第三、第四遍；
+而且客户已经说了"大约 50 个人需要看的屏幕"，系统还在问"他们站多远"。三处根因：
+
+| 根因 | 修法 |
+|---|---|
+| `i dont konw` 拼写错误 → `UNKNOWN_RE` / `detect_no_answer` 全不命中 → 状态机学不到"不知道" | 新增 `normalize_customer_text()`（konw→know、idk/dunno/no clue/nt sure 归一化），`customer_response` 与 `unknown_detector` 共用；UNKNOWN 正则补充简写与中文变体 |
+| "问满两次就不许再问"只在意图识别命中时才生效 → 漏判即无限追问 | `field_policy.field_action()` 增加**记账守卫**：MISSING 且 `ask_count >= MAX_ASKS_PER_SLOT` → 直接按 `on_exhausted` 处理（DEFER / DEGRADE / BLOCK），与意图识别解耦 |
+| 客户已给人数/面积/进深，观看距离仍被追问 | `field_action()` 对 `viewing_distance_m`：只要有场地几何事实 → `INFER`（推导），不再提问；`estimate_viewing_distance()` 支持"只有人数、没有屏尺寸"（座位区宽深比 2:1 → 排数 = √(人数÷2)） |
+
+复刻实测对话后的走向：
+
+```text
+问 P 值      → "i dont konw" → DEFERRED（不再问 P 值）
+问观看距离    → "i dont konw" → 降门槛再问一次（允许的第二次）
+客户："大约50个人需要看的屏幕" → 记录 50 人 → 观看距离转为推导，直接问屏尺寸
+问屏尺寸      → "i dont konw" → 降门槛再问一次 → DEFERRED
+→ DEGRADED_READY：推荐 TW11-3216-P3.0（备选 TW21-3216-P3.0 / TW11-3216-P4.0）
+```
+
+测试：`tests/test_customer_response_intent.py`（拼写归一化）、`tests/test_deferred_fields.py`
+（问满上限守卫 / 环境问满转 BLOCK / 场地事实替代距离问题）、`tests/test_viewing_distance_derivation.py`
+（只有人数也能推）；全量 `python -m pytest tests/ -q` → **1190 passed, 4 skipped**。

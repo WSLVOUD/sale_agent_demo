@@ -122,3 +122,53 @@ class TestDeferredStopsAskingAfterTwoTries:
         profile.mark_decision("installation", "declined")
         decision = check_recommendation_ready(profile)
         assert "installation" not in (decision.missing or [])
+
+
+class TestAskLimitIsGuaranteedByBookkeeping:
+    """v2.2 守卫：问满两次就不再问 —— **不能依赖意图识别是否命中**。
+
+    实测：客户回 "i dont konw"（know 拼错）时规则全不命中，字段一直停在 MISSING，
+    于是同一个问题被问了第三遍、第四遍。现在由 ask_counts 兜底。
+    """
+
+    def _profile_without_installation(self) -> RequirementProfile:
+        slots = {
+            "display_type": "LED", "environment": "indoor", "purpose": "church",
+            "content_type": "mixed", "price_preference": "price",
+            "pixel_pitch_mm": 3.0, "target_width_mm": 10000, "target_height_mm": 5000,
+        }
+        return RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+
+    def test_slot_asked_twice_is_not_asked_a_third_time(self):
+        profile = self._profile_without_installation()
+        profile.record_ask("installation")
+        profile.record_ask("installation")
+        decision = check_recommendation_ready(profile)
+        assert "installation" not in (decision.missing or [])
+        plan = plan_next_question(profile) or {}
+        assert plan.get("slot") != "installation"
+        # 问不出来就按降级处理：照常推荐，不再纠缠
+        assert decision.ready is True
+        assert decision.status == "DEGRADED_READY"
+
+    def test_environment_asked_twice_blocks_instead_of_looping(self):
+        """室内外不可代理：两次问不出来 → BLOCKED（说明理由），而不是继续问。"""
+        slots = {
+            "display_type": "LED", "purpose": "church", "installation": "fixed",
+        }
+        profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+        profile.record_ask("environment")
+        profile.record_ask("environment")
+        decision = check_recommendation_ready(profile)
+        assert decision.status == "BLOCKED"
+        assert decision.ready is False
+        assert "environment" in (decision.blocked_slots or [])
+
+    def test_space_facts_replace_the_distance_question(self):
+        """客户已经给了人数 → 观看距离可以推导，不该再问一次。"""
+        profile = self._profile_without_installation()
+        profile.record_ask("viewing_distance")
+        profile.mark_decision("viewing_distance", "unknown")     # 第一次"不知道"
+        profile.audience_count = 50
+        decision = check_recommendation_ready(profile)
+        assert "viewing_distance" not in (decision.missing or [])

@@ -80,6 +80,18 @@ class TestViewingDistanceEstimation:
         assert estimate.source == "audience"
         assert estimate.farthest_m > estimate.nearest_m > 0
 
+    def test_audience_source_without_screen_size(self):
+        """只有人数也要能推（实测：客户只说"大约 50 个人需要看的屏幕"）。"""
+        estimate = estimate_viewing_distance({"audience_count": 50})
+        assert estimate.source == "audience"
+        assert estimate.farthest_m == pytest.approx(7.0)      # 5 排 × 0.9m + 2.5m
+        assert estimate.nearest_m is None, "屏高未知时不做「最近观众」假设"
+
+    def test_audience_scales_with_headcount(self):
+        small = estimate_viewing_distance({"audience_count": 50})
+        large = estimate_viewing_distance({"audience_count": 100})
+        assert large.farthest_m > small.farthest_m
+
     def test_area_source(self):
         estimate = estimate_viewing_distance({
             "room_area_sqm": 25, "target_width_mm": 3000, "target_height_mm": 2000,

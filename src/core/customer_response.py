@@ -49,10 +49,14 @@ UNKNOWN_RE = re.compile(
     r"\bi (?:really )?(?:do ?n[o']t|don'?t) know\b|"
     r"\b(?:do ?n[o']t|don'?t) know (?:yet|for sure|exactly)\b|"
     r"\bno idea\b|\bhave no idea\b|\bnot sure\b|\bi'?m not sure\b|\bunsure\b|"
+    # 客户手打的简写 / 拼写错误（实测："i dont konw"、"idk"、"dunno"）
+    r"\bdunno\b|\bidk\b|\bi d k\b|\bno clue\b|\bno idea at all\b|"
+    r"\b(?:do ?n[o']t|don'?t|do not)\s+(?:kno|konw|knowe?|no)\b|"
     r"\bi (?:do ?n[o']t|don'?t) have (?:the )?(?:measurements?|information)\b|"
     r"\bcan(?:'?t| not) (?:tell|say|estimate|guess)\b|\bhard to (?:say|tell)\b|"
     r"不知道|不清楚|不太清楚|不确定|不太确定|没量过|没测量|没有这个信息|"
-    r"无法确定|没法估计|不好估计|说不好|说不准|还不确定|不太了解",
+    r"无法确定|没法估计|不好估计|说不好|说不准|还不确定|不太了解|不晓得|"
+    r"没测过|没有量过|不知道啊",
     re.IGNORECASE,
 )
 
@@ -104,6 +108,31 @@ _CLAUSE_SPLIT_RE = re.compile(
 )
 # 句子切分（第二遍回填用）：一句话里"意图 + 多个槽位"
 _SENTENCE_SPLIT_RE = re.compile(r"[.!?。！？\n]+")
+
+# ── 文本归一化（v2.2）：客户手打时的常见拼写错误 / 简写 ─────────────────────
+# 实测：客户回 "i dont konw"（know 拼错）→ 规则全部不命中 → 状态机永远学不到
+# "客户不知道" → 同一个问题被无限追问。这里先把最常见的几种写法归一化，
+# 再交给意图正则（纯规则、可单测）。
+_TYPO_FIXES: tuple[tuple["re.Pattern[str]", str], ...] = (
+    (re.compile(r"\bkonw\b", re.IGNORECASE), "know"),
+    (re.compile(r"\bkno+w?e?\b", re.IGNORECASE), "know"),
+    (re.compile(r"\bidk\b", re.IGNORECASE), "i don't know"),
+    (re.compile(r"\bi\s+d\s+k\b", re.IGNORECASE), "i don't know"),
+    (re.compile(r"\bdunno\b|\bduno\b", re.IGNORECASE), "i don't know"),
+    (re.compile(r"\bdont\b", re.IGNORECASE), "don't"),
+    (re.compile(r"\bdo\s+not\b", re.IGNORECASE), "don't"),
+    (re.compile(r"\b(?:don'?t)\s+no\b", re.IGNORECASE), "don't know"),
+    (re.compile(r"\bno\s+clue\b", re.IGNORECASE), "no idea"),
+    (re.compile(r"\bnt\s+sure\b", re.IGNORECASE), "not sure"),
+)
+
+
+def normalize_customer_text(text: Any) -> str:
+    """归一化客户原话里的常见拼写错误 / 简写（只做确定性替换，不改语义）。"""
+    normalized = str(text or "")
+    for pattern, replacement in _TYPO_FIXES:
+        normalized = pattern.sub(replacement, normalized)
+    return normalized
 
 
 @dataclass
@@ -174,7 +203,8 @@ def detect_response_intents(
         （计划 7.1 / 7.2：「I don't know the viewing distance either, you can
         decide the pitch.」→ viewing_distance=UNKNOWN + pixel_pitch=DELEGATED）。
     """
-    text = str(message or "").strip()
+    # 先做拼写归一化："i dont konw" → "i don't know"（否则整条规则链都失效）
+    text = normalize_customer_text(message).strip()
     if not text:
         return []
 
@@ -291,5 +321,6 @@ __all__ = [
     "CustomerResponseIntent",
     "detect_response_intents",
     "is_customer_correction",
+    "normalize_customer_text",
     "slot_decisions",
 ]

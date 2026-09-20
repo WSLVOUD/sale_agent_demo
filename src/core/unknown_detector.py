@@ -50,7 +50,11 @@ _DEFER_RE = re.compile(
 
 def detect_no_answer(message: str) -> Optional[str]:
     """返回 ``customer_skip`` / ``customer_does_not_know`` / ``customer_defers`` / ``None``。"""
-    text = str(message or "")
+    # 与 Customer Response Intent 共用同一套拼写归一化：
+    # "i dont konw / idk / dunno" 这类手打写法必须也能识别成"不知道"。
+    from src.core.customer_response import normalize_customer_text
+
+    text = normalize_customer_text(message)
     if not text:
         return None
     if _SKIP_RE.search(text):

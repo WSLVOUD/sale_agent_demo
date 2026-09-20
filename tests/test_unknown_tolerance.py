@@ -217,18 +217,22 @@ class TestPlanTestCases:
         assert question != asked["pending_question"].lower()
 
     def test_3_unknown_twice_then_stop_asking(self, sales_llm):
-        """客户口径（2026-09-18）：点间距 / 观看距离属于**硬性条件**，
-        客户一直说"不知道"也必须继续问（换降门槛的问法），不能跳过。"""
+        """v2.1 / v2.2：同一个字段最多问两次（第二次换"降门槛"的问法），
+        第三次一律不再问 —— 观看距离问不出来就延后，由人数 / 面积 / 屏尺寸推导。
+
+        （旧口径"硬性条件不能跳过、必须一直问"被《客户决策状态与灵活追问
+        优化实施计划》第 4.1 节取代；实测客户回"i dont konw"被反复追问的 bug
+        就是这条口径加上意图识别漏判造成的。）
+        """
         first = _reach_viewing_distance_question(sales_llm)
         second = _turn(sales_llm, "I don't know", first["requirement_profile"], {}, last_asked="viewing_distance")
         third = _turn(sales_llm, "still don't know", second["requirement_profile"], {}, last_asked="viewing_distance")
 
         profile = third["requirement_profile"]
         assert profile.ask_count("viewing_distance") >= 1
-        assert third["pending_slot"] == "viewing_distance", "硬性条件不能跳过"
-        assert third["recommendation_gate"]["status"] == "CONTINUE_ASKING"
-        assert "viewing_distance" in third["recommendation_gate"]["missing"]
-        # 客户真的给出视距后 → 才继续往下走
+        assert profile.field_decision("viewing_distance") == "DEFERRED"
+        assert third["pending_slot"] != "viewing_distance", "同一个问题不许问第三遍"
+        # 客户后来真的给出视距 → 立刻采用（DEFERRED 不是"客户确认过的值"）
         fourth = _turn(
             sales_llm, "about 8 meters", third["requirement_profile"], {},
             last_asked="viewing_distance",

@@ -205,11 +205,29 @@ def field_action(profile: Any, slot: str) -> str:
 
     # state == UNKNOWN
     if state == "UNKNOWN" and policy.askable and not profile.is_exhausted(key):
+        if key == "viewing_distance_m" and _space_facts_given(profile):
+            # 客户已经给了人数 / 面积 / 进深 → 观看距离可以推导，不用再问
+            return INFER
         return ASK_EASIER
 
     # state == MISSING
     if not policy.askable:
         return SKIP
+    if key == "viewing_distance_m" and _space_facts_given(profile):
+        # 同上：有场地几何事实就直接推导，省掉一个问题
+        return INFER
+    # ── v2.2 守卫：问满上限仍然没拿到值 → 一律不再问 ─────────────────────
+    #   实测 bug：客户的回答没被解析出来（拼写错误 / 答非所问 / 系统没听懂）时，
+    #   字段一直停在 MISSING，于是同一个问题被问了第 3 遍、第 4 遍……
+    #   "问满两次就不许再问"必须由记账保证，**不能依赖意图识别是否命中**。
+    from src.models.requirement import MAX_ASKS_PER_SLOT
+
+    if profile.ask_count(key) >= MAX_ASKS_PER_SLOT:
+        logger.info(
+            "[ActionPlanner] slot=%s 已问 %d 次仍无值 → 按 %s 处理（不再追问）",
+            key, profile.ask_count(key), policy.on_exhausted,
+        )
+        return _exhausted_action(policy)
     if policy.required_for_recommendation or policy.required_for_calculation:
         return ASK
     # 非硬性但值得问（例如场景）→ 也问；纯可选则跳过
@@ -229,6 +247,18 @@ def _distance_known(profile: Any) -> bool:
         return bool(profile.slot_is_confirmed("viewing_distance_m"))
     except Exception:  # pragma: no cover - 防御式
         return False
+
+
+def _space_facts_given(profile: Any) -> bool:
+    """客户是否已经给了"人数 / 面积 / 进深"这类场地几何事实。
+
+    给了就说明观看距离**可以从这些事实推出来**，不必再问客户同一个问题
+    （实测：客户已经说了"大约 50 个人"，系统还在问"他们站多远"）。
+    """
+    return any(
+        getattr(profile, name, None)
+        for name in ("audience_count", "room_area_sqm", "room_depth_m")
+    )
 
 
 def apply_cross_slot_rules(profile: Any, actions: Dict[str, str]) -> Dict[str, str]:

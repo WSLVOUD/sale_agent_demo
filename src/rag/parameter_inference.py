@@ -158,17 +158,19 @@ DEFAULT_FALLBACK_PITCH_BAND: Tuple[float, float, float] = (2.5, 5.0, 3.0)
 class ViewingDistanceEstimate:
     """推导出来的观看距离区间（米）。``source`` 说明这个数是从哪来的。"""
 
-    nearest_m: float
+    nearest_m: Optional[float]
     farthest_m: float
     source: str          # room_depth / room_area / audience / screen_size
 
     @property
     def typical_m(self) -> float:
-        return round((self.nearest_m + self.farthest_m) / 2, 2)
+        if self.nearest_m:
+            return round((float(self.nearest_m) + float(self.farthest_m)) / 2, 2)
+        return round(float(self.farthest_m) * 0.6, 2)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "nearest_m": round(self.nearest_m, 2),
+            "nearest_m": round(float(self.nearest_m), 2) if self.nearest_m else None,
             "farthest_m": round(self.farthest_m, 2),
             "typical_m": self.typical_m,
             "source": self.source,
@@ -230,9 +232,14 @@ def estimate_viewing_distance(facts: Dict[str, Any]) -> Optional[ViewingDistance
                 source = "room_area"
     if farthest is None:
         people = facts.get("audience_count")
-        if people and width_m:
-            seats_per_row = max(1, int(float(width_m) / SEAT_WIDTH_M))
-            rows = int(-(-int(people) // seats_per_row))       # 向上取整
+        if people:
+            # 知道屏宽 → 每排座位数 = 屏宽 ÷ 0.6m；不知道屏宽 → 按"座位区宽深比 2:1"
+            # 的通用假设直接算排数（√(人数 ÷ 2)）。两者都是确定性公式。
+            if width_m:
+                seats_per_row = max(1, int(float(width_m) / SEAT_WIDTH_M))
+                rows = int(-(-int(people) // seats_per_row))       # 向上取整
+            else:
+                rows = max(1, int(round((float(people) / 2.0) ** 0.5)))
             farthest = rows * SEAT_ROW_DEPTH_M + FRONT_OFFSET_M
             source = "audience"
     if farthest is None and height_m:
@@ -241,11 +248,11 @@ def estimate_viewing_distance(facts: Dict[str, Any]) -> Optional[ViewingDistance
     if farthest is None:
         return None
 
-    # 最近观众：至少 1.5 × 屏高（看不清整屏），但不会超过最远观众的 70%
-    nearest = 1.0
+    # 最近观众：至少 1.5 × 屏高（否则看不全整屏），但不粗过最远观众的 70%。
+    # 屏高未知时不做假设 —— 宁可只按"最远观众"给窗口，也不要凭空收紧下限。
+    nearest: Optional[float] = None
     if height_m:
-        nearest = SCREEN_NEAR_FACTOR * float(height_m)
-    nearest = max(1.0, min(nearest, farthest * 0.7))
+        nearest = max(1.0, min(SCREEN_NEAR_FACTOR * float(height_m), farthest * 0.7))
     return ViewingDistanceEstimate(
         nearest_m=nearest, farthest_m=farthest, source=source
     )

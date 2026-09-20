@@ -23,6 +23,7 @@ from src.core.customer_response import (  # noqa: E402
     UNKNOWN,
     detect_response_intents,
     is_customer_correction,
+    normalize_customer_text,
     slot_decisions,
 )
 
@@ -44,6 +45,14 @@ class TestUnknownIntent:
         "I'm not sure",
         "I don't have the measurements",
         "hard to say",
+        # ── 实测回归：客户手打拼写错误 / 简写必须也能识别 ────────────────
+        "i dont konw",
+        "i dont konw the distance",
+        "i dont no",
+        "idk",
+        "i d k",
+        "dunno",
+        "no clue",
         "不知道",
         "不太清楚",
     ])
@@ -55,6 +64,24 @@ class TestUnknownIntent:
         slot, intent = _intent("I don't know")
         assert slot == "viewing_distance"
         assert intent != DELEGATED
+
+
+class TestTypoNormalization:
+    """拼写归一化：只做确定性替换，不改语义（否则规则链整条失效）。"""
+
+    @pytest.mark.parametrize("raw,expected_fragment", [
+        ("i dont konw", "know"),
+        ("i dont no", "know"),
+        ("idk", "know"),
+        ("dunno", "know"),
+        ("no clue", "no idea"),
+        ("i am nt sure", "not sure"),
+    ])
+    def test_normalization(self, raw, expected_fragment):
+        assert expected_fragment in normalize_customer_text(raw).lower()
+
+    def test_plain_text_is_untouched(self):
+        assert normalize_customer_text("about 5 meters") == "about 5 meters"
 
 
 class TestDelegatedIntent:
