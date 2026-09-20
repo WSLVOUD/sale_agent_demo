@@ -497,6 +497,10 @@ class GateDecision:
     # v2.1：客户授权 AI 决定尺寸时，按观看距离推导出的参考尺寸 [width_m, height_m]
     # （只用于本轮工程计算与话术参考，**不写进客户的确认事实**）
     derived_size_m: Optional[List[float]] = None
+    # v2.2.4：本轮**实际问的是哪个槽位**（可能是插在硬性条件之间的软问题：
+    # 场景 / 价位取向）。追问侧必须用它来记 pending_slot / last_asked_slot，
+    # 否则"客户回答的是哪一个问题"会对不上（例如 bare "both" 落到错误的槽位）。
+    next_slot: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -510,6 +514,7 @@ class GateDecision:
             "deferred_slots": list(self.deferred_slots),
             "blocked_slots": list(self.blocked_slots),
             "derived_size_m": list(self.derived_size_m) if self.derived_size_m else None,
+            "next_slot": self.next_slot,
         }
 
 
@@ -702,6 +707,7 @@ def check_recommendation_ready(
         USE,
         apply_cross_slot_rules,
         field_action,
+        is_hard_condition,
         policy_for,
     )
 
@@ -747,6 +753,15 @@ def check_recommendation_ready(
         (slot, action) for slot, action in actions.items() if action in (ASK, ASK_EASIER)
     ]
     askable.sort(key=lambda item: policy_for(item[0]).ask_priority)
+    # v2.2.4：硬性条件（室内外 / 固装租赁 / P值 / 尺寸）与软问题（场景 / 价位取向）
+    #   · 只要还有硬性条件没问完 → 按优先级问（软问题插在中间，保留销售话术）；
+    #   · 硬性条件都齐了 → 软问题一律不再问，直接推荐
+    #     （客户口径：硬性条件齐了就推荐，不要再问别的）。
+    hard_asks = [(slot, action) for slot, action in askable if is_hard_condition(slot)]
+    # `missing` 只列还要问的硬性条件：它表示"什么在拦住推荐"。
+    # 软问题（场景 / 价位取向）不算拦住推荐；已延后 / 客户不提供的字段也不算
+    # （它们放在 deferred_slots，追问侧不会再问）。
+    blocking_missing = [slot for slot, _ in hard_asks]
     inferred = [slot for slot, action in actions.items() if action == INFER]
     unknown_slots = [slot for slot, action in actions.items() if action == ASK_EASIER]
 
@@ -770,13 +785,15 @@ def check_recommendation_ready(
         )
         return GateDecision(
             ready=False, gate="recommendation",
-            missing=blocked + [s for s, _ in askable],
+            missing=blocked + [s for s, _ in hard_asks],
             reason="真正无法继续（无法推导 + 客户未授权 + 该 Action 必需）：" + ", ".join(blocked),
             next_question=question, status="BLOCKED",
             blocked_slots=blocked, deferred_slots=deferred,
+            next_slot=slot,
         )
 
-    if askable:
+    if hard_asks:
+        # 还有硬性条件要问 → 本轮按优先级问一个问题（可能是插在中间的软问题）
         slot, action = askable[0]
         easier = action == ASK_EASIER or profile.ask_count(slot) >= 1
         question = (
@@ -789,10 +806,13 @@ def check_recommendation_ready(
             ready=False, gate="recommendation",
             # missing 只列出**还要问**的字段（延后 / 降级的字段放 deferred_slots，
             # 否则追问侧会照着 missing 把已经不再追问的字段又问一遍）
-            missing=[s for s, _ in askable],
-            reason="继续追问（其余字段已决策 / 延后）：" + ", ".join(s for s, _ in askable),
+            missing=blocking_missing,
+            reason="继续追问（其余字段已决策 / 延后）：" + ", ".join(
+                [s for s, _ in hard_asks] + [slot]
+            ),
             next_question=question, status="CONTINUE_ASKING",
             unknown_slots=unknown_slots, deferred_slots=deferred,
+            next_slot=slot,
         )
 
     # 无需再问 → 放行；有延后/降级字段时按 Best-effort 推荐

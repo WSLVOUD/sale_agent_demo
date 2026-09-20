@@ -1713,3 +1713,39 @@ To recommend the right products for you, could you tell me: distance?
 测试：`tests/test_question_safety.py`（32 条：槽位名不漏出、clarify 优先用 Gate、
 Gate 就绪时不追问、人数已给时不问距离）；全量 `python -m pytest tests/ -q`
 → **1229 passed, 4 skipped**。
+
+### 26.7.4 软问题（使用场景 / 价位取向）恢复提问（同日追加）
+
+v2.1 把 `purpose` / `content_type` / `price_preference` 设成"不主动问"之后，
+实测发现**连销售话术里该问的场景和价位取向都消失了**。现在按"硬性条件 vs 软问题"
+重新分层：
+
+| 类别 | 字段 | 提问时机 |
+|---|---|---|
+| 硬性条件 | 室内外、固装租赁、P值、（反推 P 值用的）观看距离、尺寸 | 只要还有没问完的，就按优先级问 |
+| 软问题 | 使用场景（优先级 20）、价位取向（优先级 35） | **只在硬性条件还没问完时顺带问**；硬性条件一齐就立刻推荐，不再问别的 |
+| 只记录 | 内容类型 | 不主动问（客户说了就记，不影响选型） |
+
+实际问答顺序（实测走真实节点）：
+
+```text
+环境 → 场景 → 安装方式 → 价位取向（价格/质量/都行）→ P值 → 尺寸 → 推荐
+```
+
+回答的处理（都有回归测试）：
+
+```text
+场景回答 "it's for a church"   → purpose=church，并按场景判定 environment=indoor，参与场景打分
+价位回答 price / both          → price_preference=…，budget_level=low（默认档，最便宜优先）
+价位回答 quality               → price_preference=quality，budget_level=medium
+只回一个 "both"                → 按"上一轮问的就是价位取向"落到 price_preference=both
+两次都答不上来                  → DEFERRED（问满上限守卫），不影响推荐
+```
+
+顺带修了一个槽位归属问题：Gate 现在回报 `next_slot`（本轮**实际问的是哪个槽位**），
+销售节点用它记 `pending_slot / last_asked_slot`，不再用 `missing[0]` 猜 ——
+否则软问题插进问答序列后，"客户回答的是哪一个问题"会对不上（bare "both" 会落到错误字段）。
+
+测试：`tests/test_soft_questions.py`（21 条：硬性/软问题分类、提问顺序、
+价位回答 → 价位档映射、bare "both" 归属、硬性条件齐了不追问）；全量
+`python -m pytest tests/ -q` → **1250 passed, 4 skipped**。

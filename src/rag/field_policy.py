@@ -58,6 +58,10 @@ class FieldPolicy:
     can_delegate: bool = True
     # 问不出来怎么办：BLOCK / DEGRADED / DEFER / DEFER_CALCULATION
     on_exhausted: str = "DEFER"
+    # 是不是"硬性条件"（客户口径：室内外 / 固装租赁 / P值 / 尺寸）。
+    # 软问题（场景 / 内容类型 / 价格取向）只在硬性条件还没问完时顺带问，
+    # 硬性条件一齐就直接推荐 —— 这样既保留了销售话术，也不会让推荐被软问题拖住。
+    hard_condition: bool = False
     # 要不要主动问（content_type / price 这类非硬性项不主动问，只记录）
     askable: bool = True
     # 询问优先级（数字越小越先问）
@@ -74,6 +78,7 @@ FIELD_POLICIES: Dict[str, FieldPolicy] = {
         "environment",
         required_for_recommendation=True,
         required_for_calculation=True,
+        hard_condition=True,
         can_infer=False,          # 场景能判定时会在抽取阶段落成 scenario_derived，不在这里猜
         can_delegate=False,       # 客户说"你决定室内外"也不能替他决定
         on_exhausted="BLOCK",
@@ -86,18 +91,19 @@ FIELD_POLICIES: Dict[str, FieldPolicy] = {
     "purpose": FieldPolicy(
         "purpose",
         required_for_recommendation=False,   # 非绝对阻塞
+        hard_condition=False,
         can_infer=False,
         can_delegate=True,
         on_exhausted="DEGRADED",
-        # 客户口径：硬性条件（室内外 / 固装租赁 / P值 / 尺寸）齐了就直接推荐，
-        # 不能再问别的；场景只参与打分，缺了照样推荐（计划第 16 节：
-        # Purpose 强相关但**非绝对阻塞**）。
-        askable=False,
+        # 场景是销售话术里的第一个问题（环境之后），但要排在硬性条件之前问；
+        # 硬性条件已经齐了就不再问，直接推荐（见 hard_condition 的说明）。
+        askable=True,
         ask_priority=20,
     ),
     "installation": FieldPolicy(
         "installation",
         required_for_recommendation=True,
+        hard_condition=True,
         can_infer=False,
         can_delegate=True,        # 授权 AI → 按场景/产品默认固装处理
         on_exhausted="DEGRADED",
@@ -106,6 +112,7 @@ FIELD_POLICIES: Dict[str, FieldPolicy] = {
     "pixel_pitch": FieldPolicy(
         "pixel_pitch",
         required_for_recommendation=False,
+        hard_condition=True,
         can_infer=True,
         can_infer_from_distance=True,
         can_delegate=True,
@@ -115,6 +122,10 @@ FIELD_POLICIES: Dict[str, FieldPolicy] = {
     "viewing_distance_m": FieldPolicy(
         "viewing_distance_m",
         required_for_recommendation=False,
+        # 观看距离本身不阻塞推荐，但它是"反推点间距"的输入：只要点间距还没确定，
+        # 它就算硬性待问项（客户口径：P 值不知道 → 转问观看距离，用它推 P 值）。
+        # 点间距一旦确定（客户给的 / 已推导），cross-slot 规则会把它设成 SKIP。
+        hard_condition=True,
         can_infer=False,
         can_delegate=True,
         on_exhausted="DEFER",
@@ -124,14 +135,15 @@ FIELD_POLICIES: Dict[str, FieldPolicy] = {
         "size",
         required_for_recommendation=False,
         required_for_calculation=True,
+        hard_condition=True,
         can_infer=True,           # 客户授权时按观看距离给参考尺寸
         can_delegate=True,
         on_exhausted="DEFER_CALCULATION",
         ask_priority=50,
     ),
-    "width": FieldPolicy("width", required_for_calculation=True, can_infer=True,
+    "width": FieldPolicy("width", required_for_calculation=True, hard_condition=True, can_infer=True,
                          can_delegate=True, on_exhausted="DEFER_CALCULATION", ask_priority=52),
-    "height": FieldPolicy("height", required_for_calculation=True, can_infer=True,
+    "height": FieldPolicy("height", required_for_calculation=True, hard_condition=True, can_infer=True,
                           can_delegate=True, on_exhausted="DEFER_CALCULATION", ask_priority=54),
     # size_axis 只在"客户给了一个裸尺寸、没说方向"时才问（由 Gate 显式处理），
     # 所以这里不设成"可主动询问"，避免无缘无故问"这是宽还是高"。
@@ -142,8 +154,10 @@ FIELD_POLICIES: Dict[str, FieldPolicy] = {
                                 on_exhausted="DEGRADED", askable=False, ask_priority=15),
     "content_type": FieldPolicy("content_type", can_infer=False, can_delegate=True,
                                 on_exhausted="DEFER", askable=False, ask_priority=90),
+    # 价位取向（价格 / 质量 / 两者都行）：销售话术里的"推荐前那一问"。
+    # 客户口径：客户没提到就不影响推荐（两者都行 → 走默认档）。
     "price_preference": FieldPolicy("price_preference", can_infer=False, can_delegate=True,
-                                    on_exhausted="DEFER", askable=False, ask_priority=95),
+                                    on_exhausted="DEFER", askable=True, ask_priority=35),
     "budget": FieldPolicy("budget", can_infer=False, can_delegate=True,
                           on_exhausted="DEFER", askable=False, ask_priority=96),
 }
@@ -317,6 +331,11 @@ def slots_with_action(profile: Any, action: str, slots: Optional[tuple] = None) 
     return [slot for slot, value in plan_actions(profile, slots).items() if value == action]
 
 
+def is_hard_condition(slot: str) -> bool:
+    """这个槽位是不是"硬性条件"（室内外 / 固装租赁 / P值 / 尺寸）。"""
+    return bool(policy_for(slot).hard_condition)
+
+
 __all__ = [
     "ACTION_LABELS",
     "ASK",
@@ -335,6 +354,7 @@ __all__ = [
     "apply_cross_slot_rules",
     "ask_candidates",
     "field_action",
+    "is_hard_condition",
     "plan_actions",
     "policy_for",
     "slots_with_action",

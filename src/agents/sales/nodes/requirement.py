@@ -974,7 +974,14 @@ ack 的写法（很重要，销售不能只会追问）：
             # 追问内容以 Gate 的 missing 为准（保证问的就是拦住推荐的那一项），
             # 没有对应模板时再退回 question_planner 的扩展问题（如预算）。
             question = decision.next_question or ""
-            slot = first_missing_slot(decision.missing) or ""
+            # v2.2.4：优先用 Gate 实际问的那个槽位（可能是插在硬性条件之间的
+            # 软问题：场景 / 价位取向）。用 missing 推槽位会导致
+            # "客户回答的是哪一个问题"对不上（例如 bare "both" 落到错误的字段）。
+            slot = (
+                str(getattr(decision, "next_slot", "") or "")
+                or first_missing_slot(decision.missing)
+                or ""
+            )
             # 【关键】图片里已经"看到"、并且这一轮正要跟客户核对的字段，**不要再问同一个问题**。
             # 实测 bug：回复里刚说完 "it looks like … a fixed installation … correct me if I've
             # misread it"，紧接着又问 "is this a long-term installation, or rental?" —— 自相矛盾。
