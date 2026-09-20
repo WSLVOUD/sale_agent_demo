@@ -226,6 +226,9 @@ class RequirementProfile(BaseModel):
     audience_count: Optional[int] = Field(None, ge=1, le=100000)
     room_area_sqm: Optional[float] = Field(None, gt=0, le=100000)
     room_depth_m: Optional[float] = Field(None, gt=0, le=200)
+    # ── v2.5：分辨率需求（客户口径：INPUT / DISPLAY 含义完全不同）────────
+    resolution_raw: str = ""
+    resolution_requirement: Optional[Dict[str, Any]] = None
 
     # ── 软条件事实 ──────────────────────────────────────────────────────
     budget_level: Optional[BudgetLevel] = None
@@ -525,6 +528,10 @@ class RequirementProfile(BaseModel):
             facts["room_area_sqm"] = self.room_area_sqm
         if self.room_depth_m is not None:
             facts["room_depth_m"] = self.room_depth_m
+        if self.resolution_raw:
+            facts["resolution_raw"] = self.resolution_raw
+        if self.resolution_requirement:
+            facts["resolution_requirement"] = dict(self.resolution_requirement)
         if self.pixel_pitch_mm is not None:
             facts["pixel_pitch_mm"] = self.pixel_pitch_mm
         if self.brightness_min_nit is not None:

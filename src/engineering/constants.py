@@ -74,6 +74,13 @@ SCREEN_SIZE_BY_DISTANCE: Tuple[Tuple[float, str], ...] = (
     (float("inf"), "98英寸以上"),
 )
 
+# ── v2.5：分辨率"接近程度"阈值（集中在这里，后续用 Golden Dataset 调）───────
+# 客户口径：不要写死 `if deviation < 5%: PASS`，也不要求实际分辨率与目标一模一样。
+RESOLUTION_FIT_NEAR = 0.02             # ≤2% 视为 NEAR_MATCH
+RESOLUTION_FIT_ACCEPTABLE = 0.08       # ≤8% 视为 ACCEPTABLE
+RESOLUTION_FIT_NOT_ACCEPTABLE = 0.20   # ≤20% 视为 NOT_ACCEPTABLE，超过即 IMPOSSIBLE
+ASPECT_DEVIATION_ACCEPTABLE = 0.03     # 比例偏差超过 3% 认为"比例冲突"需澄清
+
 # 客户授权 AI 决定尺寸（DELEGATED）时的确定性参考尺寸：
 # height = clamp(distance / 3, 1.0m, 12.0m)，width = height × 16/9
 DELEGATED_SIZE_MIN_H_M = 1.0
@@ -111,6 +118,10 @@ __all__ = [
     "SCREEN_FAR_FACTOR",
     "SCREEN_NEAR_FACTOR",
     "SCREEN_SIZE_BY_DISTANCE",
+    "RESOLUTION_FIT_ACCEPTABLE",
+    "RESOLUTION_FIT_NEAR",
+    "RESOLUTION_FIT_NOT_ACCEPTABLE",
+    "ASPECT_DEVIATION_ACCEPTABLE",
     "SEAT_ROW_DEPTH_M",
     "SEAT_WIDTH_M",
     "VIEWING_DISTANCE_PITCH_TABLE",

@@ -259,6 +259,28 @@ class RequirementExtractor:
             explicit_keys=explicit_keys,
         )
 
+        # ── v2.5：分辨率需求（INPUT / DISPLAY / UNKNOWN 三种含义）───────────
+        try:
+            from ..engineering import parse_resolution
+
+            resolution = parse_resolution(message)
+            if resolution is not None:
+                previous = previous_profile.resolution_requirement if previous_profile else None
+                # 已经确认过的 DISPLAY 需求不被后面的模糊说法覆盖
+                if not (
+                    isinstance(previous, dict)
+                    and str(previous.get("mode")) == "DISPLAY"
+                    and resolution.mode != "DISPLAY"
+                ):
+                    profile.resolution_raw = resolution.raw
+                    profile.resolution_requirement = resolution.to_dict()
+                    logger.info(
+                        "Resolution requirement: %sx%s mode=%s",
+                        resolution.target_width, resolution.target_height, resolution.mode,
+                    )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("Resolution parsing failed: %s", exc)
+
         # Step 9: 与前一轮合并（保持跨轮一致性）
         if previous_profile:
             profile = previous_profile.merge(profile)

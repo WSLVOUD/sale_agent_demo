@@ -2,7 +2,7 @@
 
 > 基于大模型（DeepSeek）的 LED/LCD/IFP 全品类显示产品智能销售助手，采用多 Agent 协作 + 混合检索（RAG）架构，为销售团队提供实时产品推荐和技术咨询能力。
 
-> **当前版本：v2.4（2026-09-20）** ｜ 全量测试：`python -m pytest tests/ -q` → **1348 passed, 4 skipped**
+> **当前版本：v2.5（2026-09-20）** ｜ 全量测试：`python -m pytest tests/ -q` → **1415 passed, 4 skipped**
 >
 > 当前行为口径集中在下面「当前行为口径」一节；历史版本的逐条变更见文末「变更明细」。
 
@@ -220,6 +220,7 @@ RequirementProfile（唯一事实源）
 
 | 版本 | 内容 |
 |---|---|
+| v2.5 | 多条消息聚合成一个 UserTurn（debounce / 幂等 / 会话锁）；DialogueAction + ResponseContext（话术不再像问卷，附 7 项话术指标）；分辨率需求（INPUT/DISPLAY/UNKNOWN）+ 实际拼接分辨率 + Resolution Fit + Engineering Feasibility（不可绕过） |
 | v2.4 | 提问顺序随机化（会话种子、可复现）+ 问过/没答不再重复 + 一轮走完复问硬性条件（附"为什么需要知道"）+ 客户明确要推荐才立即推荐 |
 | v2.3.1 | Orchestrator 职责收敛：多屏业务 / Vision 接入 / 性能埋点 / 回复组装迁出，Orchestrator 只编排（1208 → 564 行），旧接口保留兼容层 |
 | v2.3 | 架构收敛：唯一事实源 + 统一工程规则 + Provenance Guard + 统一出口 + 统一 Validation + 冲突状态 + 决策审计 + 对话层（Response Planner / Conversation State） |

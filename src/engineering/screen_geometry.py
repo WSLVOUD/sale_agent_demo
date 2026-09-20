@@ -77,4 +77,85 @@ def suggest_screen_size(facts: Any) -> Optional[Tuple[float, float]]:
     return round(width, 2), round(height, 2)
 
 
-__all__ = ["screen_dims_m", "screen_size_for_distance", "suggest_screen_size"]
+def stitching_geometry(
+    *,
+    target_width_mm: float,
+    target_height_mm: float,
+    cabinet_width_mm: float,
+    cabinet_height_mm: float,
+    modules_per_cabinet: int = 1,
+    module_width_mm: Optional[float] = None,
+    module_height_mm: Optional[float] = None,
+) -> Dict[str, Any]:
+    """由目标物理尺寸 + 箱体几何算"实际能拼出来的尺寸 / 箱体数 / 模组数"。
+
+    这是 v2.5 Phase 4 的纯几何部分（不依赖产品目录）：宽高各自向下取整到
+    箱体（横拼）或旋转 90°（竖拼）能拼出的最大整数箱体数。
+    """
+    if min(target_width_mm, target_height_mm, cabinet_width_mm, cabinet_height_mm) <= 0:
+        return {}
+    columns = max(1, int(float(target_width_mm) // float(cabinet_width_mm)))
+    rows = max(1, int(float(target_height_mm) // float(cabinet_height_mm)))
+    actual_width = columns * float(cabinet_width_mm)
+    actual_height = rows * float(cabinet_height_mm)
+    cabinets = columns * rows
+    modules = cabinets * max(1, int(modules_per_cabinet or 1))
+    result = {
+        "columns": columns,
+        "rows": rows,
+        "cabinet_count": cabinets,
+        "module_count": modules,
+        "actual_width_mm": round(actual_width, 1),
+        "actual_height_mm": round(actual_height, 1),
+        "actual_aspect_ratio": round(actual_width / actual_height, 4) if actual_height else None,
+    }
+    if module_width_mm and module_height_mm:
+        result["module_columns"] = max(1, int(actual_width // float(module_width_mm)))
+        result["module_rows"] = max(1, int(actual_height // float(module_height_mm)))
+    return result
+
+
+def actual_pixel_resolution(
+    *,
+    actual_width_mm: float,
+    actual_height_mm: float,
+    pixel_pitch_mm: float,
+) -> Optional[Tuple[int, int]]:
+    """实际物理尺寸 + 点间距 → 实际可拼接的像素分辨率。"""
+    if min(float(actual_width_mm), float(actual_height_mm), float(pixel_pitch_mm)) <= 0:
+        return None
+    width_px = int(round(float(actual_width_mm) / float(pixel_pitch_mm)))
+    height_px = int(round(float(actual_height_mm) / float(pixel_pitch_mm)))
+    if width_px <= 0 or height_px <= 0:
+        return None
+    return width_px, height_px
+
+
+def min_achievable_deviation(
+    *,
+    target_width_px: int,
+    target_height_px: int,
+    module_width_px: int,
+    module_height_px: int,
+) -> Optional[float]:
+    """几何上"最小可能偏差"：半个模组的像素数 ÷ 目标像素数。
+
+    客户口径：不是所有项目都用同一个固定容差 —— 例如目标是 3840、
+    模组宽 320px 时，最少只能差到半个模组（160px ≈ 4.2%），
+    这种情况应当算 NEAR_MATCH（已经拼到最接近），而不是直接判失败。
+    """
+    if min(target_width_px, target_height_px) <= 0:
+        return None
+    h = (max(1, int(module_width_px)) / 2) / target_width_px
+    v = (max(1, int(module_height_px)) / 2) / target_height_px
+    return round(max(h, v), 4)
+
+
+__all__ = [
+    "actual_pixel_resolution",
+    "min_achievable_deviation",
+    "screen_dims_m",
+    "screen_size_for_distance",
+    "stitching_geometry",
+    "suggest_screen_size",
+]

@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from src.engineering import (
+    check_feasibility,
+    check_model_feasibility,
     check_provenance,
     conflict_message,
     detect_engineering_conflicts,
@@ -121,6 +123,48 @@ class RecommendationCoordinator:
             )
             return outcome
 
+        # ── v2.5 Phase 7：Engineering Feasibility（不可绕过）────────────
+        #   尺寸 / P值 / 分辨率 / 比例 / 箱体几何统一判断：
+        #     · 冲突或无法实现 → 不推荐，给出澄清问题或调整方向
+        #     · 可行 → 继续走来源守卫与引擎
+        feasibility = check_feasibility(profile)
+        if not feasibility.feasible:
+            status = CONFLICT if feasibility.status == "CONFLICT" else REJECTED
+            logger.info(
+                "[Feasibility] status=%s conflicts=%d alternatives=%d",
+                feasibility.status, len(feasibility.conflicts), len(feasibility.alternatives),
+            )
+            outcome = RecommendationOutcome(
+                status=status,
+                result={},
+                gate={**gate_dict, "status": status, "ready": False},
+                next_question=feasibility.question
+                or (conflict_message(profile) if status == CONFLICT else ""),
+                missing_fields=[],
+                reject_reasons=[
+                    item.get("message", "") for item in feasibility.conflicts
+                ] + list(feasibility.alternatives),
+            )
+            outcome.audit = self._audit(
+                profile, technical, outcome, session_id, customer_input, final_response
+            )
+            outcome.audit["feasibility"] = feasibility.to_dict()
+            return outcome
+        if feasibility.status == "NEED_CLARIFICATION" and feasibility.question:
+            outcome = RecommendationOutcome(
+                status=NEED_CLARIFICATION,
+                result={},
+                gate={**gate_dict, "ready": False, "status": "CONTINUE_ASKING"},
+                next_question=feasibility.question,
+                missing_fields=["resolution"],
+                reject_reasons=list(feasibility.notes),
+            )
+            outcome.audit = self._audit(
+                profile, technical, outcome, session_id, customer_input, final_response
+            )
+            outcome.audit["feasibility"] = feasibility.to_dict()
+            return outcome
+
         # ── §5：Provenance Guard ─────────────────────────────────────────
         # 客户直接点名型号 / 系列时，"来源"就是客户自己那句话（型号自带参数），
         # 不需要再要求工程参数的来源；其余情况必须能说清点间距与室内外的依据。
@@ -151,6 +195,45 @@ class RecommendationCoordinator:
         # ── 确定性引擎 ───────────────────────────────────────────────────
         result = self.engine.recommend(profile=profile, top_k=top_k, require_ready=True)
         violations = list(result.get("violations") or [])
+
+        # ── v2.5：型号级分辨率可行性（客户有 DISPLAY 级分辨率要求时）───────
+        resolution_checks = []
+        if feasibility.resolution_result is not None or (
+            getattr(profile, "resolution_requirement", None) or {}
+        ):
+            from src.models.product import CanonicalModel  # noqa: F401  (类型提示)
+
+            keep = []
+            for item in result.get("recommendations") or []:
+                model = self._model_by_name(str(item.get("model") or ""))
+                if model is None:
+                    keep.append(item)
+                    continue
+                check = check_model_feasibility(profile, model)
+                resolution_checks.append(check)
+                if not check.get("applicable") or check.get("acceptable"):
+                    keep.append(item)
+                else:
+                    logger.info(
+                        "[Feasibility] 型号 %s 分辨率不达标 → 剔除（%s）",
+                        model.model, check.get("resolution_fit", {}).get("fit_level"),
+                    )
+            if keep:
+                result["recommendations"] = keep
+            else:
+                outcome = RecommendationOutcome(
+                    status=REJECTED,
+                    result=result,
+                    gate=gate_dict,
+                    provenance=provenance,
+                    reject_reasons=["没有型号能在当前约束下拼到足够接近的目标分辨率"],
+                    missing_fields=["resolution"],
+                )
+                outcome.audit = self._audit(
+                    profile, technical, outcome, session_id, customer_input, final_response
+                )
+                outcome.audit["feasibility"] = feasibility.to_dict()
+                return outcome
         status = (
             NEED_CLARIFICATION
             if result.get("recommendation_status") == NEED_CLARIFICATION
@@ -172,6 +255,9 @@ class RecommendationCoordinator:
         outcome.audit = self._audit(
             profile, technical, outcome, session_id, customer_input, final_response
         )
+        outcome.audit["feasibility"] = feasibility.to_dict()
+        if resolution_checks:
+            outcome.audit["resolution_checks"] = resolution_checks
         logger.info(
             "[RecommendationCoordinator] status=%s selected=%s provenance_ok=%s",
             outcome.status,
@@ -179,6 +265,15 @@ class RecommendationCoordinator:
             report.ok,
         )
         return outcome
+
+    # ── 内部：按型号名取目录里的型号（用于型号级可行性）──────────────────
+    def _model_by_name(self, name: str) -> Any:
+        if not name:
+            return None
+        for model in getattr(self.engine, "models", []) or []:
+            if str(getattr(model, "model", "")) == name:
+                return model
+        return None
 
     # ── 审计 ────────────────────────────────────────────────────────────
     def _audit(
