@@ -441,9 +441,17 @@ class GateDecision:
     missing: List[str] = field(default_factory=list)
     reason: str = ""
     next_question: Optional[str] = None
-    # Phase 11：READY / CONTINUE_ASKING / DEGRADED_READY
+    # Phase 11 / v2.1：READY / CONTINUE_ASKING / DEGRADED_READY / BLOCKED
     status: str = ""
     unknown_slots: List[str] = field(default_factory=list)
+    # ── v2.1：字段决策状态（计划第 20 节的 Gate 日志结构）──────────────
+    # deferred_slots：不再追问、但也不阻塞推荐（只影响计算 / 降级）
+    deferred_slots: List[str] = field(default_factory=list)
+    # blocked_slots：真正无法继续的字段（无法推导 + 客户没授权 + 该 Action 必需）
+    blocked_slots: List[str] = field(default_factory=list)
+    # v2.1：客户授权 AI 决定尺寸时，按观看距离推导出的参考尺寸 [width_m, height_m]
+    # （只用于本轮工程计算与话术参考，**不写进客户的确认事实**）
+    derived_size_m: Optional[List[float]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -454,6 +462,9 @@ class GateDecision:
             "next_question": self.next_question,
             "status": self.status or ("READY" if self.ready else "CONTINUE_ASKING"),
             "unknown_slots": list(self.unknown_slots),
+            "deferred_slots": list(self.deferred_slots),
+            "blocked_slots": list(self.blocked_slots),
+            "derived_size_m": list(self.derived_size_m) if self.derived_size_m else None,
         }
 
 
@@ -631,73 +642,124 @@ def check_recommendation_ready(
     #
     #    这四项**不适用**"问满两次就跳过"的容错规则：客户一直在说无关的话导致
     #    没记录到，最后要推荐之前必须再问一次（否则推荐没有依据）。
-    hard_missing: List[str] = []
-    # 客户报了一个裸尺寸（"129,2cm"）但没说方向 → 先确认，绝不替他猜
-    if getattr(profile, "screen_size_hint_mm", None) and not getattr(profile, "has_target_size", False):
-        hard_missing.append("size_axis")
-    # 室内外：客户明说 / 明显场景（含 AI 从客户原话判断）/ 图片明确可见 → 都不用问
-    if not getattr(profile, "environment", None) or not _environment_settled(profile):
-        hard_missing.append("environment")
-    # 固装 / 租赁：必须是客户确认过的（场景默认的"固装"不算）
-    if not _is_confirmed(profile, "installation"):
-        hard_missing.append("installation")
-    # P值：客户点名了就按客户的；客户说"不知道"→ 用观看距离推；
-    # 两者都没有就必须问（先问 P 值，问不到再问观看距离）。
-    pitch_known = getattr(profile, "pixel_pitch_mm", None) is not None
-    distance_known = (
-        getattr(profile, "viewing_distance_m", None) is not None
-        and _is_confirmed(profile, "viewing_distance_m")
+    # ── v2.1 Phase 5：字段状态 + 字段策略 → Action（计划第 11 / 12 / 16 节）──
+    #    字段缺失不再等于"整个流程停止"：只阻塞依赖它的 Action。
+    from .field_policy import (
+        ASK,
+        ASK_EASIER,
+        BLOCK,
+        DEFER,
+        DEFER_CALCULATION,
+        DEGRADE,
+        INFER,
+        RECOMMENDATION_SLOTS,
+        SKIP,
+        USE,
+        apply_cross_slot_rules,
+        field_action,
+        policy_for,
     )
-    if not pitch_known and not distance_known:
-        # 客户明确说"不知道 P 值" → 按规则转问观看距离，由规则反推点间距（客户口径）
-        if profile.is_unknown("pixel_pitch") or profile.unknown_reasons.get("pixel_pitch"):
-            hard_missing.append("viewing_distance")
-        else:
-            hard_missing.append("pixel_pitch")
-    # 尺寸：宽高都要（只有一条边 → 继续问另一条）
-    if not getattr(profile, "has_target_size", False):
-        hard_missing.append("size")
 
-    if hard_missing:
-        first = _first_missing(hard_missing)
-        # Phase 7：同一个字段第二次提问时要降低回答门槛（给区间 / 二选一）
-        easier = profile.ask_count(first) >= 1
+    # 客户报了一个裸尺寸（"129,2cm"）但没说方向 → 先确认方向（绝不替他猜）
+    if getattr(profile, "screen_size_hint_mm", None) and not getattr(profile, "has_target_size", False):
         question = (
             _size_axis_question(profile, language, variant_seed)
-            if first == "size_axis"
-            else None
-        ) or question_for(first, language, variant_seed, easier=easier)
-        # 图片给过尺寸估计 → 问尺寸时带上，让客户只需确认
-        question = _with_size_hint(profile, first, language, question)
+            or question_for("size_axis", language, variant_seed)
+        )
         return GateDecision(
-            ready=False, gate="recommendation", missing=hard_missing,
-            reason="硬性条件未齐（尺寸 / P值 / 室内外 / 固装租赁）：" + ", ".join(hard_missing),
+            ready=False, gate="recommendation", missing=["size_axis"],
+            reason="客户报了一个尺寸但没说方向（宽 / 高 / 对角线）",
             next_question=question, status="CONTINUE_ASKING",
-            unknown_slots=[],
         )
 
-    # 3) 非硬性项：只影响"是否 Best-effort"，绝不阻塞推荐
-    soft_missing: List[str] = []
-    if not getattr(profile, "purpose", None):
-        soft_missing.append("purpose")
-    if not getattr(profile, "content_type", None):
-        soft_missing.append("content_type")
-    if (
-        getattr(profile, "price_preference", None) in (None, "", [], {})
-        and getattr(profile, "budget_level", None) in (None, "", [], {})
-    ):
-        soft_missing.append("price_preference")
-    unknown_slots = [slot for slot in soft_missing if profile.is_unknown(slot)]
+    actions: Dict[str, str] = {
+        slot: field_action(profile, slot) for slot in RECOMMENDATION_SLOTS
+    }
 
-    if unknown_slots:
+    # 这几个字段必须来自"客户侧"（客户说的 / 明显场景 / 图片明确可见）：
+    # 纯系统推断（场景默认固装、图片推测）不能当成已确认 —— 客户口径：
+    # "说了教堂还问室内外"要避免，但"没问过固装还是租赁"也要避免。
+    if actions.get("environment") == USE and not _environment_settled(profile):
+        actions["environment"] = (
+            ASK if not profile.is_exhausted("environment") else BLOCK
+        )
+    if actions.get("installation") == USE and not _is_confirmed(profile, "installation"):
+        actions["installation"] = (
+            ASK if not profile.is_exhausted("installation") else DEGRADE
+        )
+    # 场景（purpose）不阻塞推荐（计划第 16 节：强相关但非绝对阻塞），
+    # 所以即使它是系统推断的也不在这里改问 —— 只参与打分。
+    # 点间距 ↔ 观看距离的先后与依赖（客户口径：先问 P 值，P 值不知道才问观看距离；
+    # 客户已经给了 P 值 / 授权 AI 决定 → 不再问观看距离）
+    apply_cross_slot_rules(profile, actions)
+
+    blocked = [slot for slot, action in actions.items() if action == BLOCK]
+    deferred = [
+        slot for slot, action in actions.items()
+        if action in (DEFER, DEGRADE, DEFER_CALCULATION)
+    ]
+    askable = [
+        (slot, action) for slot, action in actions.items() if action in (ASK, ASK_EASIER)
+    ]
+    askable.sort(key=lambda item: policy_for(item[0]).ask_priority)
+    inferred = [slot for slot, action in actions.items() if action == INFER]
+    unknown_slots = [slot for slot, action in actions.items() if action == ASK_EASIER]
+
+    # 结构化日志（计划第 20 节）：一眼看出"为什么问 / 为什么不问"
+    logger.info(
+        "[ActionPlanner] %s",
+        {
+            "actions": actions,
+            "blocked": blocked,
+            "deferred": deferred,
+            "askable": [slot for slot, _ in askable],
+            "infer": inferred,
+        },
+    )
+
+    if blocked:
+        slot = blocked[0]
+        question = (
+            policy_for(slot).blocked_message
+            or question_for(slot, language, variant_seed, easier=True)
+        )
+        return GateDecision(
+            ready=False, gate="recommendation",
+            missing=blocked + [s for s, _ in askable],
+            reason="真正无法继续（无法推导 + 客户未授权 + 该 Action 必需）：" + ", ".join(blocked),
+            next_question=question, status="BLOCKED",
+            blocked_slots=blocked, deferred_slots=deferred,
+        )
+
+    if askable:
+        slot, action = askable[0]
+        easier = action == ASK_EASIER or profile.ask_count(slot) >= 1
+        question = (
+            _size_axis_question(profile, language, variant_seed)
+            if slot == "size_axis"
+            else None
+        ) or question_for(slot, language, variant_seed, easier=easier)
+        question = _with_size_hint(profile, slot, language, question)
+        return GateDecision(
+            ready=False, gate="recommendation",
+            # missing 只列出**还要问**的字段（延后 / 降级的字段放 deferred_slots，
+            # 否则追问侧会照着 missing 把已经不再追问的字段又问一遍）
+            missing=[s for s, _ in askable],
+            reason="继续追问（其余字段已决策 / 延后）：" + ", ".join(s for s, _ in askable),
+            next_question=question, status="CONTINUE_ASKING",
+            unknown_slots=unknown_slots, deferred_slots=deferred,
+        )
+
+    # 无需再问 → 放行；有延后/降级字段时按 Best-effort 推荐
+    if deferred:
         return GateDecision(
             ready=True, gate="recommendation",
-            reason="硬性条件齐备，其余字段客户不知道：" + ", ".join(unknown_slots),
-            status="DEGRADED_READY", unknown_slots=unknown_slots,
+            reason="可推荐；以下字段不再追问（只影响计算或按降级处理）：" + ", ".join(deferred),
+            status="DEGRADED_READY", unknown_slots=deferred, deferred_slots=deferred,
         )
     return GateDecision(
         ready=True, gate="recommendation",
-        reason="尺寸 + P值 + 室内外 + 固装租赁齐备",
+        reason="推荐必需信息齐备（其余字段已按客户决策处理）",
         status="READY",
     )
 
@@ -707,7 +769,13 @@ def check_calculation_ready(
     variant_seed: int = 0,
     language: str = "en",
 ) -> GateDecision:
-    """Calculation Ready Gate：屏体宽高齐备才做工程计算。"""
+    """Calculation Ready Gate（v2.1）：只有**依赖尺寸的计算**才被阻塞。
+
+    - 宽高齐备 → READY
+    - 客户授权 AI 决定尺寸（DELEGATED）→ 按观看距离给**参考尺寸**（确定性推导）→ READY
+    - 尺寸问不出来 / 客户不说（DEFERRED / DECLINED）→ 挂起（DEFERRED）：
+      照常推荐产品，只是这一轮不做箱体/模组计算（计划第 13 节）
+    """
     if profile is None:
         return GateDecision(
             ready=False, gate="calculation", missing=["width", "height"],
@@ -715,13 +783,77 @@ def check_calculation_ready(
             next_question=question_for("width", language, variant_seed),
         )
 
+    from .field_policy import (  # noqa: PLC0415
+        ASK,
+        ASK_EASIER,
+        CALCULATION_SLOTS,
+        field_action,
+        plan_actions,
+        policy_for,
+    )
+
+    # 1) 客户授权 AI 决定尺寸 → 用观看距离推导参考尺寸（Python 推导，不是 LLM 猜）
+    delegated_size = any(
+        profile.is_delegated(slot) for slot in ("size", "width", "height")
+    )
+    if delegated_size:
+        from .parameter_inference import suggest_screen_size
+
+        suggestion = suggest_screen_size(profile)
+        if suggestion:
+            width_m, height_m = suggestion
+            decision = GateDecision(
+                ready=True, gate="calculation",
+                reason=(
+                    "客户授权 AI 决定尺寸 → 按观看距离推导参考尺寸 "
+                    f"{width_m}m x {height_m}m（仅供本轮计算参考）"
+                ),
+                status="READY",
+            )
+            decision.derived_size_m = [width_m, height_m]
+            return decision
+        # 客户授权了 AI 决定尺寸，但没有观看距离 → 推导不出来。
+        # 这时候不要回头再问尺寸（客户已经授权了），而是问"推导需要的输入"：
+        # 观看距离还能问就问观看距离，否则把计算挂起（推荐照常）。
+        # 观看距离还能问（客户从没说过 / 说过不知道但还没到头）→ 问观看距离；
+        # 客户已经授权 / 拒绝 / 延后观看距离 → 本轮只推荐产品，计算挂起
+        distance_action = field_action(profile, "viewing_distance")
+        if distance_action in (ASK, ASK_EASIER):
+            question = question_for("viewing_distance", language, variant_seed)
+            return GateDecision(
+                ready=False, gate="calculation", missing=["viewing_distance"],
+                reason="客户授权 AI 决定尺寸，但缺少观看距离（推导尺寸需要它）",
+                next_question=question, status="CONTINUE_ASKING",
+            )
+        return GateDecision(
+            ready=False, gate="calculation", missing=["width", "height"],
+            reason="客户授权 AI 决定尺寸，但没有任何可用于推导的信息 → 本轮只推荐产品",
+            next_question=None, status="DEFERRED",
+            deferred_slots=["size"],
+        )
+
+    # 2) 宽高齐备 → 直接算
     missing: List[str] = []
     if getattr(profile, "target_width_m", None) is None:
         missing.append("width")
     if getattr(profile, "target_height_m", None) is None:
         missing.append("height")
 
-    if missing:
+    if not missing:
+        return GateDecision(
+            ready=True, gate="calculation",
+            reason=f"目标尺寸 {getattr(profile, 'target_width_m', None)}m x "
+                   f"{getattr(profile, 'target_height_m', None)}m 已具备",
+        )
+
+    # 3) 尺寸还能问 → 继续问（宽高都缺时一次问"整块尺寸"）
+    actions = plan_actions(profile, CALCULATION_SLOTS)
+    askable = [slot for slot, action in actions.items() if action in (ASK, ASK_EASIER)]
+    deferred = [
+        slot for slot, action in actions.items()
+        if action not in (ASK, ASK_EASIER) and action != "use"
+    ]
+    if askable:
         # 宽高都缺时一次性问"整块尺寸"，避免只问宽度、下一轮又追问高度
         slot = "size" if len(missing) == 2 else missing[0]
         question = _with_size_hint(
@@ -730,13 +862,15 @@ def check_calculation_ready(
         return GateDecision(
             ready=False, gate="calculation", missing=missing,
             reason="缺少屏体尺寸，先推荐产品、暂不做箱体/模组计算",
-            next_question=question,
+            next_question=question, status="CONTINUE_ASKING",
+            deferred_slots=deferred,
         )
 
+    # 4) 尺寸已经问不出来 / 客户不说 → 计算挂起（推荐照常）
     return GateDecision(
-        ready=True, gate="calculation",
-        reason=f"目标尺寸 {getattr(profile, 'target_width_m', None)}m x "
-               f"{getattr(profile, 'target_height_m', None)}m 已具备",
+        ready=False, gate="calculation", missing=missing,
+        reason="尺寸已延后（客户不知道 / 不提供）→ 本轮只推荐产品，不做箱体/模组计算",
+        next_question=None, status="DEFERRED", deferred_slots=deferred or missing,
     )
 
 

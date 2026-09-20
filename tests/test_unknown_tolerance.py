@@ -206,7 +206,9 @@ class TestPlanTestCases:
         )
         profile = turn["requirement_profile"]
         # 客户第一次说不知道：记下原因，而且**不放弃**这一项
-        assert profile.unknown_reasons["viewing_distance"] == "customer_does_not_know"
+        # v2.1：字段状态是 UNKNOWN（还没到 DEFERRED）
+        assert profile.field_decision("viewing_distance") == "UNKNOWN"
+        assert profile.unknown_reasons
         assert profile.ask_count("viewing_distance") <= MAX_ASKS_PER_SLOT
         # 第二次问同一个槽位 → 降低门槛的问法（给区间 / 二选一），不是机械重复
         assert turn["pending_slot"] == "viewing_distance"
@@ -244,7 +246,7 @@ class TestPlanTestCases:
         )
         profile = turn["requirement_profile"]
         # 不知道的字段 → unknown；同时说出的尺寸必须被记录（信息不丢）
-        assert profile.unknown_reasons["viewing_distance"] == "customer_does_not_know"
+        assert profile.field_decision("viewing_distance") == "UNKNOWN"
         assert profile.target_width_mm == pytest.approx(5000.0)
         assert profile.target_height_mm == pytest.approx(3000.0)
         # 已经拿到值的字段不会被再次追问
@@ -279,16 +281,17 @@ class TestPlanTestCases:
         assert result.slot_status("viewing_distance") == "confirmed"
 
     def test_7_customer_skips(self, sales_llm):
+        """客户明确"跳过这一项" → v2.1 记为 DECLINED（不再追问）。"""
         first = _reach_viewing_distance_question(sales_llm)
         turn = _turn(
             sales_llm, "let's skip the viewing distance",
             first["requirement_profile"], {}, last_asked="viewing_distance",
         )
         profile = turn["requirement_profile"]
-        assert profile.unknown_reasons["viewing_distance"] == "customer_skip"
-        # 客户口径：硬性条件即使被跳过也必须问回来（换成更口语的问法）
-        assert turn["pending_slot"] == "viewing_distance"
-        assert turn["recommendation_gate"]["status"] == "CONTINUE_ASKING"
+        assert profile.field_decision("viewing_distance") == "DECLINED"
+        assert profile.is_exhausted("viewing_distance") is True
+        # 客户明确不提供 → 不再追问这一项
+        assert turn["pending_slot"] != "viewing_distance"
 
 
 class TestDegradedRecommendation:

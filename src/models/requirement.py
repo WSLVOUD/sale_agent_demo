@@ -57,6 +57,44 @@ SLOT_TO_FIELD: Dict[str, str] = {
 # 同一字段最多主动询问次数（Phase 5：超过就不再问）
 MAX_ASKS_PER_SLOT = 2
 
+# ── v2.1 字段决策状态（《客户决策状态与灵活追问优化实施计划》第 3 / 6 节）────
+# 客户明确提供 / 系统推导 / 客户不知道 / 客户授权 AI 决定 / 客户明确不提供 /
+# 当前不再追问（延后）。
+FIELD_STATES: frozenset[str] = frozenset({
+    "MISSING", "CONFIRMED", "INFERRED", "UNKNOWN",
+    "DELEGATED", "DECLINED", "DEFERRED",
+})
+
+# 槽位名归一化：外部（计划文档 / 测试 / 各模块）可能用 width / target_width_m /
+# viewing_distance / viewing_distance_m / pixel_pitch / pixel_pitch_mm 等不同写法。
+_SLOT_CANONICAL: Dict[str, str] = {
+    "viewing_distance": "viewing_distance_m",
+    "viewing_distance_m": "viewing_distance_m",
+    "distance": "viewing_distance_m",
+    "pixel_pitch": "pixel_pitch",
+    "pixel_pitch_mm": "pixel_pitch",
+    "width": "width",
+    "target_width_m": "width",
+    "target_width_mm": "width",
+    "height": "height",
+    "target_height_m": "height",
+    "target_height_mm": "height",
+    "size": "size",
+    "target_size": "size",
+    "screen_size": "size",
+    # 注意：budget（预算档位）与 price_preference（价格/质量取向）是两个独立槽位，
+    # 不能再归一到同一个键 —— 否则 requirement_basis / unknown_slots 会重复计数。
+    "budget": "budget",
+    "budget_level": "budget",
+    "price": "price_preference",
+}
+
+
+def canonical_slot(slot: str) -> str:
+    """把各种槽位写法归一到统一名字（width / height / size / pixel_pitch …）。"""
+    key = str(slot or "").strip()
+    return _SLOT_CANONICAL.get(key, key)
+
 # 这些槽位"问一次就够"：客户不知道时直接跳过、换下一个问题（不再问第二遍）。
 # 点间距就是这一类 —— 客户不知道 P 值，我们就转问观看距离，用规则替他推。
 SINGLE_ASK_SLOTS: frozenset[str] = frozenset({"pixel_pitch"})
@@ -210,6 +248,13 @@ class RequirementProfile(BaseModel):
     unknown_reasons: Dict[str, str] = Field(default_factory=dict)
     # 上一轮主动问的是哪个槽位（客户答非所问时要能对上"这一项我没答"）
     last_asked_slot: str = ""
+    # ── v2.1 客户决策状态 ────────────────────────────────────────────────
+    # slot -> delegated / declined / deferred / unknown / confirmed
+    #   客户授权 AI 决定 → delegated（不再追问，允许确定性推导）
+    #   客户明确不提供   → declined（不再追问）
+    #   问满两次仍不知道 → deferred（不再追问，只阻塞确实依赖它的 Action）
+    # 缺省（没记录）时由 field_decision() 从"值 + ask_counts + unknown_reasons"推导
+    field_decisions: Dict[str, str] = Field(default_factory=dict)
 
     # ── 视觉需求（《智谱视觉需求提取接入实施计划》第七/十八/二十阶段）─────
     # 图片给出的尺寸只作为**提示**：[宽度mm, 高度mm]。用来追问客户确认，
@@ -664,29 +709,63 @@ class RequirementProfile(BaseModel):
             return False
         return self.slot_source(slot) in CONFIRMED_SOURCES
 
+    # ── 槽位键的读写（v2.1：viewing_distance / viewing_distance_m 等写法统一）──
+    @staticmethod
+    def _slot_lookup(mapping: Dict[str, Any], slot: str, default: Any = None) -> Any:
+        """从 ``ask_counts`` / ``unknown_reasons`` 里取值，兼容两种槽位写法。"""
+        if not mapping:
+            return default
+        key = canonical_slot(slot)
+        if key in mapping:
+            return mapping[key]
+        raw = str(slot or "")
+        if raw in mapping:
+            return mapping[raw]
+        for candidate, value in mapping.items():
+            if canonical_slot(candidate) == key:
+                return value
+        return default
+
+    @staticmethod
+    def _slot_write(mapping: Dict[str, Any], slot: str, value: Any) -> None:
+        """写入时统一用规范键，并把旧的写法清掉（避免两份数据打架）。"""
+        key = canonical_slot(slot)
+        raw = str(slot or "")
+        if raw and raw != key:
+            mapping.pop(raw, None)
+        mapping[key] = value
+
     def ask_count(self, slot: str) -> int:
-        return int(self.ask_counts.get(slot, 0) or 0)
+        return int(self._slot_lookup(self.ask_counts, slot, 0) or 0)
 
     def record_ask(self, slot: str) -> int:
         """记录"又问了客户一次"，返回累计次数。"""
-        self.ask_counts[slot] = self.ask_count(slot) + 1
-        return self.ask_counts[slot]
+        count = self.ask_count(slot) + 1
+        self._slot_write(self.ask_counts, slot, count)
+        return count
 
     def mark_unknown(self, slot: str, reason: str = "customer_does_not_know") -> None:
         """把槽位标记为 unknown（客户不知道 / 明确跳过）。"""
-        self.unknown_reasons[slot] = reason
+        self._slot_write(self.unknown_reasons, slot, reason)
         # 明确跳过时不用问第二次
         if reason == "customer_skip":
-            self.ask_counts[slot] = max(self.ask_count(slot), MAX_ASKS_PER_SLOT)
+            self._slot_write(self.ask_counts, slot, max(self.ask_count(slot), MAX_ASKS_PER_SLOT))
 
     def is_unknown(self, slot: str) -> bool:
         if self.slot_is_confirmed(slot):
             return False   # Phase 10：客户后来补上了 → unknown 自动解除
         # 客户明确"跳过这一项" → 不用再问第二次，直接算 unknown
-        if self.unknown_reasons.get(slot) == "customer_skip":
+        reason = str(self._slot_lookup(self.unknown_reasons, slot, "") or "")
+        if reason in ("customer_skip", "customer_declined"):
             return True
         # 单次询问的槽位（点间距）：客户答"不知道"就跳过，转去问观看距离
-        if slot in SINGLE_ASK_SLOTS and self.unknown_reasons.get(slot):
+        if canonical_slot(slot) in SINGLE_ASK_SLOTS and reason:
+            return True
+        # v2.1：客户明确"不提供"（DECLINED）或问到头仍没有（DEFERRED）
+        # 同样属于"这一项从客户这里拿不到"，老接口必须照旧返回 True
+        # （注意：这里直接读 field_decisions，避免和 field_decision() 互相递归）
+        explicit = str(self.field_decisions.get(canonical_slot(slot)) or "").strip().lower()
+        if explicit in ("deferred", "declined"):
             return True
         # 客户第一次答"不知道"只是 unknown_pending：还允许按"降低门槛"的方式再问一次，
         # 只有问满 MAX_ASKS_PER_SLOT 次仍无值，才真正锁定为 unknown。
@@ -722,6 +801,107 @@ class RequirementProfile(BaseModel):
         if self.ask_count(slot) >= 1:
             return "unknown_pending"
         return "missing"
+
+    # ── v2.1：字段决策状态（计划第 6 节）──────────────────────────────────
+    def mark_decision(self, slot: str, decision: str) -> str:
+        """记录客户对某个字段的决策态度，返回最终落地的状态（大写）。
+
+        - ``delegated`` 客户授权 AI 决定 → 不再追问
+        - ``declined``  客户明确不提供   → 不再追问
+        - ``unknown``   客户说不知道：第一次 → UNKNOWN（可以降门槛再问一次）；
+                        问满两次仍然不知道 → 直接落 DEFERRED（不再追问）
+        - ``confirmed`` 客户后来给了值   → 清掉之前的决策标记
+        """
+        key = canonical_slot(slot)
+        value = str(decision or "").strip().lower()
+        if not key or not value:
+            return self.field_decision(key)
+
+        if value == "confirmed":
+            # 客户给了值 → 之前的 delegated / declined / deferred 全部作废
+            self.field_decisions.pop(key, None)
+            self.unknown_reasons.pop(key, None)
+            return "CONFIRMED"
+
+        if value == "unknown":
+            # 第一次"不知道"→ UNKNOWN；问满两次 → DEFERRED（计划 4.1）
+            # 另外：点间距这类"问一次就够"的字段（客户不知道就转问观看距离）
+            # 第一次也直接落 DEFERRED。
+            already_asked = self.ask_count(key) >= MAX_ASKS_PER_SLOT
+            if already_asked or key in SINGLE_ASK_SLOTS:
+                value = "deferred"
+            else:
+                self.unknown_reasons[key] = "customer_does_not_know"
+        elif value == "deferred":
+            self.ask_counts[key] = max(self.ask_count(key), MAX_ASKS_PER_SLOT)
+        elif value == "declined":
+            self.unknown_reasons[key] = "customer_declined"
+            self.ask_counts[key] = max(self.ask_count(key), MAX_ASKS_PER_SLOT)
+        elif value == "delegated":
+            self.unknown_reasons.pop(key, None)
+
+        self.field_decisions[key] = value
+        return self.field_decision(key)
+
+    def field_decision(self, slot: str) -> str:
+        """字段状态（大写，计划第 3.1 节）：MISSING / CONFIRMED / INFERRED /
+
+        UNKNOWN / DELEGATED / DECLINED / DEFERRED。
+
+        优先返回客户明确做出的决策（``field_decisions``）；
+        否则从"有没有值 / 问过几次 / unknown 原因"推导。
+        """
+        key = canonical_slot(slot)
+        explicit = str(self.field_decisions.get(key) or "").strip().lower()
+        if explicit in ("delegated", "declined", "deferred", "unknown", "confirmed"):
+            return explicit.upper()
+
+        # size（宽+高）上的决策要传给 width / height：客户说"尺寸你决定"时，
+        # 不能因为 width / height 没单独记录就退回 MISSING（那会又去问尺寸）。
+        if key in ("width", "height") and not self.slot_value_present(key):
+            size_decision = str(self.field_decisions.get("size") or "").strip().lower()
+            if size_decision in ("delegated", "declined", "deferred", "unknown"):
+                return size_decision.upper()
+
+        # 反向也要一致：客户分别说"宽你定 / 高你也定" → 整个尺寸就是 DELEGATED，
+        # 不能因为 size 这个合成槽位没单独记录就回头再问一次尺寸。
+        if key == "size" and not self.slot_value_present("size"):
+            pair = (self.field_decision("width"), self.field_decision("height"))
+            for state_name in ("DELEGATED", "DECLINED", "DEFERRED", "UNKNOWN"):
+                if pair[0] == state_name and pair[1] == state_name:
+                    return state_name
+
+        if self.slot_value_present(key):
+            return "CONFIRMED" if self.slot_source(key) in CONFIRMED_SOURCES else "INFERRED"
+        reason = str(self.unknown_reasons.get(key) or "")
+        if reason == "customer_skip" or reason == "customer_declined":
+            return "DECLINED"
+        if self.is_unknown(key):
+            return "DEFERRED"
+        if self.ask_count(key) >= 1:
+            return "UNKNOWN"
+        return "MISSING"
+
+    def is_delegated(self, slot: str) -> bool:
+        """客户是否授权 AI 决定这一项（不再追问，允许确定性推导）。"""
+        return self.field_decision(slot) == "DELEGATED"
+
+    def is_deferred(self, slot: str) -> bool:
+        """这一项当前不再追问（问不出来 / 没依据），只阻塞确实依赖它的 Action。"""
+        return self.field_decision(slot) == "DEFERRED"
+
+    def is_declined(self, slot: str) -> bool:
+        """客户明确不提供这一项 → 不再追问。"""
+        return self.field_decision(slot) == "DECLINED"
+
+    def is_exhausted(self, slot: str) -> bool:
+        """这一项已经问到头了（DECLINED / DEFERRED）→ 不允许再问。"""
+        return self.field_decision(slot) in ("DECLINED", "DEFERRED")
+
+    def downstream_slots(self) -> List[str]:
+        """当前**允许继续追问**的槽位（其余一律跳过）。"""
+        skip_states = {"CONFIRMED", "INFERRED", "DELEGATED", "DECLINED", "DEFERRED"}
+        return [slot for slot in SLOT_TO_FIELD if self.field_decision(slot) not in skip_states]
 
     def requirement_basis(self) -> Dict[str, List[str]]:
         """Phase 14：推荐依据（哪些字段是客户确认的 / 推断的 / 客户不知道的）。
@@ -802,9 +982,26 @@ class RequirementProfile(BaseModel):
             ask_counts[slot] = max(int(ask_counts.get(slot, 0) or 0), int(count or 0))
         data["ask_counts"] = ask_counts
 
+        # ── v2.1：客户决策状态随档案一起合并 ────────────────────────────────
+        # delegated / declined / deferred 是"客户的选择"，必须跨轮保留；
+        # 但在这一轮客户**真的给了值**的字段上要作废（客户改主意了）。
+        decisions = dict(self.field_decisions or {})
+        for slot, decision in (incoming.field_decisions or {}).items():
+            decisions[canonical_slot(slot)] = str(decision or "").strip().lower()
+        for slot in list(decisions):
+            if incoming.slot_is_confirmed(slot):
+                decisions.pop(slot, None)
+        data["field_decisions"] = decisions
+
         unknown_reasons = dict(self.unknown_reasons or {})
         unknown_reasons.update(incoming.unknown_reasons or {})
         merged_profile = RequirementProfile(**data)
+        # 客户这一轮给了值 → 之前的 delegated / declined / deferred 一并作废
+        merged_profile.field_decisions = {
+            slot: decision
+            for slot, decision in (merged_profile.field_decisions or {}).items()
+            if not merged_profile.slot_is_confirmed(slot)
+        }
         # 客户后来明确补上了 → 撤销 unknown 标记（场景默认值不算"补上"）
         unknown_reasons = {
             slot: reason for slot, reason in unknown_reasons.items()

@@ -7,7 +7,7 @@ Phase 0 建立的统一评估基线。在改动任何检索/推荐逻辑之前�
 
 | 文件 | 作用 |
 |------|------|
-| `golden_dataset.json` | Golden Dataset：72 条标注用例，覆盖室内/室外、固装/租赁、会议室/教室/展厅/商场/广告/舞台/演唱会、模糊需求、多轮、多语言、指定点间距、指定尺寸、不完整与冲突需求 |
+| `golden_dataset.json` | Golden Dataset：82 条标注用例，覆盖室内/室外、固装/租赁、会议室/教室/展厅/商场/广告/舞台/演唱会、模糊需求、多轮、多语言、指定点间距、指定尺寸、不完整与冲突需求；v2.1 追加客户决策状态边界样本（g073~g082：DELEGATED / UNKNOWN / DEFERRED / DECLINED / BLOCKED） |
 | `metrics.py` | 公共指标与工具：Recall@K、MRR、Slot Accuracy、硬约束校验、产品代号解析 |
 | `retrieval_eval.py` | 检索评估：Recall@5/10、MRR、硬约束违规率、延迟（Series 级 + Model 级） |
 | `recommendation_eval.py` | 需求理解与推荐评估：Requirement Slot Accuracy、路由准确率、Top-1/Top-3 |

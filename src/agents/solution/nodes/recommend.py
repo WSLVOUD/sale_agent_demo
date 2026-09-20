@@ -578,11 +578,25 @@ def recommend_node(state: SolutionState) -> SolutionState:
                 format_screen_spec,
             )
 
+            # v2.1：客户授权 AI 决定尺寸时，用观看距离推导出的**参考尺寸**算，
+            # 而不是把参考尺寸写进客户的确认事实（计划第 14 / 15 节）。
+            derived = list(getattr(calc_decision, "derived_size_m", None) or [])
+            if len(derived) == 2 and derived[0] and derived[1]:
+                target_width_mm = float(derived[0]) * 1000
+                target_height_mm = float(derived[1]) * 1000
+                logger.info(
+                    "[Delegated] 尺寸由观看距离推导：%sm x %sm（仅供参考，不写入客户事实）",
+                    derived[0], derived[1],
+                )
+            else:
+                target_width_mm = profile.target_width_mm
+                target_height_mm = profile.target_height_mm
+
             # 客户口径：箱体可以横拼也可以竖拼 → 两种排布都给客户
             calculation_variants = calculate_screen_variants(
                 recommendations[0]["model"],
-                target_width_mm=profile.target_width_mm,
-                target_height_mm=profile.target_height_mm,
+                target_width_mm=target_width_mm,
+                target_height_mm=target_height_mm,
             )
             calculation = calculation_variants["landscape"]
             calculation["summary"] = format_screen_spec(calculation)
@@ -612,13 +626,15 @@ def recommend_node(state: SolutionState) -> SolutionState:
     follow_up = bool(_ALTERNATIVES_RE.search(current_message)) and bool(
         state.get("already_recommended")
     )
+    # v2.1：尺寸已经延后/客户不说时，不要在本轮再问尺寸（问了就是重复）
+    ask_size = (not calc_decision.ready) and bool(calc_decision.next_question)
     answer = _express_recommendation(
         recommendations=recommendations,
         profile=profile,
         calculation=calculation,
         additional_requirements=state.get("additional_requirements", []) or [],
         customer_text=customer_text,
-        need_size_question=not calc_decision.ready,
+        need_size_question=ask_size,
         language=state.get("understood_language") or "en",
         degraded_slots=degraded_slots,
         follow_up=follow_up,

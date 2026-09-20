@@ -178,6 +178,39 @@ def screen_size_for_distance(distance_m: Optional[float]) -> Optional[str]:
     return None
 
 
+# v2.1 Phase 7：客户授权 AI 决定尺寸时的**确定性**参考尺寸
+# 规则（16:9 + 行业常用的"观看距离 ≈ 3 倍屏高"经验值）：
+#     height = clamp(distance / 3, 1.0m, 12.0m)
+#     width  = height * 16 / 9
+# 没有观看距离 → None（交给 Calculation Gate 延后，绝不瞎猜）
+DELEGATED_SIZE_MIN_H_M = 1.0
+DELEGATED_SIZE_MAX_H_M = 12.0
+DELEGATED_SIZE_ASPECT = 16 / 9
+DELEGATED_SIZE_DISTANCE_FACTOR = 3.0      # 观看距离 ÷ 3 ≈ 舒适屏高
+
+
+def suggest_screen_size(facts: Any) -> Optional[Tuple[float, float]]:
+    """客户授权 AI 决定尺寸时，按观看距离给出**参考尺寸**（米）。
+
+    注意（计划第 14 / 15 节）：这是 Python 的确定性推导，不是 LLM 猜数字；
+    推导结果只用于工程计算与话术参考，**不会写进客户的确认事实**。
+    """
+    if facts is None:
+        return None
+    if hasattr(facts, "to_facts"):
+        facts = facts.to_facts()
+    distance = None
+    if isinstance(facts, dict):
+        distance = facts.get("viewing_distance_m") or facts.get("distance")
+    distance = parse_distance(distance)
+    if not distance or distance <= 0:
+        return None
+    height = max(DELEGATED_SIZE_MIN_H_M, min(DELEGATED_SIZE_MAX_H_M,
+                                             float(distance) / DELEGATED_SIZE_DISTANCE_FACTOR))
+    width = height * DELEGATED_SIZE_ASPECT
+    return round(width, 2), round(height, 2)
+
+
 def parse_distance(text: Any) -> Optional[float]:
     """从 "4米" / "4m" / "4000mm" 这类文本解析观看距离（米）。"""
     if text is None or text == "":
@@ -647,4 +680,5 @@ __all__ = [
     "parse_distance",
     "pitch_range_for_distance",
     "screen_size_for_distance",
+    "suggest_screen_size",
 ]

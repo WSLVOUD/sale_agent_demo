@@ -184,6 +184,15 @@ class RecommendationEngine:
                 }
 
         technical = infer_technical_parameters(profile.to_facts())
+        # v2.1 Phase 7：客户授权 AI 决定点间距 → 由环境 + 观看距离 / 场景偏好确定性推导
+        # （绝不让 LLM 猜一个 P 值当事实）
+        if profile.is_delegated("pixel_pitch"):
+            logger.info(
+                "[Delegated] pixel_pitch 由环境(%s)+距离(%s)/场景(%s)推导：band=%s~%s target=%s",
+                technical.get("environment"), technical.get("viewing_distance_m"),
+                profile.purpose, technical.get("pixel_pitch_min_mm"),
+                technical.get("pixel_pitch_max_mm"), technical.get("pitch_target_mm"),
+            )
         constraints = build_hard_constraints(profile)
 
         candidates, rejected = self._hard_filter(constraints, technical)

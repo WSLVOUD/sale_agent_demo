@@ -773,24 +773,74 @@ ack 的写法（很重要，销售不能只会追问）：
                     vision_stats.get("corrected"), profile.vision_corrections,
                 )
 
-        # ── Phase 4~9：Unknown 容错 ──────────────────────────────────────────
-        # 1) 客户"不知道 / 跳过"的是**上一轮问的那一项**（last_asked_slot）；
-        #    如果这一轮他其实给了其它字段，Extractor 已经全量记录，互不影响。
-        # 2) 问满两次仍无值 → unknown，不再阻塞；Gate 会转 DEGRADED_READY。
-        from ....core.unknown_detector import detect_no_answer
+        # ── v2.1 Phase 3：客户回答意图（不知道 / 你决定 / 不提供）──────────────
+        # 客户这句话可以同时给出多个决策（"I don't know the viewing distance either,
+        # you can decide the pitch." → viewing_distance=UNKNOWN + pitch=DELEGATED），
+        # 所以这里按"槽位 → 决策"逐条落地，而不是只看 last_asked_slot。
+        import json as _json
+
+        from ....core.customer_response import detect_response_intents, is_customer_correction
 
         last_asked = str(getattr(profile, "last_asked_slot", "") or "")
-        no_answer_reason = detect_no_answer(current_msg_text)
-        # 注意：判定用 slot_is_confirmed 而不是 slot_value_present ——
-        # 场景默认值（例如"教堂默认固装"）虽然"有值"，但客户对安装方式说了
-        # "不知道"时仍必须走 unknown 流程，否则同一问题会被无限追问。
-        if last_asked and no_answer_reason and not profile.slot_is_confirmed(last_asked):
-            profile.mark_unknown(last_asked, no_answer_reason)
+        response_intents = detect_response_intents(
+            current_msg_text, last_asked_slot=last_asked
+        )
+        handled_slots = set()
+        for item in response_intents:
+            # 只处理"决策类"回答；客户直接给值的情况由 Extractor 负责
+            if item.intent not in ("delegated", "declined", "unknown"):
+                continue
+            if profile.slot_is_confirmed(item.slot):
+                # 客户这一轮其实给了值 → 以值为准，不记决策
+                continue
+            new_state = profile.mark_decision(item.slot, item.intent)
+            handled_slots.add(item.slot)
+            # 结构化日志（计划第 20 节）：回答"为什么 AI 不问了 / 还在问"
             logger.info(
-                "[QuestionState] slot=%s ask_count=%d status=%s reason=%s",
-                last_asked, profile.ask_count(last_asked),
-                profile.slot_status(last_asked), no_answer_reason,
+                "[FieldDecision] %s",
+                _json.dumps(
+                    {
+                        "slot": item.slot,
+                        "new_state": new_state,
+                        "ask_count": profile.ask_count(item.slot),
+                        "action": {
+                            "DELEGATED": "infer",
+                            "DECLINED": "skip_question",
+                            "DEFERRED": "skip_question",
+                            "UNKNOWN": "ask_easier",
+                        }.get(new_state, "record"),
+                        "reason": item.intent,
+                        "evidence": item.evidence,
+                    },
+                    ensure_ascii=False,
+                ),
             )
+
+        if is_customer_correction(current_msg_text):
+            logger.info("[CustomerResponse] correction detected: %r", current_msg_text[:60])
+
+        # 兜底：新模块没覆盖的说法（如 "not available" / "没有了"）仍按老规则处理，
+        # 且"客户让 AI 决定"要映射成 DELEGATED（不是 unknown）。
+        if last_asked and last_asked not in handled_slots:
+            from ....core.unknown_detector import detect_no_answer
+
+            no_answer_reason = detect_no_answer(current_msg_text)
+            if no_answer_reason and not profile.slot_is_confirmed(last_asked):
+                mapped = {
+                    "customer_skip": "declined",
+                    "customer_does_not_know": "unknown",
+                    "customer_defers": "delegated",
+                }.get(no_answer_reason, "unknown")
+                new_state = profile.mark_decision(last_asked, mapped)
+                logger.info(
+                    "[FieldDecision] %s",
+                    _json.dumps(
+                        {"slot": last_asked, "new_state": new_state,
+                         "ask_count": profile.ask_count(last_asked),
+                         "reason": no_answer_reason},
+                        ensure_ascii=False,
+                    ),
+                )
         logger.info(
             "[RequirementExtraction] message=%r extracted=%s confirmed=%s unknown=%s",
             current_msg_text[:80],

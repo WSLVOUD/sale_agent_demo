@@ -74,15 +74,35 @@ QUESTION_PLAN: tuple[tuple[str, str, str], ...] = (
 BLOCKING_SLOTS = ("environment", "purpose")
 
 
+# ── v2.1：字段状态驱动的"要不要再问" ─────────────────────────────────────
+# CONFIRMED / INFERRED / DELEGATED / DECLINED / DEFERRED → 一律不再问
+# UNKNOWN → 还可以用"降低门槛"的问法再问一次
+# MISSING → 正常问
+_SKIP_STATES = frozenset({"CONFIRMED", "INFERRED", "DELEGATED", "DECLINED", "DEFERRED"})
+
+
+def slot_state(profile: RequirementProfile, slot: str) -> str:
+    """槽位当前状态（大写；见 RequirementProfile.field_decision）。"""
+    canonical = _SLOT_ALIAS.get(slot, slot)
+    try:
+        return profile.field_decision(canonical)
+    except Exception:  # pragma: no cover - 防御式
+        return "MISSING"
+
+
 def _slot_filled(profile: RequirementProfile, slot: str) -> bool:
     """该槽位是否"不用再问了"。
 
-    Phase 17：客户已经明确表示不知道（问满两次 / 主动跳过）的字段 → 视为
-    "不用再问"，直接跳到下一个，绝不重复追问同一项。
+    v2.1：由字段状态决定 ——
+      已确认 / 系统推断 / 客户授权 AI 决定 / 客户拒绝 / 已延后 → 不用再问；
+      客户说不知道（UNKNOWN）→ 换成低门槛问法再问一次；
+      从没问过（MISSING）→ 可以问。
     """
-    canonical = _SLOT_ALIAS.get(slot, slot)
-    if profile.is_unknown(canonical):
+    state = slot_state(profile, slot)
+    if state in _SKIP_STATES:
         return True
+    if state == "UNKNOWN":
+        return False
     if slot == "target_size":
         return profile.has_target_size
     if slot == "viewing_distance_m":
@@ -109,13 +129,18 @@ def plan_next_question(
     for slot, question_en, question_zh in QUESTION_PLAN:
         if _slot_filled(profile, slot):
             continue
-        question = question_for(slot, language, seed) or (
+        state = slot_state(profile, slot)
+        # 客户说过"不知道" → 第二次用"降低门槛"的问法（给区间 / 二选一）
+        easier = state == "UNKNOWN" and profile.ask_count(_SLOT_ALIAS.get(slot, slot)) >= 1
+        question = question_for(slot, language, seed, easier=easier) or (
             question_zh if language == "zh" else question_en
         )
         return {
             "slot": slot,
             "question": question,
             "blocking": slot in BLOCKING_SLOTS,
+            "state": state,
+            "easier": easier,
             # Phase 17：字段优先级（HIGH → MEDIUM → LOW）
             "priority": SLOT_PRIORITY.get(_SLOT_ALIAS.get(slot, slot), "MEDIUM"),
             "missing": profile.missing_slots(),
@@ -139,7 +164,7 @@ def should_ask_before_recommend(profile: RequirementProfile) -> bool:
 
 
 def missing_slots(profile: RequirementProfile) -> List[str]:
-    """按采集优先级返回缺失槽位。"""
+    """按采集优先级返回**还值得问**的槽位（已决策/已延后的不再列）。"""
     if profile is None:
         return [slot for slot, _, _ in QUESTION_PLAN]
     return [slot for slot, _, _ in QUESTION_PLAN if not _slot_filled(profile, slot)]
@@ -151,4 +176,5 @@ __all__ = [
     "missing_slots",
     "plan_next_question",
     "should_ask_before_recommend",
+    "slot_state",
 ]

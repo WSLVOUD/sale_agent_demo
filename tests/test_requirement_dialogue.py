@@ -541,13 +541,20 @@ class TestPitchAskedBeforeDistance:
         assert profile.is_unknown("pixel_pitch") is True
         assert state["pending_slot"] == "viewing_distance"
 
-    def test_defer_to_us_counts_as_dont_know(self, sales_llm):
+    def test_delegating_pitch_stops_asking(self, sales_llm):
+        """v2.1：客户说"你决定吧"是**授权 AI 决定**（DELEGATED），不是"不知道"。
+
+        计划 4.2 要求 DELEGATED 与 UNKNOWN 严格区分；计划 14 / 15 要求授权之后
+        走 Python 确定性推导（点间距按环境 + 观看距离 / 场景推导），不再追问同一项。
+        """
         state = self._turn(sales_llm, "we need an indoor LED screen for a conference room",
                            self._profile_without_pitch())
         assert state["pending_slot"] == "pixel_pitch"
         state = self._turn(sales_llm, "你决定吧", state["requirement_profile"])
-        assert state["requirement_profile"].is_unknown("pixel_pitch") is True
-        assert state["pending_slot"] == "viewing_distance"
+        profile = state["requirement_profile"]
+        assert profile.field_decision("pixel_pitch") == "DELEGATED"
+        assert profile.is_delegated("pixel_pitch") is True
+        assert state["pending_slot"] != "pixel_pitch", "客户授权 AI 决定后不能再问点间距"
 
     def test_viewing_distance_still_asked_twice(self, sales_llm):
         """观看距离保持老规则：不知道 → 降门槛再问一次 → 仍不知道才跳过。"""
