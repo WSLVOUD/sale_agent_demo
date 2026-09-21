@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Any, Optional, List
 import uvicorn
 import logging
 import os
@@ -102,6 +102,10 @@ class ChatRequest(BaseModel):
     # 结构：[{"text": "...", "images": [...], "message_id": "..."}]（按到达顺序）
     messages: Optional[List[dict]] = None
     client_message_ids: Optional[List[str]] = None
+    # ── v2.7 §7.1：幂等键。外部平台（n8n / WhatsApp / Webhook）重放同一个 turn 时
+    # 带同一个 turn_id，即可直接拿到上次结果，不会重复执行 Agent。
+    turn_id: Optional[str] = None
+    source: Optional[str] = None
 
 class ChatResponse(BaseModel):
     session_id: str
@@ -125,6 +129,9 @@ class ChatResponse(BaseModel):
     response_count: Optional[int] = None
     # debug_context 只给内部排查用，**前端不得**当成第二条消息渲染
     debug_context: Optional[dict] = None
+    # ── v2.7：Turn 口径 ────────────────────────────────────────────────
+    turn_status: Optional[str] = None
+    duplicate: Optional[bool] = None  # 这次请求是否命中幂等（没有重新执行）
 
 class ClearMemoryRequest(BaseModel):
     session_id: str
@@ -212,6 +219,158 @@ def _merge_turn_request(request: "ChatRequest") -> tuple[str, List[str]]:
         return str(getattr(request, "question", "") or ""), _normalize_images(
             getattr(request, "images", None)
         )
+
+
+def _collect_turn_request(request: "ChatRequest"):
+    """v2.7 §4.3：把请求拆成**消息对象列表**（不再用 text / message_ids 两个数组）。
+
+    幂等（message_id 去重 / turn_id 重放）统一交给 TurnExecutor + TurnStore ——
+    在 API 层过滤掉重复消息，引擎就看不到"客户重发的是哪一条"了。
+    """
+    try:
+        from .input import collect_messages
+
+        return collect_messages(
+            session_id=str(getattr(request, "session_id", "") or ""),
+            source=str(getattr(request, "source", "") or "api"),
+            question=str(getattr(request, "question", "") or ""),
+            images=(
+                [_normalize_images(getattr(request, "images", None))]
+                if getattr(request, "images", None)
+                else None
+            ),
+            messages=getattr(request, "messages", None),
+            message_ids=getattr(request, "client_message_ids", None),
+        )
+    except Exception as error:  # pragma: no cover - 防御式
+        logger.warning("Turn payload collection failed, falling back: %s", error)
+        from .input import CustomerMessage
+
+        return [
+            CustomerMessage(
+                session_id=str(getattr(request, "session_id", "") or ""),
+                text=str(getattr(request, "question", "") or ""),
+                images=_normalize_images(getattr(request, "images", None)),
+                source=str(getattr(request, "source", "") or "api"),
+            )
+        ]
+
+
+# ── v2.7 Turn Engine：所有入口唯一的执行单位 ──────────────────────────────
+_turn_executor = None
+
+
+def _turn_runner(payload: dict):
+    """TurnExecutor → Orchestrator（Agent 在 Turn 里只跑一次）。"""
+    return orchestrator.process_message(
+        message=str(payload.get("text") or ""),
+        session_id=str(payload.get("session_id") or ""),
+        images=payload.get("images") or None,
+        message_count=int(payload.get("message_count") or 1),
+        aggregated=bool(payload.get("aggregated")),
+        turn_id=str(payload.get("turn_id") or ""),
+        turn_context={
+            "turn_id": str(payload.get("turn_id") or ""),
+            "message_ids": list(payload.get("message_ids") or []),
+            "previous_question": dict(payload.get("previous_question") or {}),
+            "source": str(payload.get("source") or "api"),
+        },
+    )
+
+
+def _get_turn_executor():
+    """惰性创建 TurnExecutor（Session Lock / Turn Store / 幂等都在里面）。"""
+    global _turn_executor
+    if _turn_executor is None:
+        from .input import TurnExecutor
+
+        _turn_executor = TurnExecutor(
+            _turn_runner,
+            state_snapshot=_snapshot_turn_state,
+            state_restore=_restore_turn_state,
+        )
+        logger.info("[TurnExecutor] 已启用：Session Lock + Turn Store + 消息去重")
+    return _turn_executor
+
+
+def _snapshot_turn_state(session_id: str) -> dict:
+    """v2.7：给"生成期间又被客户插话"的作废重跑用的状态快照。
+
+    作废的那一版会改需求档案（last_asked_slot / ask_counts）与对话状态
+    （registry 里记成 ASKED）—— 如果这些改动留着，重跑就会以为"这一项已经问过"，
+    于是改问另一个问题，客户看到的就是"一个问题接着一个问题"。
+    """
+    import copy
+
+    from .dialogue import get_conversation_state
+
+    snapshot: dict = {"profile": None, "requirements": None, "conversation": None}
+    try:
+        stored = memory.get_requirement_profile(session_id)
+        if stored is not None:
+            snapshot["profile"] = (
+                stored.model_dump() if hasattr(stored, "model_dump") else stored
+            )
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("snapshot profile failed: %s", exc)
+    try:
+        snapshot["requirements"] = copy.deepcopy(memory.get_requirements(session_id))
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("snapshot requirements failed: %s", exc)
+    try:
+        snapshot["conversation"] = copy.deepcopy(
+            get_conversation_state(session_id).__dict__
+        )
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("snapshot conversation failed: %s", exc)
+    return snapshot
+
+
+def _restore_turn_state(session_id: str, snapshot: dict) -> None:
+    """把状态退回到作废那一版运行之前（客户没见过的问题不能算问过）。"""
+    import copy
+
+    if not snapshot:
+        return
+    profile_data = snapshot.get("profile")
+    if profile_data is not None:
+        try:
+            from .models.requirement import RequirementProfile
+
+            memory.set_requirement_profile(
+                session_id, RequirementProfile.model_validate(profile_data)
+            )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("restore profile failed: %s", exc)
+    requirements = snapshot.get("requirements")
+    if requirements is not None:
+        try:
+            memory.set_requirements(session_id, copy.deepcopy(requirements))
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("restore requirements failed: %s", exc)
+    conversation = snapshot.get("conversation")
+    if conversation is not None:
+        try:
+            from .dialogue import get_conversation_state
+
+            get_conversation_state(session_id).__dict__.update(copy.deepcopy(conversation))
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("restore conversation failed: %s", exc)
+
+
+def _submit_turn_sync(
+    session_id: str,
+    messages: List[Any],
+    turn_id: str = "",
+    source: str = "api",
+):
+    """同步提交一个 Turn（在 worker 线程里跑，不阻塞事件循环）。"""
+    return _get_turn_executor().submit(
+        session_id=session_id,
+        messages=list(messages or []),
+        source=source,
+        turn_id=turn_id,
+    )
 
 
 def _verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> str:
@@ -580,18 +739,46 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
         )
     
     try:
-        # v2.5：多条消息合成一个 turn（含 message_id 幂等）
-        merged_text, request_images = _merge_turn_request(request)
-        _parts = list(getattr(request, "messages", None) or [])
-        result = orchestrator.process_message(
-            message=merged_text,
-            session_id=request.session_id,
-            images=request_images or None,
-            # v2.5++++（计划 §15）：把"这一轮由几条消息聚合而来"告诉编排器，
-            # 日志里就能看到 messages=3 aggregated=true
-            message_count=len(_parts) or 1,
-            aggregated=len(_parts) > 1,
+        # v2.7：所有入口统一交给 TurnExecutor —— 消息去重 / Turn 聚合 / 会话锁 /
+        # 幂等提交都在引擎里；API 只负责把这一轮的消息交出去。
+        import asyncio
+
+        turn_messages = _collect_turn_request(request)
+        outcome = await asyncio.to_thread(
+            _submit_turn_sync,
+            request.session_id,
+            turn_messages,
+            str(getattr(request, "turn_id", "") or ""),
+            str(getattr(request, "source", "") or "api"),
         )
+        result = outcome.result or {}
+        if outcome.error:
+            raise RuntimeError(outcome.error)
+        # 幂等重放：本次没有重新执行 Agent → 直接返回上次那条回复
+        if (outcome.duplicate or outcome.joined) and not result:
+            logger.info(
+                "[TurnExecutor] 幂等重放 session=%s turn=%s → 直接返回上次回复",
+                request.session_id, outcome.turn_id,
+            )
+            fallback_manager.record_success("chat")
+            return ChatResponse(
+                session_id=request.session_id,
+                answer=outcome.response,
+                requirement={},
+                reflection_score=None,
+                products=[],
+                route="idempotent_replay",
+                complexity="cached",
+                extra_messages=[],
+                turn_id=outcome.turn_id,
+                action=outcome.action,
+                question_slot=outcome.question_slot,
+                question_count=outcome.response_count,
+                response_count=outcome.response_count,
+                turn_status=outcome.status,
+                duplicate=True,
+                debug_context={"turn": outcome.to_dict(), "trace": outcome.trace},
+            )
         # 记录成功
         fallback_manager.record_success("chat")
         
@@ -692,6 +879,8 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
         question_count=result.get("question_count"),
         response_count=result.get("response_count", 1),
         debug_context=debug_context,
+        turn_status=outcome.status,
+        duplicate=bool(outcome.duplicate or outcome.joined),
     )
 
 
@@ -714,12 +903,25 @@ async def _stream_chat(request: ChatRequest):
 
     start_time = time.time()
     try:
-        result = orchestrator.process_message(
-            message=question,
-            session_id=session_id,
-            images=stream_images,
+        # v2.7：流式同样走 Turn Engine（否则重试 / 并发会各跑一次 Agent）
+        import asyncio
+
+        turn_messages = _collect_turn_request(request)
+        if not turn_messages and str(question or "").strip():
+            from .input import CustomerMessage
+
+            turn_messages = [
+                CustomerMessage(session_id=session_id, text=question, source="api")
+            ]
+        outcome = await asyncio.to_thread(
+            _submit_turn_sync,
+            session_id,
+            turn_messages,
+            str(getattr(request, "turn_id", "") or ""),
+            str(getattr(request, "source", "") or "api"),
         )
-        answer = str(result.get("response") or "")
+        result = outcome.result or {}
+        answer = str(result.get("response") or outcome.response or "")
         if not answer:
             answer = _get_fallback_response(question)
         # 语言护栏：策略=en 时流式输出同样不能出现中文

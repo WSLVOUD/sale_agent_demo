@@ -1,0 +1,9 @@
+{
+  "description": "2026-09-21 14:50 客户真实日志（session_1789973381900_rfwgwgsln）中客户侧与 AI 侧的实际顺序。用于 Replay：要求每一轮只有一个问题、答非所问不丢信息、重复提问为 0。",
+  "session_id": "session_1789973381900_rfwgwgsln",
+  "turns": [
+    { "customer": "hi", "ai": "Hi there! I'm Mike, and I'm with iSEMC..." },
+    { "customer": "i need a led display", "ai": "Will the screen be installed indoors or outdoors?" },
+    { "customer": "3*5", "ai": "A 3 x 5 m screen gives us a good starting point. Do you already know the pitch you want — P3, P4, P5 …?" }
+  ]
+}

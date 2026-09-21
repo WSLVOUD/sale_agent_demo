@@ -63,6 +63,11 @@ class ResponseContext:
     recommendation: Optional[Dict[str, Any]] = None
     engineering_result: Optional[Dict[str, Any]] = None
     question: str = ""
+    # v2.7 修订（客户口径）：问句以"槽位 + 意图"交给 LLM，由它自己组织说法；
+    # 系统给的成句只当"意思锚点"，明确要求不要照抄。
+    question_slot: str = ""
+    question_intent: str = ""
+    recent_questions: List[str] = field(default_factory=list)
     why: str = ""
     answer: str = ""
     # 系统已经准备好的"接话"（例如对客户自我介绍的回应）。
@@ -234,10 +239,30 @@ class ResponseContext:
             lines.append(f"Engineering constraint: {constraint}")
         if self.required_question:
             lines.append(f"Required question (slot): {self.required_question}")
+        if self.question_slot or self.question_intent:
+            slot = self.question_slot or self.required_question
+            intent = self.question_intent or self.question
+            lines.append(f"Question to ask — slot: {slot}; what it must achieve: {intent}")
+            lines.append(
+                "Phrasing is entirely yours: ask it in your own natural words "
+                "(exactly one question). Sound like a person, not a form."
+            )
         if self.question:
             lines.append(
-                f"Question to ask — keep the meaning, phrasing is yours: {self.question}"
+                "Canned line from the system (meaning anchor only — do NOT copy it "
+                f"verbatim, rewrite it in your own words): {self.question}"
             )
+        if self.recent_questions:
+            lines.append(
+                "You already used these phrasings — do not repeat them, pick a "
+                "different natural wording: "
+                + " | ".join(str(item)[:120] for item in self.recent_questions[:3])
+            )
+        lines.append(
+            "You may add ONE short, natural sentence in your own words to react to "
+            "what the customer just said (no filler openers such as \"Got it\", "
+            "\"Thanks\", \"Understood\")."
+        )
         if self.why:
             lines.append(f"Why this matters (mention only if it helps): {self.why}")
         if self.conflicts:

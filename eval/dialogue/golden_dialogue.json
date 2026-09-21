@@ -1,0 +1,141 @@
+{
+  "version": "v2.7",
+  "description": "自然对话 Golden Dataset（计划 §24/§25）：每条给出客户这句话、当时的对话状态、期望的唯一 Action / 问题槽位 / 回复风格，以及一条示例回复（用于算话术指标）。",
+  "cases": [
+    {
+      "id": "d001",
+      "customer_message": "i need a led display",
+      "requirement_slots": { "display_type": "LED" },
+      "previous_question_slot": "",
+      "expected_action": "ASK",
+      "expected_question_slot": "environment",
+      "expected_response_style": "NORMAL",
+      "sample_response": "Will the screen be installed indoors or outdoors?"
+    },
+    {
+      "id": "d002",
+      "customer_message": "3*5",
+      "requirement_slots": { "display_type": "LED", "target_width_mm": 3000, "target_height_mm": 5000 },
+      "previous_question_slot": "environment",
+      "expected_action": "ASK",
+      "expected_question_slot": "installation",
+      "expected_response_style": "MINIMAL",
+      "sample_response": "Will it be a fixed installation or a rental setup?"
+    },
+    {
+      "id": "d003",
+      "customer_message": "indoor",
+      "requirement_slots": { "display_type": "LED", "environment": "indoor" },
+      "previous_question_slot": "environment",
+      "expected_action": "ASK",
+      "expected_question_slot": "installation",
+      "expected_response_style": "MINIMAL",
+      "sample_response": "Will it be a fixed installation or a rental setup?"
+    },
+    {
+      "id": "d004",
+      "customer_message": "P3",
+      "requirement_slots": { "display_type": "LED", "environment": "indoor", "pixel_pitch_mm": 3.0 },
+      "previous_question_slot": "pixel_pitch",
+      "expected_action": "ASK",
+      "expected_question_slot": "size",
+      "expected_response_style": "MINIMAL",
+      "sample_response": "What screen size do you have in mind (width x height)?"
+    },
+    {
+      "id": "d005",
+      "customer_message": "8 meters",
+      "requirement_slots": { "display_type": "LED", "environment": "indoor", "viewing_distance_m": 8.0 },
+      "previous_question_slot": "viewing_distance",
+      "expected_action": "ASK",
+      "expected_question_slot_any": ["size", "installation"],
+      "expected_response_style": "MINIMAL",
+      "sample_response": "What screen size do you have in mind (width x height)?"
+    },
+    {
+      "id": "d006",
+      "customer_message": "How long is delivery?",
+      "requirement_slots": { "display_type": "LED", "environment": "indoor", "size": "3米x5米" },
+      "previous_question_slot": "pixel_pitch",
+      "expected_action": "ANSWER",
+      "expected_question_slot": "",
+      "expected_response_style": "MINIMAL",
+      "sample_response": "From order and payment our delivery usually takes 15-25 working days."
+    },
+    {
+      "id": "d007",
+      "customer_message": "indoor, 3x5m, P3, fixed",
+      "requirement_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "target_width_mm": 3000,
+        "target_height_mm": 5000,
+        "pixel_pitch_mm": 3.0,
+        "installation": "fixed"
+      },
+      "previous_question_slot": "",
+      "expected_action": "ASK",
+      "expected_question_slot_any": ["price_preference", "purpose"],
+      "expected_response_style": "NORMAL",
+      "sample_response": "Do you want me to optimise for the best price, or for the best quality?"
+    },
+    {
+      "id": "d008",
+      "customer_message": "for a church",
+      "requirement_slots": { "display_type": "LED", "purpose": "church", "environment": "indoor" },
+      "previous_question_slot": "environment",
+      "expected_action": "ASK",
+      "expected_question_slot": "size",
+      "expected_response_style": "MINIMAL",
+      "sample_response": "What screen size do you have in mind (width x height)?"
+    },
+    {
+      "id": "d009",
+      "customer_message": "what's the price?",
+      "requirement_slots": { "display_type": "LED", "environment": "indoor", "size": "3米x5米" },
+      "previous_question_slot": "pixel_pitch",
+      "expected_action": "ANSWER",
+      "expected_question_slot": "",
+      "expected_response_style": "MINIMAL",
+      "sample_response": "For a 3 x 5 m indoor screen the price depends on the pitch - P3 is around our mid range."
+    },
+    {
+      "id": "d010",
+      "customer_message": "you decide",
+      "requirement_slots": {
+        "display_type": "LED",
+        "environment": "indoor",
+        "purpose": "church",
+        "target_width_mm": 3000,
+        "target_height_mm": 5000,
+        "pixel_pitch_mm": 3.0,
+        "installation": "fixed"
+      },
+      "previous_question_slot": "price_preference",
+      "expected_action": "RECOMMEND",
+      "expected_question_slot": "",
+      "expected_response_style": "DETAILED",
+      "sample_response": "For a 3 x 5 m indoor church screen I'd go with TW11-3216-P3.0 - it keeps the detail at your viewing distance."
+    },
+    {
+      "id": "d011",
+      "customer_message": "i sent a photo",
+      "requirement_slots": { "display_type": "LED", "environment": "indoor" },
+      "previous_question_slot": "installation",
+      "expected_action": "ASK",
+      "expected_question_slot": "size",
+      "expected_response_style": "MINIMAL",
+      "sample_response": "What screen size do you have in mind (width x height)?"
+    },
+    {
+      "id": "d012",
+      "customer_message": "3 by 5 meters",
+      "requirement_slots": { "display_type": "LED", "target_width_mm": 3000, "target_height_mm": 5000 },
+      "previous_question_slot": "size",
+      "expected_action": "ASK",
+      "expected_question_slot": "environment",
+      "expected_response_style": "MINIMAL",
+      "sample_response": "Will it be a fixed installation or a rental setup?"
+    }
+  ]
+}

@@ -115,10 +115,30 @@ def classify(state: SalesState) -> SalesState:
         )
         intent = "need_query"
 
-    # 【关键修复】如果 detect_intent 检测到推荐意图，即使 LLM 分类为 others/industry，也强制走推荐流程
-    if detected == "recommendation" and intent in ("others", "industry"):
-        logger.info(f"Overriding LLM intent '{intent}' → 'need_query' (detect_intent matched)")
-        intent = "need_query"
+    # 【关键修复】客户**明确要推荐**（推荐 / 帮我选 / 换一款 / recommend / quote…）时，
+    # 不管 LLM 把它判成什么（others / industry / product_question / objection），
+    # 都必须走推荐链路 —— 实测 bug（2026-09-21）：客户说"给我推荐"，LLM 判成
+    # product_question → 被当成"提问"走去自由问答，只回了一句"我这就给你准备"，
+    # 一个产品都没推荐。
+    explicit_reco = False
+    if intent != "need_query":
+        try:
+            from .requirement import _EXPLICIT_RECO_REQUEST_RE
+
+            explicit_reco = bool(_EXPLICIT_RECO_REQUEST_RE.search(str(message or "")))
+        except Exception:  # pragma: no cover - 防御式
+            explicit_reco = False
+    if intent != "need_query" and (
+        explicit_reco or (detected == "recommendation" and intent in ("others", "industry"))
+    ):
+        if intent == "closing" and is_explicit_closing(message):
+            pass  # 客户在明确结束对话 → 不强行改成推荐
+        else:
+            logger.info(
+                "Overriding LLM intent '%s' → 'need_query' (explicit_reco=%s, detect_intent=%s)",
+                intent, explicit_reco, detected or "-",
+            )
+            intent = "need_query"
     # 【兜底】如果 detect_intent 返回非推荐非空，且 LLM 分类为 others，但消息包含推荐关键词，也强制覆盖
     elif detected == "" and intent == "others":
         # 再次检查消息是否包含推荐关键词（独立于 detect_intent 的正则）

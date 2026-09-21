@@ -221,6 +221,14 @@ class ConversationState:
     last_turn_id: str = ""
     current_turn_id: str = ""
     last_response: str = ""
+    # v2.7 §18：客户这一句与"上一轮问的项"的匹配结果（Answer Coverage 的输入）
+    last_answer_match: Dict[str, Any] = field(default_factory=dict)
+    # ── v2.7 §14（Phase 6）：Conversation State 的职责字段 ─────────────────
+    last_customer_message: str = ""
+    last_ai_response: str = ""
+    current_topic: str = ""
+    # 客户口径（2026-09-21）：连续"承接/闲谈"的条数（不含本轮问题）
+    ack_streak: int = 0
     turn_index: int = 0
     registry: AskedQuestionRegistry = field(default_factory=AskedQuestionRegistry)
 
@@ -292,6 +300,7 @@ class ConversationState:
             self.registry.note_asked(str(slot), turn_index=self.turn_index)
         if response:
             self.last_response = str(response)[:1000]
+            self.last_ai_response = str(response)[:1000]
         if speech_act:
             self.current_speech_act = str(speech_act)
         self.last_turn_id = str(turn_id or self.current_turn_id or self.last_turn_id)
@@ -309,6 +318,7 @@ class ConversationState:
     ) -> "ConversationState":
         if text:
             self.last_answer = str(text)[:400]
+            self.last_customer_message = str(text)[:400]
         if speech_act:
             self.current_speech_act = str(speech_act)
         self.current_answer_slot = str(answer_slot or "")
@@ -369,6 +379,11 @@ class ConversationState:
             "last_turn_id": self.last_turn_id,
             "current_turn_id": self.current_turn_id,
             "last_response": self.last_response,
+            "last_answer_match": dict(self.last_answer_match or {}),
+            "last_customer_message": self.last_customer_message,
+            "last_ai_response": self.last_ai_response,
+            "current_topic": self.current_topic,
+            "ack_streak": self.ack_streak,
             "turn_index": self.turn_index,
             "registry": self.registry.to_dict(),
         }

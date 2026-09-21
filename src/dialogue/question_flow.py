@@ -184,19 +184,58 @@ def environment_needs_asking(profile: Any) -> bool:
 def environment_should_ask_now(profile: Any) -> bool:
     """环境这一轮该不该作为**第一问**出现。
 
-    v2.6 计划 §10 / §12 / §13 / §26 Case 2：
+    v2.7 §19.1（Phase 8 Duplicate Question Firewall）：
 
-      · 环境还没定（MISSING / UNKNOWN）→ **这一轮它就是唯一最高优先级**，
-        即使上一轮刚问过、客户答的是别的东西（答非所问），也要把 indoor/outdoor
-        作为本轮唯一的问题再问一次；
-      · 问满 ``MAX_ASKS_PER_SLOT`` 次仍拿不到 → ``is_exhausted`` 为真，
-        交给 Gate 走 DEFERRED / BLOCKED（不会无限追问，也不会连问第三次）。
+      · 环境还没定（MISSING / UNKNOWN）→ 它是**最高优先级**的问题；
+      · 但**上一轮刚问过、客户没有给出相关新信息**时不再重复问同一项
+        （绝对禁止：previous question_slot == current question_slot 且无新信息）；
+      · 问满 ``MAX_ASKS_PER_SLOT`` 次仍拿不到 → 交给 Gate 的 DEFERRED / BLOCKED。
 
-    与 v2.4 的差异（有意为之，按 v2.6 计划调整）：v2.4 曾在"答非所问"时把环境
-    让位给随机轮的下一个问题，导致"客户回 3×5 之后系统去问 P 值、室内外从头到尾
-    没被确认"。v2.6 §13 明确禁止这种随机，环境未定时随机轮不参与。
+    与 v2.6 §12 严格读法的差异（本轮迭代早期一度按 v2.6 改成"环境每轮必问"）：
+    v2.7 §19.1 是更新的、且明确写"绝对禁止"，所以按它恢复"让位"节奏。
+    开关在 :data:`dialogue.duplicate_firewall.DEFER_REPEATED_SLOT`。
     """
-    return environment_needs_asking(profile)
+    if not environment_needs_asking(profile):
+        return False
+    return not previous_slot_blocked(profile, "environment")
+
+
+def previous_slot_blocked(profile: Any, slot: str, *, newly_filled: Any = None) -> bool:
+    """v2.7 §19.1：上一轮问的就是这一项、客户又没给相关新信息 → 不再重复问。
+
+    **客户口径（2026-09-21）**：每个问题没得到答案时**都可以跳转** ——
+    硬性条件也不例外；硬性条件只在"要推荐 / 要算方案"时必须满足。
+    所以这里对所有槽位一视同仁：上一轮刚问过、客户又没给新信息 → 本轮不重复问。
+    （"不连续提问"由 continuation_budget 负责：客户没答时先承接，最多 3 条，
+      第 4 条才拉回需求问题。）
+
+    依据来自档案（``last_asked_slot`` + 该槽位是否已有结论），
+    **不是**比较问题字符串（计划 §27）。
+    """
+    if profile is None:
+        return False
+    try:
+        from .duplicate_firewall import DEFER_REPEATED_SLOT
+
+        if not DEFER_REPEATED_SLOT:
+            return False
+    except Exception:  # pragma: no cover - 防御式
+        pass
+    name = str(slot or "")
+    if not name:
+        return False
+    try:
+        if str(getattr(profile, "last_asked_slot", "") or "") != name:
+            return False
+    except Exception:  # pragma: no cover - 防御式
+        return False
+    if newly_filled is not None:
+        try:
+            if name in {str(item) for item in newly_filled}:
+                return False
+        except Exception:  # pragma: no cover - 防御式
+            pass
+    return not _settled(profile, name)
 
 
 def environment_gate_plan(
@@ -289,6 +328,7 @@ def next_question_plan(
         pending = [
             slot for slot in pass1_pending(profile, session_id)
             if slot not in skip and slot not in asked_before
+            and not previous_slot_blocked(profile, slot)
         ]
         if pending:
             slot = pending[0]
@@ -301,7 +341,8 @@ def next_question_plan(
                 )
 
     hard_pending = [
-        slot for slot in hard_recap_pending(profile, session_id) if slot not in skip
+        slot for slot in hard_recap_pending(profile, session_id)
+        if slot not in skip and not previous_slot_blocked(profile, slot)
     ]
     # 会话里问过、但档案里没记账的（档案被重建的情况）→ 也算"问过一次"，可进入复问
     asked_before = set(getattr(conversation, "asked_slots", []) or [])
@@ -328,6 +369,23 @@ def next_question_plan(
                 slot=slot, question=question, action="ASK", easier=easier,
                 reason="hard_condition_recap", why=why_for(slot),
             )
+    # 兜底：候选全被"上一轮刚问过"挡住 → 把优先级最高的那一项带回本轮
+    # （带着"为什么问"，保证硬性 Gate 有机会问满两次，而不是彻底卡住）
+    fallback = [
+        slot for slot in random_order(session_id, HARD_SLOTS)
+        if slot not in skip
+        and _askable(profile, slot, _actions(profile))
+        and not _settled(profile, slot)
+        and _asked(profile, slot) < _max_asks()
+    ]
+    if fallback:
+        slot = fallback[0]
+        question = question_for(slot, language, seed + 5, easier=_asked(profile, slot) >= 1)
+        if question:
+            return QuestionPlan(
+                slot=slot, question=question, action="ASK", easier=True,
+                reason="recap_after_defer", why=why_for(slot),
+            )
     return None
 
 
@@ -342,6 +400,7 @@ __all__ = [
     "next_question_plan",
     "pass1_complete",
     "pass1_pending",
+    "previous_slot_blocked",
     "random_order",
     "why_for",
 ]

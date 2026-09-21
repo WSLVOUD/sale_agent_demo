@@ -395,6 +395,10 @@ class LEDChatApp {
                         }
                     }
                 }
+            } else if (data.duplicate) {
+                // v2.7 §24：这一轮的内容已经由前一个响应发出（幂等重放，或这条消息
+                // 被并入"正在生成的那一轮"）→ 绝不能再渲染第二个气泡，否则客户会
+                // 看到两条一样的回复（真实日志里表现为"连续询问"）。
             } else {
                 this.addMessage('ai', data.answer);
                 // v2.6 §4/§24：一个 turn 只有一条客户可见回复（追加内容已并入 answer）；

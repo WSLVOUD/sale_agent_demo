@@ -80,14 +80,12 @@ class TestEnvironmentQuestion:
             plan = next_question_plan(profile, session_id=session)
             assert plan is not None and plan.slot == "environment", session
 
-    def test_environment_is_still_first_when_customer_answers_something_else(self):
-        """客户回 "3*5"（没答室内外）→ **这一轮仍然只问室内外**。
+    def test_environment_moves_on_when_customer_answers_something_else(self):
+        """客户回 "3*5"（没答室内外）→ 可以不重复问室内外（每个问题都可以跳转）。
 
-        v2.6 计划 §10 / §12 / §13 / §26 Case 2：环境未确定时它是唯一最高优先级，
-        随机轮不参与（实测 bug：客户回 3×5 后系统跑去问 P 值，室内外一直没被确认）。
-
-        这条口径**取代** v2.4 的"答非所问先换下一问"：环境依旧最多问两次，
-        第二次还拿不到就走 Gate 的 DEFERRED / BLOCKED，不会无限追问。
+        客户口径（2026-09-21）：硬性条件也可以跳转，只在推荐/算方案时必须满足；
+        "不连续提问"由 continuation_budget 负责（客户没答 → 先承接，最多 3 条，
+        第 4 条拉回需求）。
         """
         profile = _profile(display_type="LED", target_width_mm=3000, target_height_mm=5000)
         first = next_question_plan(profile, session_id="env-5")
@@ -97,8 +95,8 @@ class TestEnvironmentQuestion:
 
         second = next_question_plan(profile, session_id="env-5")
         assert second is not None
-        assert second.slot == "environment", "环境未定 → 这一轮还是它"
-        assert "indoor" in second.question.lower()
+        assert second.slot != "environment", "没答出来 → 可以先跳转"
+        assert second.easier is False
 
     def test_environment_returns_in_hard_recap_with_plain_wording(self):
         """其它问题都问完 → 室内外作为硬性条件复问回来（直问，不用降门槛说法）。"""

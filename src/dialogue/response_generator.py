@@ -92,7 +92,15 @@ NATIVE_SYSTEM_PROMPT = (
     "Respond naturally, like a real salesperson having a normal conversation.\n"
     "\n"
     "The business decision has already been made by the system.\n"
-    "Preserve all provided facts, recommendations, constraints and required questions.\n"
+    "Preserve the MEANING of the required question and every provided fact.\n"
+    "The WORDING is entirely yours — never copy a canned system line verbatim;\n"
+    "say it the way you would actually say it to a customer.\n"
+    "\n"
+    "You are explicitly allowed to:\n"
+    "- write your own short reaction to what the customer just said (your words)\n"
+    "- rephrase the required question completely, as long as it still asks for\n"
+    "  exactly the same thing\n"
+    "- vary sentence order, length and tone from turn to turn\n"
     "\n"
     "You are NOT required to:\n"
     "- acknowledge every customer message\n"
@@ -101,17 +109,21 @@ NATIVE_SYSTEM_PROMPT = (
     "- explain why you are asking\n"
     "- follow a fixed sentence structure\n"
     "\n"
-    "Sometimes the best reply is one short question.\n"
-    "Sometimes it is a direct answer.\n"
-    "Sometimes it is a short comment followed by one question.\n"
+    "Length: normally 3 to 4 short sentences — a natural reaction to what the\n"
+    "customer just said, one sentence of useful context or reasoning, and the\n"
+    "question. Do not answer with a single bare line.\n"
+    "Only shorten this when the customer only needs a one-word confirmation.\n"
     "\n"
     "Do not sound like a questionnaire.\n"
     "Do not sound like a scripted chatbot.\n"
     "Do not use sales filler.\n"
     "Do not force phrases such as:\n"
     "\"Got it\", \"Thanks\", \"Based on that\", \"By the way\", \"So\", \"That said\".\n"
+    "Do not open two turns in a row with the same kind of phrasing.\n"
     "\n"
     "Ask no more than one question.\n"
+    "That question must be about the same topic as \"Question to ask\" —\n"
+    "only the wording changes.\n"
     "\n"
     "Do not change the business decision.\n"
     "Do not invent specifications, prices, models, lead times,\n"
@@ -133,7 +145,8 @@ NATIVE_SYSTEM_PROMPT = (
     "- engineering calculations\n"
     "- customer requirements\n"
     "\n"
-    "Keep the response concise and conversational.\n"
+    "Keep every sentence short and conversational, but do not make the whole reply\n"
+    "shorter than 2 sentences.\n"
     "\n"
     "Output language: {language_rule}\n"
     "\n"
@@ -186,7 +199,37 @@ def generate_response(
     )
     if not text:
         return fallback
-    check = validate_response(
+    check = _validate(context, text)
+    if check.ok:
+        return text
+    # 只是"口味"问题（通用客套 / 连接词 / 问法重复）→ 不整段回退，直接采用
+    hard_issues = [item for item in check.issues if item not in SOFT_ISSUES]
+    if not hard_issues:
+        logger.info(
+            "[ResponseGenerator] %s 仅有措辞提示 %s → 采用 LLM 说法",
+            active, check.issues,
+        )
+        return text
+    # 有硬问题 → 让 LLM 自己修一次（比整段丢给模板自然得多）
+    repaired = _repair_response(context, text, check.issues, llm)
+    if repaired:
+        recheck = _validate(context, repaired)
+        if not [item for item in recheck.issues if item not in SOFT_ISSUES]:
+            logger.info(
+                "[ResponseGenerator] 重写一次后通过（原问题：%s）", check.issues
+            )
+            return repaired
+    logger.info("[ResponseGenerator] %s 生成结果不合格 %s → 结构化拼装", active, check.issues)
+    return fallback
+
+
+# 只影响"口味"的问题：不触发整段回退（否则客户永远看到模板腔）
+SOFT_ISSUES = frozenset({"generic_ack", "repeated_connector", "repeated_question_phrasing"})
+
+
+def _validate(context: ResponseContext, text: str):
+    """按当前上下文校验一段回复。"""
+    return validate_response(
         text,
         allow_ack=context.allow_ack,
         allow_connector=context.allow_connector,
@@ -199,11 +242,38 @@ def generate_response(
         engineering_result=context.engineering_result,
         grounded_facts=context.grounded_facts,
         pitch_resolution=context.pitch_resolution,
+        question_slot=context.question_slot,
+        recent_questions=context.recent_questions,
     )
-    if not check.ok:
-        logger.info("[ResponseGenerator] %s 生成结果不合格 %s → 结构化拼装", active, check.issues)
-        return fallback
-    return text
+
+
+def _repair_response(
+    context: ResponseContext, text: str, issues: List[str], llm: Any
+) -> str:
+    """让 LLM 自己把不合格的那一版重写一遍（保住事实、只改说法）。"""
+    if llm is None:
+        return ""
+    try:
+        prompt = (
+            "You are the same experienced B2B LED sales consultant.\n"
+            "Rewrite your previous reply so it satisfies every rule below.\n"
+            "Keep exactly the same business facts and the same single question\n"
+            "(same topic, different wording). Never invent specifications, prices,\n"
+            "models, lead times or engineering results.\n"
+            f"Problems to fix: {', '.join(str(item) for item in issues)}\n"
+            "Ask no more than one question. Do not copy any canned line verbatim.\n"
+            "Output the rewritten message only.\n"
+            "\n\n--- Business context ---\n"
+            + context.prompt_block()
+            + f"\n\n--- Your previous reply ---\n{text}\n\n--- Rewritten reply ---\n"
+        )
+        repaired = _invoke(llm, prompt)
+        _note_llm_success() if repaired else _note_llm_failure()
+        return repaired
+    except Exception as exc:  # pragma: no cover - 网络/额度问题
+        _note_llm_failure()
+        logger.warning("Response repair failed: %s", exc)
+        return ""
 
 
 def _supported_parameters(context: ResponseContext) -> List[str]:
@@ -314,6 +384,9 @@ def build_context(
     action: str,
     customer_message: str = "",
     question: str = "",
+    question_slot: str = "",
+    question_intent: str = "",
+    recent_questions: Optional[List[str]] = None,
     why: str = "",
     answer: str = "",
     recommendation: Optional[dict] = None,
@@ -342,6 +415,9 @@ def build_context(
         recommendation=recommendation,
         engineering_result=engineering_result,
         question=question,
+        question_slot=question_slot,
+        question_intent=question_intent,
+        recent_questions=list(recent_questions or []),
         why=why,
         answer=answer,
         opening=opening,

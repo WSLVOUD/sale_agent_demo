@@ -83,6 +83,8 @@ class DualAgentOrchestrator:
         images: Optional[List[Any]] = None,
         message_count: int = 1,
         aggregated: bool = False,
+        turn_id: str = "",
+        turn_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Process user message through appropriate agent(s).
@@ -92,13 +94,19 @@ class DualAgentOrchestrator:
             session_id: Session identifier
             history: Conversation history (optional)
             images: 客户随消息发送的图片（可选，最多 VISION_MAX_IMAGES 张）
+            turn_id: v2.7：本次执行所属的 Turn（TurnExecutor 分配；重放/并发时
+                保证所有日志、LLM 记账、重复提问判定都挂在同一个 turn 上）
+            turn_context: v2.7：Turn 引擎带上来的上下文（message_ids /
+                previous_question / source …）
 
         Returns:
             Dict with response and metadata
         """
         perf = PerfTracker(session_id, message)
         # v2.6 §24/§27：这一轮的 turn_id（FinalResponse / 日志 / DecisionAudit 共用）
-        turn_id = uuid.uuid4().hex[:12]
+        # v2.7：TurnExecutor 传来的 turn_id 优先（一个 Turn = 一次业务决策）
+        turn_context = dict(turn_context or {})
+        turn_id = str(turn_id or turn_context.get("turn_id") or "").strip() or uuid.uuid4().hex[:12]
         perf.turn_id = turn_id
         # ── v2.6 §5~§10：客户这一句在回答上一轮哪个问题 ─────────────────────
         self._note_customer_turn(session_id, message, turn_id=turn_id)
@@ -258,7 +266,7 @@ class DualAgentOrchestrator:
                 # v2.6 §4/§24：素材通道单独记录（不是第二条对话回复）
                 "first_contact_messages": fc_messages,
             }
-            self._finalize_turn_response(result, session_id, message)
+            self._finalize_turn_response(result, session_id, message, turn_context)
             result["_perf"] = perf.summary()
             if vision_metrics:
                 result["vision"] = vision_metrics
@@ -279,6 +287,8 @@ class DualAgentOrchestrator:
             self._maybe_start_new_item(session_id, message)
 
         # Step 1: Sales Agent processes message
+        # v2.7 §18：记下"这一轮之前"已有哪些需求 → 之后 diff 出 newly_filled_slots
+        profile_before = self._profile_slot_map(session_id)
         sales_result = self.sales_agent.run(
             session_id=session_id,
             message=message,
@@ -290,6 +300,7 @@ class DualAgentOrchestrator:
         # 只填空值，绝不覆盖：能用 P3/P5、固装/租赁 等参数区分两块屏时，这些差异保留。
         self._share_common_facts(session_id)
         perf.intent = sales_result.get("intent", "")
+        result_newly_filled = self._newly_filled_slots(profile_before, session_id)
 
         # 多屏拆分的那一轮：Sales 的需求抽取只看到"整句话"，会把两块屏的参数
         # 混到当前这条档案里 —— 这里按拆分结果把每块屏的参数重新写回去。
@@ -348,6 +359,9 @@ class DualAgentOrchestrator:
                     session_id=session_id,
                 ),
                 "agent": "solution_question",
+                # §28（Phase 14）：这条路径走的是旧 compose_requirement_reply
+                # → 明确标成 FALLBACK，便于统计"还有多少回复走旧逻辑"
+                "response_mode": "FALLBACK",
                 "requirements": requirements,
                 "products": solution_result.get("products", []),
                 "next_action": "follow_up",
@@ -379,6 +393,7 @@ class DualAgentOrchestrator:
                     session_id=session_id,
                 ),
                 "agent": "solution_others",
+                "response_mode": "FALLBACK",
                 "requirements": requirements,
                 "products": solution_result.get("products", []),
                 "next_action": "follow_up",
@@ -406,6 +421,14 @@ class DualAgentOrchestrator:
         result.setdefault("pending_slot", sales_result.get("pending_slot") or "")
         result.setdefault("acknowledgement", sales_result.get("acknowledgement") or "")
         result.setdefault("action_candidates", self._action_candidates(sales_result))
+        # v2.7 §18/§19：这一轮新填的槽位 + Turn 上下文（覆盖率与闸门的依据）
+        result.setdefault("newly_filled_slots", result_newly_filled)
+        result.setdefault("turn_context", turn_context)
+        result.setdefault("turn_id", turn_id)
+        # §25/§28：正常路径由 ResponseGenerator/单一出口产出客户文本
+        result.setdefault("response_mode", "NATURAL")
+        # v2.7 修订：LLM 写的句子 vs 模板拼的句子（只有模板才需要去机械话术）
+        result.setdefault("response_source", sales_result.get("response_source") or "template")
         logger.info(
             "[%s] PERF route=%s solution_route=%s intent=%s "
             "total_ms=%.1f sales_ms=%.1f solution_ms=%.1f "
@@ -434,7 +457,7 @@ class DualAgentOrchestrator:
             multi_reply = self._recommend_all_screens(session_id, message)
             if multi_reply:
                 result["response"] = multi_reply
-                self._finalize_turn_response(result, session_id, message)
+                self._finalize_turn_response(result, session_id, message, turn_context)
                 # 多屏回复里每块屏各自有环境（室内那块本来就该出现室内型号）；
                 # API 层据此**不**用"当前这块屏的环境"整段过滤回复。
                 result["multi_screen"] = True
@@ -454,7 +477,7 @@ class DualAgentOrchestrator:
         multi_extra = self._multi_item_follow_up(session_id, result, message)
         if multi_extra:
             result.setdefault("extra_messages", []).append(multi_extra)
-        self._finalize_turn_response(result, session_id, message)
+        self._finalize_turn_response(result, session_id, message, turn_context)
         if vision_metrics:
             result["vision"] = vision_metrics
         return result
@@ -473,7 +496,13 @@ class DualAgentOrchestrator:
             self._response_coordinator_instance = coordinator
         return coordinator
 
-    def _finalize_turn_response(self, result: Dict[str, Any], session_id: str, message: str) -> Dict[str, Any]:
+    def _finalize_turn_response(
+        self,
+        result: Dict[str, Any],
+        session_id: str,
+        message: str,
+        turn_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """本轮回复的最后两道加工（顺序固定）：
 
           1. 客户问到的售后口径（说明书图纸 / 现场安装 / 质保）—— 必须回答；
@@ -486,6 +515,23 @@ class DualAgentOrchestrator:
         问句删掉"，而是**只剩一条客户可见回复** —— 追加气泡并入正文，最终由
         ``FinalResponseCoordinator`` 产出唯一的 ``FinalResponse``。
         """
+        # ── v2.7 Phase 7~14 的对话层依赖（延迟导入，避免模块级循环依赖）──
+        from .dialogue import (
+            DETAILED,
+            MAX_ACK_STREAK,
+            MINIMAL,
+            build_natural_continuation,
+            compute_answer_coverage,
+            compute_momentum,
+            decide_continuation,
+            decide_turn_action,
+            next_candidate_slot,
+            render_minimal,
+            strip_mechanical_phrases,
+        )
+        from .dialogue.duplicate_firewall import FIREWALL
+
+        turn_context = dict(turn_context or result.get("turn_context") or {})
         questions = self._question_candidates(result)
         # §28：审计要记"做决定之前"的对话状态，所以先拍一张快照
         conversation_before = self._conversation_snapshot(session_id)
@@ -506,6 +552,132 @@ class DualAgentOrchestrator:
         extras = [str(item) for item in (result.get("extra_messages") or []) if item]
         result.setdefault("customer_input", str(message or ""))
 
+        # ══ v2.7 Phase 7~11：覆盖率 → 闸门 → 唯一 Action → 承接上下文 ══════
+        previous_question = turn_context.get("previous_question") or {}
+        previous_slot = str(previous_question.get("question_slot") or "")
+        newly_filled = [str(item) for item in (result.get("newly_filled_slots") or [])]
+        coverage = compute_answer_coverage(
+            asked_slot=previous_slot,
+            match=self._answer_match_object(session_id),
+            newly_filled_slots=newly_filled,
+        )
+        result["answer_coverage"] = coverage.to_dict()
+
+        question_slot, duplicate_check = self._apply_duplicate_firewall(
+            result,
+            session_id=session_id,
+            coverage=coverage,
+            previous_question=previous_question,
+            newly_filled=newly_filled,
+            firewall=FIREWALL,
+            next_candidate=next_candidate_slot,
+        )
+        if question_slot:
+            result["pending_slot"] = question_slot
+        result["duplicate_check"] = duplicate_check
+        questions = self._question_candidates(result)
+
+        conversation = self._conversation_state(session_id)
+        momentum = compute_momentum(
+            newly_filled_slots=newly_filled,
+            answered_slots=coverage.answered_slots,
+            last_question_slot=str(getattr(conversation, "last_question_slot", "") or ""),
+        )
+        result["momentum"] = momentum.to_dict()
+        speech_act = result.get("speech_act") or {}
+        customer_question = bool(
+            speech_act.get("customer_questions") or speech_act.get("is_customer_question")
+        )
+        question_kind = str(speech_act.get("question_kind") or "")
+        turn_action = decide_turn_action(
+            customer_question=customer_question,
+            question_kind=question_kind,
+            ready_to_recommend=bool(
+                (result.get("recommendation_gate") or {}).get("ready")
+            ),
+            recommend_requested=bool(result.get("recommend_requested")),
+            conflicts=(result.get("requirements") or {}).get("conflicts"),
+            newly_filled_slots=newly_filled,
+            missing_slots=result.get("missing_slots") or [],
+            question_candidates=self._ranked_question_candidates(session_id),
+            momentum_slot=momentum.slot,
+            previous_question_slot=previous_slot,
+            blocked_slot=str(previous_question.get("question_slot") or "")
+            if duplicate_check.startswith("duplicate_question")
+            else "",
+            hard_gate_slot="environment" if result.get("pending_slot") == "environment" else "",
+        )
+        result["turn_action"] = turn_action.to_dict()
+        # §20/§21：Question Planner/Flow 产出候选，Dialogue Policy 决定"这一轮做不做、
+        # 做的优先级"；**具体问哪一项仍以已落地的候选为准** —— 实测教训：在这里
+        # 事后改槽位会和已经组好的正文脱节（日志里 last_question 与 last_response
+        # 不一致，客户看到的是另一个问题）。Policy 的选择记录在 turn_action 里。
+        result["policy_preferred_slot"] = str(getattr(turn_action, "target_slot", "") or "")
+        # §14：Conversation State 的"当前话题"（momentum）只用于对话规划
+        if conversation is not None:
+            conversation.current_topic = momentum.slot
+        continuation = build_natural_continuation(
+            customer_message=message,
+            speech_act=speech_act,
+            newly_filled_slots=newly_filled,
+            momentum=momentum,
+            next_required_slot=question_slot,
+            customer_question=customer_question,
+            question_kind=question_kind,
+            conflicts=(result.get("requirements") or {}).get("conflicts"),
+            has_recommendation=bool(result.get("products")),
+            is_first_contact=bool(result.get("first_contact_messages")),
+        )
+        result["response_density"] = continuation.density
+        result["natural_continuation"] = continuation.to_dict()
+
+        # ── 客户口径（2026-09-21）：不要连续提问 ─────────────────────────
+        # 客户没回答上一问 → 这一轮只"承接/闲谈"，最多 3 条，
+        # 第 4 条必须拉回需求问题；客户回答了就跟着客户的话题走。
+        conversation_state = conversation
+        ack_streak = int(getattr(conversation_state, "ack_streak", 0) or 0)
+        pending_previous = str(
+            conversation_state.last_question_slot
+            if conversation_state is not None and conversation_state.last_question_slot
+            else previous_slot
+        )
+        answered_pending = bool(pending_previous) and (
+            pending_previous in (coverage.answered_slots or [])
+            or pending_previous in newly_filled
+        )
+        has_question = bool(question_slot and result.get("pending_question"))
+        decision = decide_continuation(
+            has_question=has_question,
+            answered_pending=answered_pending,
+            had_pending_question=bool(pending_previous),
+            ack_streak=ack_streak,
+            customer_question=customer_question,
+            max_ack_streak=MAX_ACK_STREAK,
+        )
+        result["continuation"] = decision.to_dict()
+        result["ack_streak"] = decision.next_streak
+        if conversation_state is not None:
+            conversation_state.ack_streak = decision.next_streak
+        if decision.suppress_question and has_question:
+            logger.info(
+                "[Continuation] 客户没答上一问（%s）→ 本轮先承接、不问问题（承接 %d/%d）",
+                pending_previous or "-", decision.next_streak, MAX_ACK_STREAK,
+            )
+            result["suppressed_question"] = {
+                "slot": question_slot,
+                "question": str(result.get("pending_question") or ""),
+                "ack_streak": decision.next_streak,
+            }
+            result["pending_question"] = ""
+            result["pending_slot"] = ""
+            question_slot = ""
+            questions = []
+        if (
+            continuation.density == MINIMAL
+            and str(result.get("response_mode") or "") != "FALLBACK"
+        ):
+            result["response_mode"] = "MINIMAL"
+
         # ① 售后口径 + 图片核对 + Guard 收口（原有链路，先算出"想说的话"）
         text = self._response_coordinator().finalize(
             str(result.get("response") or ""),
@@ -513,6 +685,26 @@ class DualAgentOrchestrator:
             message=message,
             questions=questions,
         )
+        # ② v2.7 §15 原先是"短回答模式：客户只给一个参数 → 直接甩一个问题"。
+        # 客户口径（2026-09-21）：太短了，要 3~4 句 —— 所以这里**不再**把回复
+        # 砍成裸问句；长度交给 LLM 提示词（NATIVE prompt 里给了 3~4 句的要求）。
+        # 只在"客户只有一个词确认 + 没有 LLM 文本"时保留极短兜底。
+        # 承接轮：正文里不许再留下问句（只接住客户的话）
+        if result.get("suppressed_question"):
+            text = self._continuation_only_text(text, result)
+        # ③ v2.7 §16：去掉机械确认开头（"Got it / Thanks / Based on that…"）
+        # 只管模板拼出来的句子；LLM 自己写的开场（客户口径：明确授权它自己组织）
+        # 不再被回头清洗，否则会把自然的话削成半句。
+        text, removed_mechanical = strip_mechanical_phrases(
+            text,
+            allow=(
+                continuation.density == DETAILED
+                or str(result.get("response_source") or "") == "llm"
+                or bool(result.get("suppressed_question"))
+            ),
+        )
+        if removed_mechanical:
+            result["mechanical_phrases_removed"] = removed_mechanical
         # ② v2.6：合并追加气泡 → 只保留一条回复 + 最多一个问题
         final = self._final_response_coordinator().build(
             text=text or str(result.get("response") or ""),
@@ -674,6 +866,160 @@ class DualAgentOrchestrator:
         except Exception:  # pragma: no cover - 防御式
             return {}
 
+    def _continuation_only_text(self, text: str, result: Dict[str, Any]) -> str:
+        """承接轮：把正文里的问句去掉，只留"接住客户那句话"的内容。
+
+        客户口径：客户没回答时不要再抛问题；先顺着客户的消息聊一句，
+        最多三条之后（由 continuation_budget 控制）才拉回需求。
+        """
+        guarded = self._response_coordinator()._guard()
+        stripped = guarded.strip_questions(str(text or "")).strip()
+        if stripped:
+            return stripped
+        # 去掉问句后没内容了 → 用这一轮的"接话"（LLM 生成的 acknowledgement）
+        acknowledgement = str(result.get("acknowledgement") or "").strip()
+        if acknowledgement:
+            return guarded.strip_questions(acknowledgement).strip() or acknowledgement
+        # 兜底：把客户刚说的话接住（不提问）
+        customer = " ".join(str(result.get("customer_input") or "").split())
+        if customer:
+            # 客户口径：不要"回执腔"复读客户原话（"3*5 — noted." 很僵硬），
+            # 用一句简短的人话接住即可（真正的接话由 LLM 的 acknowledgement 负责）。
+            return self._neutral_continuations(seed=len(customer)) 
+        return "Got it."
+
+    @staticmethod
+    def _neutral_continuations(seed: int = 0) -> str:
+        """没拿到 LLM 接话时的中性兜底（短、像人、不复读客户原话）。"""
+        options = (
+            "That makes sense.",
+            "Right, I follow you.",
+            "Good to know.",
+            "Makes sense so far.",
+        )
+        return options[int(seed or 0) % len(options)]
+
+    def _conversation_state(self, session_id: str):
+        """取当前会话的对话状态对象（拿不到就返回 None）。"""
+        try:
+            from .dialogue import get_conversation_state
+
+            return get_conversation_state(session_id)
+        except Exception:  # pragma: no cover - 防御式
+            return None
+
+    def _answer_match_object(self, session_id: str):
+        """v2.7 §18：客户这一句与上一轮问题的匹配结果（对象形态）。"""
+        try:
+            from types import SimpleNamespace
+
+            state = self._conversation_state(session_id)
+            data = dict(getattr(state, "last_answer_match", {}) or {})
+            return SimpleNamespace(**data) if data else None
+        except Exception:  # pragma: no cover - 防御式
+            return None
+
+    def _profile_slot_map(self, session_id: str) -> Dict[str, Any]:
+        """当前需求档案里"已经有值"的槽位（用于 diff 出 newly_filled_slots）。"""
+        profile = self._stored_profile(session_id)
+        if profile is None:
+            return {}
+        try:
+            facts = profile.to_facts() if hasattr(profile, "to_facts") else {}
+            return {
+                str(key): value
+                for key, value in dict(facts or {}).items()
+                if value not in (None, "", [], {})
+            }
+        except Exception:  # pragma: no cover - 防御式
+            return {}
+
+    def _newly_filled_slots(self, before: Dict[str, Any], session_id: str) -> List[str]:
+        """v2.7 §18：这一轮新填进来的槽位（Answer Coverage 的核心输入）。"""
+        after = self._profile_slot_map(session_id)
+        return [
+            key for key, value in after.items()
+            if key not in before or before.get(key) != value
+        ]
+
+    def _ranked_question_candidates(self, session_id: str) -> List[str]:
+        """Dialogue Policy 的候选问题（按业务价值排序）—— 闸门拦下时换问用。"""
+        try:
+            from .dialogue import question_candidates
+
+            profile = self._stored_profile(session_id)
+            return [
+                str(slot)
+                for slot, _score in (question_candidates(profile, session_id=session_id) or [])
+            ]
+        except Exception:  # pragma: no cover - 防御式
+            return []
+
+    def _apply_duplicate_firewall(
+        self,
+        result: Dict[str, Any],
+        *,
+        session_id: str,
+        coverage: Any,
+        previous_question: Dict[str, Any],
+        newly_filled: List[str],
+        firewall: Any,
+        next_candidate: Any,
+    ) -> "tuple[str, str]":
+        """v2.7 §19.1：发送前的重复提问闸门。
+
+        Returns:
+            ``(最终的 question_slot, duplicate_check 结论)``
+        """
+        slot = str(result.get("pending_slot") or "")
+        if not result.get("pending_question") or not slot:
+            return slot, "no_question"
+
+        conversation = self._conversation_state(session_id)
+        registry = getattr(conversation, "registry", None)
+        question_state = ""
+        if registry is not None:
+            record = registry.get(slot)
+            question_state = str(getattr(record, "question_state", "") or "") if record else ""
+
+        decision = firewall.check(
+            current_slot=slot,
+            previous_slot=str(previous_question.get("question_slot") or ""),
+            current_turn_id=str(result.get("turn_id") or ""),
+            previous_turn_id=str(previous_question.get("turn_id") or ""),
+            answered_slots=coverage.answered_slots,
+            newly_filled_slots=newly_filled,
+            question_state=question_state,
+        )
+        if decision.allowed:
+            return slot, "pass"
+
+        alternative = next_candidate(
+            self._ranked_question_candidates(session_id),
+            blocked_slot=decision.blocked_slot or slot,
+            answered_slots=coverage.answered_slots,
+        )
+        if alternative:
+            try:
+                from .rag.readiness import question_for
+
+                question = question_for(alternative, "en", 0, easier=False) or ""
+            except Exception:  # pragma: no cover - 防御式
+                question = ""
+            if question:
+                logger.info(
+                    "[Firewall] %s → 改问 %s（不再重复 %s）",
+                    decision.reason, alternative, slot,
+                )
+                result["pending_question"] = question
+                result["pending_slot"] = alternative
+                return alternative, f"{decision.reason}_rerouted"
+
+        logger.info("[Firewall] %s → 本轮不再重复提问（slot=%s）", decision.reason, slot)
+        result["pending_question"] = ""
+        result["pending_slot"] = ""
+        return "", decision.reason
+
     # ── v2.6 §8：AI 侧留痕 ───────────────────────────────────────────────
     def _note_ai_turn(self, result: Dict[str, Any], session_id: str, final: Any) -> None:
         try:
@@ -749,6 +1095,8 @@ class DualAgentOrchestrator:
 
             state = get_conversation_state(session_id)
             match = state.answer_to(message)
+            # v2.7 §18：把匹配结果留在会话状态里，收口时算 Answer Coverage 用
+            state.last_answer_match = match.to_dict()
             state.note_customer_turn(
                 text=message,
                 answer_slot=(

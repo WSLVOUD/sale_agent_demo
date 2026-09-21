@@ -1,17 +1,23 @@
-"""v2.6 §21/§22：AskedQuestionRegistry —— 当前会话的**问题状态**。
+"""v2.6 §21/§22 + v2.7 §17：AskedQuestionRegistry —— 当前会话的**问题状态**。
 
 计划 §21 明确：这不是 Memory。它只记录"这次对话里，哪一项问过、客户答没答"，
 会话结束就自然失效（与 ConversationState 同一生命周期）。
 
-每个需求字段一条记录，走同一个状态机（计划 §22）：
+每个需求字段一条记录，走同一个状态机（计划 §22 / v2.7 §17）：
 
     UNKNOWN ──▶ ASKED ──▶ ANSWERED ──▶ CONFIRMED
                             │
                             ├──▶ RESOLVED   （客户给了 P 值 → 点间距已定）
-                            └──▶ INFERRED   （由场景 / 公式推出来的）
+                            ├──▶ INFERRED   （由场景 / 公式推出来的）
+                            └──▶ BLOCKED    （问满上限仍拿不到）
 
 问题选择器（Question Planner / Gate）不能再重复问
 **已经 ANSWERED / CONFIRMED / INFERRED / RESOLVED** 的字段。
+
+v2.7 §17 追加字段：``asked_turn_id`` / ``answered_turn_id`` /
+``last_question_text`` / ``last_answer_text`` / ``question_state`` ——
+跨轮判断"是不是又问了一遍"必须有**轮次证据**，而不是比较问题字符串
+（计划 §27 明确不允许把方案建立在那上面）。
 """
 from __future__ import annotations
 
@@ -26,11 +32,15 @@ ANSWERED = "ANSWERED"
 CONFIRMED = "CONFIRMED"
 INFERRED = "INFERRED"
 RESOLVED = "RESOLVED"
+BLOCKED = "BLOCKED"
 
-ALL_STATES = (UNKNOWN, ASKED, ANSWERED, CONFIRMED, INFERRED, RESOLVED)
+ALL_STATES = (UNKNOWN, ASKED, ANSWERED, CONFIRMED, INFERRED, RESOLVED, BLOCKED)
 
 # 已经有结论 → 不再问（与 question_flow._SETTLED 同一口径，措辞对齐状态机）
 SETTLED_STATES = frozenset({ANSWERED, CONFIRMED, INFERRED, RESOLVED})
+
+# 不该再问（已有结论，或已阻塞）
+NO_MORE_ASKS_STATES = frozenset(set(SETTLED_STATES) | {BLOCKED})
 
 
 @dataclass
@@ -43,18 +53,40 @@ class QuestionRecord:
     answered: bool = False
     answer_turn: int = 0
     state: str = UNKNOWN
+    # ── v2.7 §17：跨轮证据 ──────────────────────────────────────────────
+    asked_turn_id: str = ""
+    answered_turn_id: str = ""
+    last_question_text: str = ""
+    last_answer_text: str = ""
 
-    def note_asked(self, turn_index: int = 0) -> None:
+    @property
+    def question_state(self) -> str:
+        """v2.7 §17 的字段名（与 state 同义）。"""
+        return self.state
+
+    def note_asked(
+        self, turn_index: int = 0, *, turn_id: str = "", question_text: str = ""
+    ) -> None:
         self.asked_count += 1
         if not self.asked_at_turn:
             self.asked_at_turn = int(turn_index or 0)
+        if turn_id:
+            self.asked_turn_id = str(turn_id)
+        if question_text:
+            self.last_question_text = str(question_text)[:300]
         if self.state in (UNKNOWN, ""):
             self.state = ASKED
 
-    def note_answered(self, turn_index: int = 0) -> None:
+    def note_answered(
+        self, turn_index: int = 0, *, turn_id: str = "", answer_text: str = ""
+    ) -> None:
         self.answered = True
         self.answer_turn = int(turn_index or 0)
         self.state = ANSWERED
+        if turn_id:
+            self.answered_turn_id = str(turn_id)
+        if answer_text:
+            self.last_answer_text = str(answer_text)[:300]
 
     def mark(self, state: str, turn_index: int = 0) -> None:
         state = str(state or "").upper()
@@ -70,10 +102,15 @@ class QuestionRecord:
         return {
             "slot": self.slot,
             "state": self.state,
+            "question_state": self.state,
             "asked_at_turn": self.asked_at_turn,
             "asked_count": self.asked_count,
             "answered": self.answered,
             "answer_turn": self.answer_turn,
+            "asked_turn_id": self.asked_turn_id,
+            "answered_turn_id": self.answered_turn_id,
+            "last_question_text": self.last_question_text,
+            "last_answer_text": self.last_answer_text,
         }
 
 
@@ -85,14 +122,30 @@ class AskedQuestionRegistry:
     turn_index: int = 0
 
     # ── 写入 ────────────────────────────────────────────────────────────
-    def note_asked(self, slot: str, *, turn_index: Optional[int] = None) -> QuestionRecord:
+    def note_asked(
+        self,
+        slot: str,
+        *,
+        turn_index: Optional[int] = None,
+        turn_id: str = "",
+        question_text: str = "",
+    ) -> QuestionRecord:
         record = self._record(slot)
-        record.note_asked(self._turn(turn_index))
+        record.note_asked(self._turn(turn_index), turn_id=turn_id, question_text=question_text)
         return record
 
-    def note_answered(self, slot: str, *, turn_index: Optional[int] = None) -> QuestionRecord:
+    def note_answered(
+        self,
+        slot: str,
+        *,
+        turn_index: Optional[int] = None,
+        turn_id: str = "",
+        answer_text: str = "",
+    ) -> QuestionRecord:
         record = self._record(slot)
-        record.note_answered(self._turn(turn_index))
+        record.note_answered(
+            self._turn(turn_index), turn_id=turn_id, answer_text=answer_text
+        )
         return record
 
     def mark_state(
@@ -131,6 +184,18 @@ class AskedQuestionRegistry:
         """问题选择器的过滤器：问过并答过、或已有结论的槽位直接跳过。"""
         return self.is_settled(slot)
 
+    def asked_in_turn(self, slot: str) -> str:
+        record = self.get(slot)
+        return str(record.asked_turn_id) if record else ""
+
+    def answered_in_turn(self, slot: str) -> str:
+        record = self.get(slot)
+        return str(record.answered_turn_id) if record else ""
+
+    def is_blocked(self, slot: str) -> bool:
+        record = self.get(slot)
+        return bool(record and record.state == BLOCKED)
+
     def asked_slots(self) -> list:
         return [slot for slot, record in self.records.items() if record.asked_count > 0]
 
@@ -160,9 +225,11 @@ __all__ = [
     "ALL_STATES",
     "ANSWERED",
     "ASKED",
+    "BLOCKED",
     "AskedQuestionRegistry",
     "CONFIRMED",
     "INFERRED",
+    "NO_MORE_ASKS_STATES",
     "QuestionRecord",
     "RESOLVED",
     "SETTLED_STATES",

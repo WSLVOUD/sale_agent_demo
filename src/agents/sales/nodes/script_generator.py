@@ -78,7 +78,7 @@ Customer says: {message}
 
 Requirements:
 1. Conversational and natural, like chatting with a friend
-2. Short, 1-2 sentences
+2. Natural and conversational, 2-4 sentences (do not answer with one bare line)
 3. Plain text only, no markdown
 4. Never invent specifications, prices or model names
 5. {response_language_rule(reply_language(message))}
@@ -114,6 +114,11 @@ def _answer_company_question(state: SalesState) -> str:
     )
 
 
+# ⚠️ 已弃用（2026-09-21，客户口径："明确授权 LLM 自己组织接话和问法"）：
+# 这段提示词要求"必须用一个过渡（So / By the way / That said）把接话和问句连起来"，
+# 与新一代 NATIVE 提示词（明确禁止这些套路化开头、允许 LLM 自己组织说法）方向相反。
+# 现在**没有任何调用点**（唯一使用者 _polish_question_message 也已停用）；
+# 保留在此仅作历史记录，不要重新接回主链路。
 _QUESTION_POLISH_PROMPT = """你是 LED 显示屏产品的销售，正在微信上和客户聊天。
 下面这行"草稿"是系统已经决定要问客户的问题（问什么由系统定，不能改）。
 请把它说得自然、口语化，并让它和"接住客户这句话"自然地连成一段（最多两句），
@@ -166,8 +171,8 @@ def _plan_rules_for_prompt(state: SalesState) -> str:
     return "；".join(parts)
 
 
-def _recent_question_texts(state: SalesState, limit: int = 3) -> str:
-    """最近几轮已经发给客户的话（给改写作"不要重复"的参考）。"""
+def _recent_question_list(state: SalesState, limit: int = 3) -> list:
+    """最近几轮已经发给客户的话（最近的在前）。"""
     lines: list[str] = []
     for item in reversed(state.get("messages") or []):
         role = ""
@@ -183,10 +188,16 @@ def _recent_question_texts(state: SalesState, limit: int = 3) -> str:
         text = content.strip()
         if not text:
             continue
-        lines.append(f"- {text[:160]}")
+        lines.append(text[:160])
         if len(lines) >= limit:
             break
-    return "\n".join(reversed(lines)) or "（暂无）"
+    return lines
+
+
+def _recent_question_texts(state: SalesState, limit: int = 3) -> str:
+    """最近几轮已经发给客户的话（给改写作"不要重复"的参考，字符串形态）。"""
+    lines = _recent_question_list(state, limit=limit)
+    return "\n".join(f"- {item}" for item in reversed(lines)) or "（暂无）"
 
 
 def _question_temperature() -> float:
@@ -390,6 +401,7 @@ def _natural_reply(
         generate_response,
     )
     from ....dialogue.grounded_facts import build_grounded_facts
+    from ....rag.readiness import question_intent
 
     current_message = str(state.get("current_message") or "")
     slot = slot or str(state.get("pending_slot") or "")
@@ -410,6 +422,11 @@ def _natural_reply(
         action=action,
         customer_message=current_message,
         question=question,
+        # v2.7 修订（客户口径）：问句以"槽位 + 意图"交给 LLM，由它自己组织说法；
+        # 系统给的成句只当意思锚点（prompt 里明确要求不要照抄）。
+        question_slot=slot,
+        question_intent=question_intent(slot) if slot else "",
+        recent_questions=_recent_question_list(state),
         answer=answer,
         grounded_facts=grounded,
         pitch_resolution=state.get("pitch_resolution") or None,
@@ -424,6 +441,8 @@ def _natural_reply(
         language="en",          # 客户口径：对客户始终说英文
         restrictions=[
             "ask_only_one_question",
+            "phrasing_is_yours_do_not_copy_canned_lines",
+            "you_may_react_naturally_in_your_own_words",
             "do_not_invent_facts",
             "do_not_repeat_customer_unnecessarily",
         ],
@@ -438,8 +457,11 @@ def _natural_reply(
         logger.warning("[Dialogue] generate_response failed: %s", exc)
         text = ""
     if text:
+        # 记录来源：LLM 写的句子不再被"去僵硬"清洗回头改（那是模板才需要的）
+        state["response_source"] = "llm"
         return _strip_markdown(text)
     # 兜底：旧模板链路（保证一定有话可说）
+    state["response_source"] = "template"
     return _strip_markdown(
         compose_requirement_reply(
             answer=answer,

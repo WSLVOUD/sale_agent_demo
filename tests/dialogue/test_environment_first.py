@@ -62,8 +62,12 @@ class TestEnvironmentFirst:
 class TestEnvironmentAfterWrongAnswer:
     """真实日志复现（2026-09-21 14:50）：问过 indoor/outdoor、客户回 3×5。
 
-    计划 §10 / §12 / §13 / §26 Case 2 要求：环境仍然未知 → **本轮唯一的问题
-    还是 indoor / outdoor**，不能被随机轮换掉（日志里当时问成了 P 值）。
+    v2.7 §19.1（Phase 8 Duplicate Question Firewall）：上一轮问的就是这一项、
+    客户又没给出相关新信息 → **本轮不许重复问同一项**；它留到
+    "其它问题问完后的硬性条件复问"再回来。
+
+    （说明：本轮迭代早期按 v2.6 §12 的严格读法改成过"环境每轮必问"；
+      v2.7 §19.1 明确写"绝对禁止"，所以以 v2.7 为准。）
     """
 
     def _profile_asked_once(self, message: str = "3*5") -> RequirementProfile:
@@ -72,27 +76,46 @@ class TestEnvironmentAfterWrongAnswer:
         profile.record_ask("environment")
         return profile
 
-    def test_environment_is_still_the_question(self):
+    def test_environment_can_move_on_when_unanswered(self):
+        """客户口径（2026-09-21）：每个问题没答出来**都可以跳转**（硬性条件也一样）；
+        硬性条件只在"要推荐 / 要算方案"时才必须满足。
+
+        "不连续提问"由 continuation_budget 控制：客户没答时先承接（最多 3 条），
+        第 4 条才拉回需求问题 —— 见 tests/dialogue/test_ack_streak.py。
+        """
         profile = self._profile_asked_once()
         session_id = "env-after-wrong-1"
         reset_conversation_state(session_id)
         plan = next_question_plan(
             profile, session_id=session_id, conversation=get_conversation_state(session_id)
         )
-        assert getattr(plan, "slot", None) == "environment"
-        assert "indoor" in (getattr(plan, "question", "") or "").lower()
+        assert getattr(plan, "slot", None) != "environment", "没答出来 → 可以跳转"
+        assert plan is not None
 
-    def test_question_is_the_plain_form_not_the_softened_one(self):
-        """客户反馈过：不要换成 "That's okay — most installations are indoors…"。"""
-        profile = self._profile_asked_once()
+    def test_environment_comes_back_with_the_plain_form(self):
+        """其它都问不到了 → 环境作为复问回来（直问，不用降门槛说法）。"""
+        slots = {
+            "display_type": "LED",
+            "purpose": "church",
+            "installation": "fixed",
+            "target_width_mm": 3000,
+            "target_height_mm": 5000,
+            "pixel_pitch_mm": 3.0,
+            "price_preference": "both",
+            "content_type": "mixed",
+        }
+        profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
+        profile.last_asked_slot = "environment"
+        profile.record_ask("environment")
+        assert environment_needs_asking(profile) is True, "环境仍然是唯一没定的硬性条件"
         session_id = "env-after-wrong-2"
         reset_conversation_state(session_id)
         plan = next_question_plan(
             profile, session_id=session_id, conversation=get_conversation_state(session_id)
         )
+        assert getattr(plan, "slot", None) == "environment"
         question = (getattr(plan, "question", "") or "")
-        assert "that's okay" not in question.lower()
-        assert "most installations are indoors" not in question.lower()
+        assert "indoor" in question.lower()
 
     def test_two_attempts_is_the_cap(self):
         """问满两次仍拿不到 → 不再无限追问（交给 Gate 的 DEFERRED / BLOCKED）。"""

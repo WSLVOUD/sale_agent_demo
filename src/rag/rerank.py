@@ -204,30 +204,18 @@ def sanitize_customer_response(text: str, *, outdoor: bool = False) -> str:
     if not text:
         return text
 
-    # 客户口径（2026-09-18）：所有发给客户的话术统一过一遍"去僵硬"清洗 ——
-    #   ① 不许出现破折号 "—" / "–"（改成逗号）
-    #   ② 去掉固定的过渡词和客套开头（Got it / With that in mind / In the meantime /
-    #      No worries at all / On that note / Now, / By the way / That said）
-    # 放在这里是因为接话、问句、推荐话术都会经过这道清洗，一处覆盖全部路径。
+    # 客户口径（2026-09-21）：**不要破折号，统一用逗号**。
+    # 只做这一件事（把 "—" / "–" 换成逗号），不删词、不改写句子 ——
+    # 旧实现顺带把 Got it / By the way / That said 等词整段删掉，会把句子切碎，
+    # 那部分已经移除；机械话术只在话术出口（src/dialogue/natural_response.py）
+    # 处理，且只对模板产出的文本生效。
     text = str(text).replace("—", ", ").replace("–", ", ")
-    for _stiff in (
-        "With that in mind,", "That said,", "On that note,", "By the way,",
-        "In the meantime,", "Now,", "Got it,", "Got it.", "No worries at all,",
-        "No worries,", "No problem,", "No rush,",
-        "whenever you're ready.", "whenever you are ready.", "take your time.",
-    ):
-        if _stiff in text:
-            text = text.replace(_stiff, "")
-    text = re.sub(r"^[\s,，]+", "", text)
+    text = re.sub(r"\s*,\s*,\s*", ", ", text)
+    text = re.sub(r"\s+([,.!?;:])", r"\1", text)
+    text = str(text).strip()
     # 只压缩连续空格/制表符，保留换行 —— 否则多屏回复的 "Screen 1 / Screen 2"
     # 会被并成一行，且整段当成一个句子处理（实测 bug）。
-    text = re.sub(r"[ \t]{2,}", " ", text).replace(" ,", ",")
-    # 去掉固定铺垫后句子会变成小写开头，这里把每句首字母重新大写
-    text = re.sub(
-        r"(^|[.!?]\s+)([a-z])",
-        lambda m: m.group(1) + m.group(2).upper(),
-        text,
-    ).strip()
+    text = re.sub(r"[ \t]{2,}", " ", text).strip()
     if not text:
         return text
 

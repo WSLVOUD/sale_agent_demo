@@ -27,10 +27,62 @@ from .question_flow import (
     environment_should_ask_now,
     hard_recap_pending,
     next_question_plan,
+    previous_slot_blocked,
     pass1_complete,
     pass1_pending,
     random_order,
     why_for,
+)
+from .answer_coverage import AnswerCoverage, compute_answer_coverage
+from .continuation_budget import (
+    MAX_ACK_STREAK,
+    ContinuationDecision,
+    decide_continuation,
+)
+from .duplicate_firewall import (
+    DEFER_REPEATED_SLOT,
+    DuplicateQuestionFirewall,
+    FirewallDecision,
+    ResponseCountGuard,
+)
+from .momentum import (
+    ConversationMomentum,
+    compute_momentum,
+    continuation_candidates,
+    momentum_bonus,
+)
+from .natural_continuation import (
+    NaturalContinuation,
+    build_natural_continuation,
+    render_minimal,
+)
+from .natural_response import (
+    find_mechanical_prefixes,
+    is_mechanical,
+    strip_mechanical_phrases,
+)
+from .response_density import (
+    DETAILED,
+    MINIMAL,
+    NORMAL,
+    decide_response_density,
+    short_question_response,
+)
+from .turn_action import (
+    ALL_ACTIONS,
+    ANSWER,
+    ANSWER_AND_ASK,
+    CALCULATE,
+    HANDOFF,
+    P1_NEW_INFORMATION,
+    P2_CORRECTION,
+    P3_NATURAL_CONTINUATION,
+    P4_REQUIRED_FOR_RECOMMENDATION,
+    P5_AUXILIARY,
+    TurnAction,
+    WAIT,
+    decide_turn_action,
+    next_candidate_slot,
 )
 from .response_coordinator import ResponseCoordinator
 from .response_planner import ResponsePlan, plan_response, reassure_line
@@ -183,6 +235,12 @@ __all__ = [
     "P3_GATE_REQUIRED",
     "P4_BEST_NEXT_QUESTION",
     "P5_EXTRA_INFO",
+    # v2.7 §10.1 的优先级（Phase 9）
+    "P1_NEW_INFORMATION",
+    "P2_CORRECTION",
+    "P3_NATURAL_CONTINUATION",
+    "P4_REQUIRED_FOR_RECOMMENDATION",
+    "P5_AUXILIARY",
     "PRICE_QUESTION",
     "PRODUCT_QUESTION",
     "QuestionPlan",
@@ -235,6 +293,7 @@ __all__ = [
     "note_customer_turn",
     "pass1_complete",
     "pass1_pending",
+    "previous_slot_blocked",
     "plan_question",
     "plan_response",
     "random_order",
@@ -257,4 +316,37 @@ __all__ = [
     "update_conversation_state",
     "validate_response",
     "why_for",
+    # ── v2.7（Phase 7~14）───────────────────────────────────────────────
+    "ALL_ACTIONS",
+    "ANSWER",
+    "AnswerCoverage",
+    "CALCULATE",
+    "ConversationMomentum",
+    "DEFER_REPEATED_SLOT",
+    "DETAILED",
+    "DuplicateQuestionFirewall",
+    "FirewallDecision",
+    "HANDOFF",
+    "MINIMAL",
+    "NORMAL",
+    "NaturalContinuation",
+    "ResponseCountGuard",
+    "TurnAction",
+    "WAIT",
+    "MAX_ACK_STREAK",
+    "ContinuationDecision",
+    "build_natural_continuation",
+    "compute_answer_coverage",
+    "compute_momentum",
+    "continuation_candidates",
+    "decide_response_density",
+    "decide_continuation",
+    "decide_turn_action",
+    "find_mechanical_prefixes",
+    "is_mechanical",
+    "momentum_bonus",
+    "next_candidate_slot",
+    "render_minimal",
+    "short_question_response",
+    "strip_mechanical_phrases",
 ]

@@ -65,10 +65,13 @@ def merge_request_payload(
     images: Optional[Sequence[Any]] = None,
     messages: Optional[Iterable[Any]] = None,
     message_ids: Optional[Sequence[str]] = None,
+    dedup: bool = True,
 ) -> TurnPayload:
     """统一的请求负载：`messages` 优先，兼容老的 `question` + `images`。
 
-    同一个 `message_id` 在本会话里第二次出现时会被忽略（幂等）。
+    ``dedup=True``：同一个 message_id 第二次出现会被忽略（旧口径）。
+    v2.7 起幂等交给 TurnExecutor（Message Dedup + Turn Store），
+    所以 API 层用 ``dedup=False`` 拿到完整 message_ids 再交给引擎。
     """
     payload = merge_message_parts(messages)
     legacy_images = [image for image in (images or []) if image]
@@ -85,6 +88,8 @@ def merge_request_payload(
         payload.text = "\n".join(payload.text_parts)
 
     if not payload.message_ids and not payload.text and not payload.images:
+        return payload
+    if not dedup:
         return payload
 
     # 幂等：同一个 message_id 第二次提交（前端重试 / 网络重发）不再重复处理

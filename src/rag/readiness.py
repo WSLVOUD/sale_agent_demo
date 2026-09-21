@@ -19,6 +19,7 @@ Calculation Ready Gate —— 判断"是否具备屏体工程计算条件"：
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -474,7 +475,93 @@ def question_for(
                 "the right model?"
             )
         return f"Could you tell me {label}?"
-    return variants[seed % len(variants)]
+    return _strip_canned_preamble(variants[seed % len(variants)])
+
+
+# ── 客户口径（2026-09-21）：问句库只当"意思种子"，不要自带模板铺垫 ──────────
+# 实测：客户看到的 "Quick one, fixed install or rental?" 就是这里自带的铺垫
+# （"Quick one —"）被清洗层把破折号换成逗号之后的产物。
+_CANNED_PREAMBLE_RE = re.compile(
+    r"^(?:"
+    r"quick one|quick check|one quick question|one more quick one|"
+    r"just so i [^—,.]{0,40}|so i can match[^—,.]{0,40}|so i can point[^—,.]{0,40}|"
+    r"so i plan this properly|while we're at it|in the meantime|to narrow it down|"
+    r"简单确认下|顺便问一下|另外|为了给您匹配"
+    r")\s*[—–,:：\-]+\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_canned_preamble(text: str) -> str:
+    """去掉问句库里自带的固定铺垫，只留下"要问的意思"。"""
+    value = str(text or "").strip()
+    cleaned = _CANNED_PREAMBLE_RE.sub("", value).strip()
+    if not cleaned:
+        return value
+    if cleaned[0].islower():
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    return cleaned or value
+
+
+# ── 问句"意图"（v2.7 修订：不再把整句模板丢给 LLM 照抄）────────────────────
+# 每个槽位：LLM 要表达的意思（intent）+ 必须出现的关键词（校验用）
+QUESTION_INTENTS: Dict[str, Dict[str, Any]] = {
+    "environment": {
+        "intent": "确认这块屏是室内用还是室外用（决定箱体与亮度）",
+        "keywords": ("indoor", "outdoor", "inside", "outside", "室内", "室外", "户外"),
+    },
+    "installation": {
+        "intent": "确认是长期固定安装，还是租赁 / 活动用",
+        "keywords": ("install", "fixed", "rental", "rent", "安装", "固装", "租赁"),
+    },
+    "pixel_pitch": {
+        "intent": "确认客户对点间距有没有指定（没有就说明可以按观看距离推荐）",
+        "keywords": ("pitch", "p2", "p3", "p4", "p5", "点间距", "间距"),
+    },
+    "viewing_distance": {
+        "intent": "了解观众 / 观看者通常离屏幕多远",
+        "keywords": ("distance", "far", "away", "metre", "meter", "distance"),
+    },
+    "size": {
+        "intent": "确认屏体尺寸（宽 x 高）",
+        "keywords": ("size", "width", "height", "dimension", "尺寸", "宽", "高"),
+    },
+    "size_axis": {
+        "intent": "确认客户给的尺寸里哪一个是宽、哪一个是高",
+        "keywords": ("width", "height", "宽", "高"),
+    },
+    "purpose": {
+        "intent": "了解这块屏主要用在什么场合 / 做什么",
+        "keywords": ("use", "used", "application", "purpose", "场景", "用途", "做什么"),
+    },
+    "price_preference": {
+        "intent": "了解客户更看重价格还是品质",
+        "keywords": ("price", "quality", "budget", "价格", "品质", "质量", "预算"),
+    },
+    "content_type": {
+        "intent": "了解主要放视频、图片还是两者都有",
+        "keywords": ("video", "image", "picture", "content", "视频", "图片", "内容"),
+    },
+    "brightness": {
+        "intent": "确认亮度要求（或按环境推荐）",
+        "keywords": ("brightness", "nits", "亮度"),
+    },
+}
+
+
+def question_intent(slot: Optional[str]) -> str:
+    """这个槽位到底要问什么（给 LLM 的"意图"，不是成句模板）。"""
+    key = str(slot or "")
+    entry = QUESTION_INTENTS.get(key)
+    if entry:
+        return str(entry.get("intent") or "")
+    return f"了解客户的 {human_label(key) or key}"
+
+
+def question_keywords(slot: Optional[str]) -> tuple:
+    """这个槽位的问句里**应该**出现的关键词（校验"问的是不是同一件事"）。"""
+    entry = QUESTION_INTENTS.get(str(slot or ""))
+    return tuple(entry.get("keywords") or ()) if entry else ()
 
 
 @dataclass

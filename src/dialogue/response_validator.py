@@ -192,6 +192,8 @@ def validate_response(
     grounded_facts: Optional[Iterable[Any]] = None,
     pitch_resolution: Optional[Dict[str, Any]] = None,
     allowed_numbers: Optional[Iterable[str]] = None,
+    question_slot: str = "",
+    recent_questions: Optional[Iterable[str]] = None,
 ) -> ResponseValidation:
     """校验一轮回复是否越界（不改文本，只报告；调用方据此重写或回退）。"""
     result = ResponseValidation(text=str(text or ""))
@@ -222,6 +224,22 @@ def validate_response(
     if required_question and result.question_count == 0:
         result.missing_required_question = True
         result.issues.append("missing_required_question")
+    # v2.7 修订：问句只要"问的是同一件事"即可 —— 措辞交给 LLM 自己组织；
+    # 这里只做关键词级的意图校验，避免它把问题问成别的东西。
+    if question_slot and result.question_count:
+        keywords = _slot_keywords(question_slot)
+        if keywords:
+            lowered_question = content.lower()
+            if not any(word.lower() in lowered_question for word in keywords):
+                result.issues.append("question_intent_mismatch")
+    # 同一句话换汤不换药地重复问 → 提示换说法（软问题，交给重写）
+    recent = [str(item) for item in (recent_questions or []) if str(item).strip()]
+    if recent and result.question_count:
+        normalized = _normalise_question_sentences(content)
+        for previous in recent:
+            if previous.strip().lower() in normalized:
+                result.issues.append("repeated_question_phrasing")
+                break
 
     if result.has_generic_ack and not allow_ack:
         result.issues.append("generic_ack")
@@ -301,6 +319,24 @@ def validate_response(
 
     result.ok = not result.issues
     return result
+
+
+def _slot_keywords(slot: str):
+    try:
+        from src.rag.readiness import question_keywords
+
+        return question_keywords(slot)
+    except Exception:  # pragma: no cover - 防御式
+        return ()
+
+
+def _normalise_question_sentences(text: str) -> str:
+    """把文本里所有问句抽出来、归一化，用于"是不是又问了一遍"。"""
+    import re as _re
+
+    sentences = _re.split(r"(?<=[.!?。！？])\s*", str(text or ""))
+    questions = [item for item in sentences if "?" in item or "？" in item]
+    return " ".join(" ".join(item.lower().split()) for item in questions)
 
 
 def compute_metrics(samples: Iterable[Dict[str, Any]]) -> Dict[str, float]:
