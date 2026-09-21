@@ -133,6 +133,18 @@ class MessageAggregator:
                 self._buffers.clear()
                 self._seen_ids.clear()
 
+    def mark_seen(self, session_id: str, message_id: str) -> bool:
+        """幂等登记：返回 True 表示这个 message_id 之前已经处理过（重复提交）。"""
+        key = str(message_id or "")
+        if not key:
+            return False
+        with self._lock:
+            if key in self._seen_ids:
+                return True
+            self._seen_ids[key] = self._now()
+            self._prune_seen()
+            return False
+
     # ── 内部 ────────────────────────────────────────────────────────────
     def _ready(self, buffer: _SessionBuffer, now: float) -> bool:
         if buffer.turn is None:

@@ -12,6 +12,10 @@ class LEDChatApp {
         this.messagesArea = document.getElementById('messages-area');
         this.messageInput = document.getElementById('message-input');
         this.sendBtn = document.getElementById('send-btn');
+        // v2.5：多条消息聚合（客户连续发送时合成一个 turn）
+        this.turnDebounceMs = 1500;   // 客户停止发送 1.5s 后发出
+        this.turnMaxWindowMs = 6000;  // 最长等 6s，避免一直不回复
+        this.pendingTurn = null;
         this.statusIndicator = document.getElementById('status-indicator');
         this.newChatBtn = document.getElementById('new-chat-btn');
         this.welcomeScreen = document.getElementById('welcome-screen');
@@ -327,11 +331,88 @@ class LEDChatApp {
         }
     }
     
+    // ── v2.5：客户连续发多条消息 → 聚合成一个 turn，只请求一次 ────────────
+    // 每条消息各自显示一个气泡（客户看到自己发的每一条），
+    // 但后端只在"客户停止发送 debounce 之后"收到一次合并后的 turn。
+    scheduleTurnFlush() {
+        const turn = this.pendingTurn;
+        if (!turn) return;
+        if (turn.timer) clearTimeout(turn.timer);
+        const waited = Date.now() - turn.startedAt;
+        const remaining = Math.max(0, this.turnMaxWindowMs - waited);
+        const delay = Math.min(this.turnDebounceMs, remaining);
+        turn.timer = setTimeout(() => this.flushTurn(), delay);
+    }
+
+    async flushTurn() {
+        const turn = this.pendingTurn;
+        if (!turn || !turn.parts.length) return;
+        if (this.isLoading) {
+            // 上一条还在处理：稍后再发（同一会话不并发跑两次，和后端的会话锁一致）
+            turn.timer = setTimeout(() => this.flushTurn(), 800);
+            return;
+        }
+        this.pendingTurn = null;
+        if (turn.timer) clearTimeout(turn.timer);
+
+        const parts = turn.parts;
+        const mergedText = parts.map(part => part.text).filter(Boolean).join('\n');
+        const mergedImages = parts.flatMap(part => part.images || []);
+
+        this.showTyping();
+        try {
+            const response = await fetch(`${this.apiBase}/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: this.sessionId,
+                    // 兼容字段（老后端 / 日志可读性）
+                    question: mergedText,
+                    images: mergedImages,
+                    // 多条消息本身（后端按顺序合并 + message_id 幂等）
+                    messages: parts.map(part => ({
+                        text: part.text,
+                        images: part.images,
+                        message_id: part.message_id,
+                    })),
+                    client_message_ids: parts.map(part => part.message_id),
+                })
+            });
+
+            if (!response.ok) throw new Error('API错误');
+
+            const data = await response.json();
+            this.hideTyping();
+
+            // 处理首次接触消息（介绍 + 视频等）
+            if (data.first_contact_messages && data.first_contact_messages.length > 0) {
+                for (const msg of data.first_contact_messages) {
+                    if (msg.role === 'assistant') {
+                        if (msg.asset_type && msg.asset_url) {
+                            this.addAssetMessage(msg.asset_type, msg.asset_name, msg.asset_url);
+                        } else {
+                            this.addMessage('ai', msg.content);
+                        }
+                    }
+                }
+            } else {
+                this.addMessage('ai', data.answer);
+                for (const extra of (data.extra_messages || [])) {
+                    if (extra) this.addMessage('ai', extra);
+                }
+            }
+        } catch (error) {
+            this.hideTyping();
+            this.addMessage('ai', '抱歉，发生了错误。请检查API服务是否正常运行。');
+            console.error('聊天错误:', error);
+        }
+    }
+
     async sendMessage() {
         const question = this.messageInput.value.trim();
         const outgoingImages = this.pendingImages.slice();
         // 纯图片消息也允许发送（客户只发照片描述需求）
-        if ((!question && outgoingImages.length === 0) || this.isLoading) return;
+        if (!question && outgoingImages.length === 0) return;
         
         // 移除欢迎界面
         const welcome = document.getElementById('welcome-screen');
@@ -347,55 +428,22 @@ class LEDChatApp {
         this.messageInput.style.height = 'auto';
         
         // 显示打字指示器
-        this.showTyping();
-        
-        try {
-            const response = await fetch(`${this.apiBase}/chat`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    session_id: this.sessionId,
-                    question: question,
-                    images: outgoingImages.map(image => (
-                        image.base64
-                            ? { data: image.base64, mime_type: image.mimeType }
-                            : { url: image.url }
-                    )),
-                })
-            });
-            
-            if (!response.ok) throw new Error('API错误');
-            
-            const data = await response.json();
-            this.hideTyping();
-            
-            // 处理首次接触消息（介绍 + 视频）
-            if (data.first_contact_messages && data.first_contact_messages.length > 0) {
-                for (const msg of data.first_contact_messages) {
-                    if (msg.role === 'assistant') {
-                        if (msg.asset_type && msg.asset_url) {
-                            this.addAssetMessage(msg.asset_type, msg.asset_name, msg.asset_url);
-                        } else {
-                            this.addMessage('ai', msg.content);
-                        }
-                    }
-                }
-            } else {
-                // 普通回复
-                this.addMessage('ai', data.answer);
-                // 追加的独立气泡（例如推荐完产品后单独再发一条询问联系方式）
-                for (const extra of (data.extra_messages || [])) {
-                    if (extra) this.addMessage('ai', extra);
-                }
-            }
-            
-        } catch (error) {
-            this.hideTyping();
-            this.addMessage('ai', '抱歉，发生了错误。请检查API服务是否正常运行。');
-            console.error('聊天错误:', error);
+        // ── v2.5：把这几个字段放进本轮的缓冲，debounce 之后再一起发出去 ──────
+        if (!this.pendingTurn) {
+            this.pendingTurn = { parts: [], startedAt: Date.now(), timer: null };
         }
+        this.pendingTurn.parts.push({
+            text: question,
+            message_id: `m-${Date.now()}-${this.pendingTurn.parts.length}`,
+            images: outgoingImages.map(image => (
+                image.base64
+                    ? { data: image.base64, mime_type: image.mimeType }
+                    : { url: image.url }
+            )),
+        });
+        this.scheduleTurnFlush();
     }
-    
+
     addMessage(role, content, images = null) {
         const messageEl = document.createElement('div');
         messageEl.className = `message ${role}`;

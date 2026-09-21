@@ -104,6 +104,71 @@ class TestIdempotency:
         assert turn is not None and "b" in turn.text
 
 
+class TestTurnPayload:
+    """v2.5：一次请求里的多条消息 → 一个 UserTurn 负载（前端聚合后的入口）。"""
+
+    def test_merge_messages_keeps_order(self):
+        from src.input import merge_message_parts
+
+        payload = merge_message_parts([
+            {"text": "We need an LED screen.", "message_id": "m1"},
+            {"text": "It is for a church.", "message_id": "m2"},
+            {"images": ["img-1"], "message_id": "m3"},
+            {"text": "Around 200 people.", "message_id": "m4"},
+        ])
+        assert payload.text == "We need an LED screen.\nIt is for a church.\nAround 200 people."
+        assert payload.images == ["img-1"]
+        assert payload.message_ids == ["m1", "m2", "m3", "m4"]
+
+    def test_legacy_question_still_works(self):
+        from src.input import merge_request_payload
+
+        payload = merge_request_payload("legacy", question="indoor screen")
+        assert payload.text == "indoor screen"
+
+    def test_duplicate_message_ids_are_dropped(self):
+        from src.input import merge_request_payload
+
+        parts = [{"text": "first message", "message_id": "dup-1"}]
+        first = merge_request_payload("dedupe-session", messages=parts)
+        second = merge_request_payload("dedupe-session", messages=parts)
+        assert first.text == "first message"
+        assert second.text == "", "同一个 message_id 重复提交时不再处理"
+
+    def test_images_survive_dedupe(self):
+        from src.input import merge_request_payload
+
+        parts = [{"text": "look", "message_id": "img-dup", "images": ["img-a"]}]
+        merge_request_payload("dedupe-images", messages=parts)
+        again = merge_request_payload("dedupe-images", messages=parts)
+        assert again.images == ["img-a"]
+
+    def test_api_merge_helper(self):
+        """API 层的 _merge_turn_request：messages 优先、兼容 question，且幂等。"""
+        from src.api import ChatRequest, _merge_turn_request
+
+        request = ChatRequest(
+            session_id="api-merge",
+            messages=[
+                {"text": "we need a screen", "message_id": "api-1"},
+                {"text": "for a church", "message_id": "api-2"},
+            ],
+        )
+        text, images = _merge_turn_request(request)
+        assert "we need a screen" in text and "for a church" in text
+        assert images == []
+        # 重复提交同样的 message_id → 文本被幂等过滤
+        text2, _ = _merge_turn_request(request)
+        assert text2 == ""
+
+    def test_api_merge_helper_legacy_path(self):
+        from src.api import ChatRequest, _merge_turn_request
+
+        request = ChatRequest(session_id="api-legacy", question="5m x 3m indoors")
+        text, images = _merge_turn_request(request)
+        assert text == "5m x 3m indoors" and images == []
+
+
 class TestMultimodal:
 
     def test_text_image_text(self):

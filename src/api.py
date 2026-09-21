@@ -98,6 +98,10 @@ class ChatRequest(BaseModel):
     # 允许纯图片消息（不带文字）
     question: str = ""
     images: Optional[List[ImageInput]] = None
+    # ── v2.5：客户一次连续发多条消息 → 前端把它们作为一个 turn 一起送来 ──
+    # 结构：[{"text": "...", "images": [...], "message_id": "..."}]（按到达顺序）
+    messages: Optional[List[dict]] = None
+    client_message_ids: Optional[List[str]] = None
 
 class ChatResponse(BaseModel):
     session_id: str
@@ -165,6 +169,39 @@ def _normalize_images(images: Optional[List[ImageInput]]) -> List[str]:
     if len(images) > limit:
         logger.warning("Too many images (%d), only first %d used", len(images), limit)
     return normalized
+
+
+def _merge_turn_request(request: "ChatRequest") -> tuple[str, List[str]]:
+    """v2.5：把"一次请求里的多条消息"合并成一个 turn（并做 message_id 幂等）。
+
+    · 前端把客户连续发的多条消息放进 `messages`（按顺序）；
+    · 老客户端仍然只发 `question` / `images`，两条路径都支持；
+    · 同一个 `message_id` 重复提交（重试 / 网络重发）只处理一次。
+    """
+    try:
+        from .input import merge_request_payload
+
+        payload = merge_request_payload(
+            str(getattr(request, "session_id", "") or ""),
+            question=str(getattr(request, "question", "") or ""),
+            images=[_normalize_images(getattr(request, "images", None))] if getattr(request, "images", None) else None,
+            messages=getattr(request, "messages", None),
+            message_ids=getattr(request, "client_message_ids", None),
+        )
+        text = payload.text or str(getattr(request, "question", "") or "")
+        images = payload.images
+        if text != str(getattr(request, "question", "") or "") or images:
+            logger.info(
+                "[TurnAggregate] parts=%d → text_len=%d images=%d ids=%s",
+                len(getattr(request, "messages", None) or []) or 1,
+                len(text), len(images), payload.message_ids,
+            )
+        return text, images
+    except Exception as error:  # pragma: no cover - 防御式
+        logger.warning("Turn aggregation failed, falling back: %s", error)
+        return str(getattr(request, "question", "") or ""), _normalize_images(
+            getattr(request, "images", None)
+        )
 
 
 def _verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> str:
@@ -533,9 +570,10 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
         )
     
     try:
-        request_images = _normalize_images(request.images)
+        # v2.5：多条消息合成一个 turn（含 message_id 幂等）
+        merged_text, request_images = _merge_turn_request(request)
         result = orchestrator.process_message(
-            message=request.question,
+            message=merged_text,
             session_id=request.session_id,
             images=request_images or None,
         )
