@@ -11,6 +11,8 @@ import os
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -29,6 +31,17 @@ _CANNED_PREAMBLES = (
     "in the meantime",
     "to narrow it down",
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_llm_breaker():
+    """其它用例如果触发过真实 LLM 失败，熔断会冷却 60s —— 这里每例前重置，
+    保证"提示词/授权"这类断言与执行顺序无关。"""
+    from src.dialogue import reset_llm_breaker
+
+    reset_llm_breaker()
+    yield
+    reset_llm_breaker()
 
 
 class _FakeLLM:

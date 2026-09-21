@@ -619,8 +619,62 @@ _PRICE_POLICY_ANSWERS = {
 
 
 def is_price_question(message: str) -> bool:
-    """客户这句话是不是在问价格 / 报价。"""
-    return bool(_PRICE_QUESTION_RE.search(str(message or "")))
+    """客户这句话是不是在**问**价格 / 报价。
+
+    客户口径（2026-09-21）实测 bug："cost down the priority"（客户在回答
+    "更看重价格还是质量"）里带了 cost，被旧实现判成"问价格" → AI 回了报价口径，
+    客户的偏好却没被记下来。
+
+    现在的判定：
+      · 明确要报价（quote / quotation / 报价 / how much / 多少钱）→ 是问价
+      · 其它价格词（price / cost / budget / cheaper…）→ **必须有疑问语气**
+        （问号，或"价格是…/什么价"）才算问价；
+      · 客户正在回答"价格 vs 质量"这一问时，一律按**偏好答案**处理。
+    """
+    return is_price_question_with_context(message, last_asked_slot="")
+
+
+def is_price_question_with_context(message: str, *, last_asked_slot: str = "") -> bool:
+    """带上下文的问价判定（见 :func:`is_price_question` 的说明）。"""
+    text = str(message or "")
+    if not _PRICE_QUESTION_RE.search(text):
+        return False
+    if _PRICE_STRONG_RE.search(text):
+        return True
+    if "?" in text or "？" in text:
+        return True
+    if _QUESTION_SHAPE_RE.search(text):
+        return True
+    # 是疑问句（"what is the price of…" / "价格能便宜点吗"）→ 仍然是问价
+    try:
+        from src.rag.query_understanding import looks_like_question
+
+        if looks_like_question(text):
+            return True
+    except Exception:  # pragma: no cover - 防御式
+        pass
+    if str(last_asked_slot or "") == "price_preference":
+        # 客户在回答"价格／质量" → 这是偏好，不是问价
+        return False
+    # 没有疑问语气、也不是明确要报价 → 不当成问价（例如 "cost down"）
+    return False
+
+
+# 明确"要报价"的信号（这些即使没有问号也算问价）
+_PRICE_STRONG_RE = re.compile(
+    r"quote|quotation|price list|how much|"
+    r"报价|多少钱|价格表|什么价|单价",
+    re.IGNORECASE,
+)
+
+# 疑问句形态（客户在问，而不是在给偏好）——"what is the price…" 这类
+# 没有问号也算问句；中文的"…吗 / …呢 / 多少"同理。
+_QUESTION_SHAPE_RE = re.compile(
+    r"^\s*(?:what|what's|whats|which|how much|how about|can you|could you|"
+    r"do you|does|is there|are there|tell me|give me|send me)\b|"
+    r"[?？]|吗|呢|多少|怎么|什么",
+    re.IGNORECASE,
+)
 
 
 def price_policy_answer(language: str = "en", seed: int = 0) -> str:

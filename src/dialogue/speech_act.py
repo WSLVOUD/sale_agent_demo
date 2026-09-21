@@ -100,13 +100,14 @@ def _extract_requirement_slots(message: str) -> Dict[str, Any]:
     }
 
 
-def _questions(message: str) -> List[str]:
+def _questions(message: str, *, last_asked_slot: str = "") -> List[str]:
     """客户这一轮问了什么（价格 / 交期 / 产品 / 其它）。"""
     kinds: List[str] = []
     try:
-        from src.rag.reply_composer import is_price_question
+        from src.rag.reply_composer import is_price_question_with_context
 
-        if is_price_question(message):
+        # 带上下文：客户在回答"价格 vs 质量"时说的 cost/cheap 是偏好，不是问价
+        if is_price_question_with_context(message, last_asked_slot=last_asked_slot):
             kinds.append(PRICE_QUESTION)
     except Exception:  # pragma: no cover - 防御式
         pass
@@ -145,7 +146,7 @@ def detect_speech_act(
         return SpeechActResult(speech_act=CASUAL, confidence=0.0)
 
     requirements = _extract_requirement_slots(text)
-    question_kinds = _questions(text)
+    question_kinds = _questions(text, last_asked_slot=last_asked_slot)
     is_question = False
     try:
         from src.rag.query_understanding import looks_like_question

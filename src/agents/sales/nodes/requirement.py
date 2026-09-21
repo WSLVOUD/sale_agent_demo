@@ -217,6 +217,15 @@ _EXPLICIT_RECO_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 客户"要我们帮他挑 / 推荐"的信号（**不含**单纯问价 / 要报价单，
+# 那类继续走"先说明报价口径"的路径）
+_RECO_SELECTION_RE = re.compile(
+    r"推荐|帮我选|选一款|选一个|挑一款|换个型号|换一款|其他型号|别的型号|还有别的|其他方案|"
+    r"帮我定|你来定|"
+    r"\b(?:recommend|suggest|another model|other options?|alternative|pick one|choose one)\b",
+    re.IGNORECASE,
+)
+
 # 判断"是否已经推荐过"时看的需求事实字段
 # 客户"这一轮在说需求"的槽位（用于区分"回答问题"还是"陈述需求"）
 _TURN_REQUIREMENT_KEYS = (
@@ -298,7 +307,7 @@ _ZH_BUSINESS_TERMS_RE = re.compile(
 )
 
 
-def _is_product_or_business_question(message: str) -> bool:
+def _is_product_or_business_question(message: str, *, last_asked_slot: str = "") -> bool:
     """客户这句话是不是"我们该正面回答的问题"。
 
     True = 产品/规格/价格/交期/公司信息（走正常回答路径）；
@@ -310,12 +319,15 @@ def _is_product_or_business_question(message: str) -> bool:
     try:
         from ....rag.company_info import is_company_question
         from ....rag.delivery_info import is_delivery_question
-        from ....rag.reply_composer import is_price_question
+        from ....rag.reply_composer import is_price_question_with_context
     except Exception:  # pragma: no cover - 防御式
         return False
     try:
         return bool(
-            is_company_question(text) or is_delivery_question(text) or is_price_question(text)
+            is_company_question(text)
+            or is_delivery_question(text)
+            # 带上下文：客户在回答"价格 vs 质量"时说的 cost 是偏好，不算"问价问题"
+            or is_price_question_with_context(text, last_asked_slot=last_asked_slot)
         )
     except Exception:  # pragma: no cover - 防御式
         return False
@@ -620,7 +632,10 @@ ack 的写法（很重要，销售不能只会追问）：
         # 只处理"与业务无关的话/闲聊"（哪怕它是问句，例如 "do u like watching TV series?"）。
         # 客户如果问的是产品/规格/价格/交期/公司信息，交给正常路径正面回答，
         # 不能当成无关话只回一句"接住"，也不能反过来倒一堆型号。
-        if not _provides_requirement and not _is_product_or_business_question(current_msg_text):
+        if not _provides_requirement and not _is_product_or_business_question(
+            current_msg_text,
+            last_asked_slot=str(getattr(profile, "last_asked_slot", "") or ""),
+        ):
             from ....rag.query_understanding import detect_language
 
             _ack = _generate_offtopic_ack(
@@ -1240,6 +1255,28 @@ ack 的写法（很重要，销售不能只会追问）：
             state["should_generate_solution"] = False
     else:
         logger.info(f"Requirements: {state['requirements']}, should_trigger: {state['should_generate_solution']}, required_met: {state['required_met']}")
+
+    # ── 客户口径（2026-09-21）：客户明确要推荐 → 只允许两种结果 ─────────────
+    #   需求够了 → 推荐；需求不够 → **只问缺的那一项**。
+    #   实测 bug：客户说"给我推荐"但条件不全时，系统保留了 product_question 的
+    #   自由问答路由 → 只回一句"我这就给你准备"，既不推荐也不问缺什么。
+    if str(state.get("intent") or "") != "closing" and _RECO_SELECTION_RE.search(
+        str(current_msg_text or "")
+    ):
+        if state.get("should_generate_solution"):
+            if str(state.get("next_action") or "") != "router":
+                state["next_action"] = "router"
+                logger.info("[ExplicitRecommend] 需求已齐 → 直接推荐（覆盖自由问答路由）")
+        elif state.get("pending_question"):
+            if str(state.get("intent") or "") in (
+                "others", "product_question", "industry", "objection",
+            ):
+                state["intent"] = "need_query"
+            state["next_action"] = "ask"
+            logger.info(
+                "[ExplicitRecommend] 客户要推荐但条件不全 → 只问缺的那一项：%s",
+                state.get("pending_question"),
+            )
 
     # ── 需求重置后必须回到需求采集 ─────────────────────────────────────────
     # 客户在同一会话里换产品 / 换项目时，本轮以"重新问一个关键问题"收尾：

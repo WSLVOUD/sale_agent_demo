@@ -10,6 +10,7 @@ from ....core.llm import get_llm
 from ....rag.reply_composer import (
     compose_requirement_reply,
     is_price_question,
+    is_price_question_with_context,
     price_policy_answer,
     reply_language,
 )
@@ -678,7 +679,10 @@ def script_generator(state: SalesState) -> SalesState:
             logger.info("Company question — answered from company profile: %s", state["response"])
         else:
             # 需求还没问清时问价格 → 先说明"要确认产品才能报价"，紧接着继续问需求
-            if is_price_question(current_message):
+            # 带上下文：客户正在回答"价格 vs 质量"时说的 cost / cheap 是**偏好**，
+            # 不是问价（实测 bug：回"cost down the priority"被当成问价去答了报价口径）
+            _last_asked = str(getattr(state.get("requirement_profile"), "last_asked_slot", "") or "")
+            if is_price_question_with_context(current_message, last_asked_slot=_last_asked):
                 answer = price_policy_answer(
                     language=reply_language(current_message), seed=_turn_seed(state)
                 )
