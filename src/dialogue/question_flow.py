@@ -144,6 +144,90 @@ def why_for(slot: str) -> str:
     return HARD_WHY.get(str(slot or ""), "")
 
 
+def environment_needs_asking(profile: Any) -> bool:
+    """v2.5+++（计划 §8）：环境是否**还没定**、必须优先问 Indoor / Outdoor。
+
+    · 客户明说过室内/户外        → 已定，不问
+    · 明显场景可判定（教堂/会议室/户外广告…）→ 已定，不问（业务规则保留）
+    · 客户已经答过一次且档案有值 → 已定，不问
+    · 客户明确拒绝 / 已延后      → 不再问（交给 Gate 的 BLOCK / 降级）
+    其余情况（MISSING / UNKNOWN）→ 必须作为**第一项**需求问题。
+    """
+    if profile is None:
+        return False
+    try:
+        from src.rag.readiness import environment_settled
+
+        if environment_settled(profile):
+            return False
+    except Exception:  # pragma: no cover - 防御式
+        if getattr(profile, "environment", None):
+            return False
+    try:
+        return not profile.is_exhausted("environment")
+    except Exception:  # pragma: no cover - 防御式
+        return True
+
+
+def _environment_was_just_asked(profile: Any) -> bool:
+    """上一轮刚问过环境、客户还没给出答案（答非所问 / 只报了别的需求）。
+
+    客户口径（v2.4 起一直有效）：**答非所问 → 本轮不再重复问同一项，换下一个**；
+    这一项留到"一轮走完后的硬性条件复问"再问（那时才用降门槛的问法）。
+    实测 bug：客户回 "3*5"（没答室内外），系统紧接着又把"室内还是室外"问了一遍，
+    还换成"That's okay, most installations are indoors…"，客户连看两次同一个问题。
+    """
+    if profile is None:
+        return False
+    try:
+        if str(getattr(profile, "last_asked_slot", "") or "") != "environment":
+            return False
+        return int(profile.ask_count("environment") or 0) >= 1
+    except Exception:  # pragma: no cover - 防御式
+        return False
+
+
+def environment_should_ask_now(profile: Any) -> bool:
+    """环境这一轮该不该作为**第一问**出现。
+
+    · 环境还没定（MISSING / UNKNOWN）      → 该问（硬性 Gate）
+    · 但上一轮刚问过、客户还没答           → 这一轮先让位给别的问题
+      （留到"一轮走完后的硬性条件复问"，那时才用降门槛的问法）
+    """
+    if not environment_needs_asking(profile):
+        return False
+    return not _environment_was_just_asked(profile)
+
+
+def environment_gate_plan(
+    profile: Any,
+    *,
+    language: str = "en",
+    seed: int = 0,
+) -> Optional["QuestionPlan"]:
+    """环境未定时的那一句 Indoor / Outdoor 问题（否则 None）。"""
+    if not environment_should_ask_now(profile):
+        return None
+    from src.rag.readiness import question_for
+
+    easier = False
+    try:
+        easier = profile.ask_count("environment") >= 1
+    except Exception:  # pragma: no cover - 防御式
+        easier = False
+    question = question_for("environment", language, seed, easier=easier)
+    if not question:
+        return None
+    return QuestionPlan(
+        slot="environment",
+        question=question,
+        action="ASK",
+        easier=easier,
+        reason="environment_hard_gate",
+        why=why_for("environment"),
+    )
+
+
 def next_question_plan(
     profile: Any,
     *,
@@ -183,6 +267,14 @@ def next_question_plan(
             return None
     except Exception:  # pragma: no cover - 防御式
         pass
+
+    # ── v2.5+++（计划 §8）：Environment Hard Gate ─────────────────────────
+    # 室内外还没定 → **第一项需求问题必须是它**（随机池只决定"其余问题"的顺序）。
+    # 客户明确要推荐时也一样：先把最关键的硬条件问清楚，而不是随机挑一个。
+    if "environment" not in skip:
+        gate_plan = environment_gate_plan(profile, language=language, seed=seed)
+        if gate_plan is not None:
+            return gate_plan
 
     if not customer_wants_recommendation:
         # 会话状态里记着"本会话问过哪些"（即使档案被重建，也不会重复问同一项）
@@ -236,6 +328,9 @@ __all__ = [
     "ASK_POOL",
     "HARD_SLOTS",
     "HARD_WHY",
+    "environment_gate_plan",
+    "environment_needs_asking",
+    "environment_should_ask_now",
     "hard_recap_pending",
     "next_question_plan",
     "pass1_complete",

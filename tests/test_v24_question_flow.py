@@ -62,7 +62,7 @@ class TestRandomOrder:
 
 class TestPass1NoRepeat:
 
-    def test_asked_once_is_not_asked_again_in_pass1(self):
+    def test_asked_once_switches_the_environment_wording(self):
         profile = _profile(display_type="LED")
         first = next_question_plan(profile, session_id="p1")
         assert first is not None
@@ -70,7 +70,19 @@ class TestPass1NoRepeat:
         pending = pass1_pending(profile, "p1")
         assert first.slot not in pending, "问过没答的问题，本轮不再问"
         second = next_question_plan(profile, session_id="p1")
-        assert second is not None and second.slot != first.slot
+        assert second is not None
+        assert second.slot == "environment", "环境没定 → 仍然是第一问（计划 §8）"
+        assert second.easier is True and second.question != first.question
+
+    def test_environment_gate_releases_after_two_contacts(self):
+        """问满两次仍拿不到 → 环境让位给其它问题（不会死循环问同一项）。"""
+        profile = _profile(display_type="LED")
+        first = next_question_plan(profile, session_id="p1b")
+        assert first is not None
+        profile.record_ask(first.slot)
+        profile.record_ask(first.slot)
+        third = next_question_plan(profile, session_id="p1b")
+        assert third is None or third.slot != "environment"
 
     def test_unknown_slot_is_not_asked_again_in_pass1(self):
         profile = _profile(display_type="LED")
@@ -106,7 +118,7 @@ class TestPass2HardRecap:
         assert set(pending) <= set(HARD_SLOTS)
 
     def test_recap_carries_the_why(self):
-        profile = _profile(display_type="LED")
+        profile = _profile(display_type="LED", environment="indoor")
         for slot in ASK_POOL:
             profile.record_ask(slot)
         plan = next_question_plan(profile, session_id="p6")
@@ -116,14 +128,14 @@ class TestPass2HardRecap:
         assert plan.slot in HARD_SLOTS
 
     def test_recap_uses_easier_wording(self):
-        profile = _profile(display_type="LED")
+        profile = _profile(display_type="LED", environment="indoor")
         for slot in ASK_POOL:
             profile.record_ask(slot)
         plan = next_question_plan(profile, session_id="p7")
         assert plan.easier is True
 
     def test_soft_slots_are_not_recapped(self):
-        profile = _profile(display_type="LED")
+        profile = _profile(display_type="LED", environment="indoor")
         for slot in ASK_POOL:
             profile.record_ask(slot)
         plan = next_question_plan(profile, session_id="p8")

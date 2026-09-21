@@ -22,6 +22,7 @@ class ResponseCoordinator:
     def __init__(self, store: Any = None, profile_lookup: Any = None):
         self.store = store
         self.profile_lookup = profile_lookup
+        self.last_guard: Any = None
 
     # ── 售后口径 ────────────────────────────────────────────────────────
     def attach_service_faq(self, response: str, message: str) -> str:
@@ -70,11 +71,47 @@ class ResponseCoordinator:
             return response
         return f"{sentence} {response}".strip() if response else sentence
 
-    def finalize(self, response: str, *, session_id: str = "", message: str = "") -> str:
-        """固定顺序：售后口径 → 图片核对。"""
+    def finalize(
+        self,
+        response: str,
+        *,
+        session_id: str = "",
+        message: str = "",
+        questions: Any = None,
+        language: str = "en",
+    ) -> str:
+        """固定顺序：售后口径 → 图片核对 → **FinalResponseGuard 收口**。
+
+        v2.5+++（计划 §3）：Guard 是客户可见内容的**唯一最后一道**，
+        保证一轮最多一个问题（多余的进下一轮）并把内部术语清掉。
+        """
         text = self.attach_service_faq(str(response or ""), message)
         text = self.attach_vision_confirmation(text, session_id, message)
-        return text
+        guarded = self._guard().finalize(
+            text, questions=questions, language=language
+        )
+        self.last_guard = guarded
+        return guarded.text
+
+    # ── 最终收口（FinalResponseGuard）────────────────────────────────────
+    def guard_extras(
+        self,
+        response: str,
+        extras: Any,
+        *,
+        questions: Any = None,
+    ):
+        """附加气泡（extra_messages）也过一遍 Guard：一轮最多一个问题。"""
+        return self._guard().guard_extras(response, list(extras or []), questions=questions)
+
+    def _guard(self):
+        guard = getattr(self, "_guard_instance", None)
+        if guard is None:
+            from .final_guard import FinalResponseGuard
+
+            guard = FinalResponseGuard()
+            self._guard_instance = guard
+        return guard
 
     # ── 图片核对句（v2.3.1 从 Orchestrator 迁入）────────────────────────────
     def vision_confirmation_sentence(self, session_id: str, message: str) -> str:

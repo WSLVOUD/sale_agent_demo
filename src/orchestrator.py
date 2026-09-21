@@ -448,13 +448,34 @@ class DualAgentOrchestrator:
         实测 bug（客户日志）：客户只发了图片 + "i need this"，系统直接跳到问点间距，
         既没跟客户核对图片识别结果，客户也没机会纠正判错的"固定/租赁"。
         """
+        # v2.5+++（计划 §3）：把本轮"想要问的那一项"作为候选问题交给 FinalResponseGuard，
+        # 由它按优先级（硬性 Gate > 工程必要 > 推荐优化 > 销售偏好）只保留一个。
+        questions = []
+        if result.get("pending_question"):
+            questions.append({
+                "text": str(result.get("pending_question") or ""),
+                "slot": str(result.get("pending_slot") or ""),
+                "source": "sales",
+            })
         text = self._response_coordinator().finalize(
             str(result.get("response") or ""),
             session_id=session_id,
             message=message,
+            questions=questions,
         )
         if text:
             result["response"] = text
+        # v2.5+++（计划 §3）：附加气泡（extra_messages）也要收口 ——
+        # 否则会出现"主回复问一个问题、附加气泡又冒出一个问题"两个气泡连着问。
+        extras = [str(item) for item in (result.get("extra_messages") or []) if item]
+        if extras:
+            guarded = self._response_coordinator().guard_extras(
+                str(result.get("response") or ""), extras
+            )
+            if guarded:
+                result["extra_messages"] = guarded
+            else:
+                result.pop("extra_messages", None)
         return result
 
 

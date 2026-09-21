@@ -389,6 +389,7 @@ def _natural_reply(
         build_context,
         generate_response,
     )
+    from ....dialogue.grounded_facts import build_grounded_facts
 
     current_message = str(state.get("current_message") or "")
     slot = slot or str(state.get("pending_slot") or "")
@@ -398,11 +399,20 @@ def _natural_reply(
         action = DIRECT_ANSWER
     else:
         action = ASK
+    # v2.5+++（计划 §5）：把"有来源的事实"整理好交给 LLM —— 它只能用这些
+    profile = state.get("requirement_profile")
+    grounded = build_grounded_facts(
+        profile=profile,
+        recommendation=state.get("recommendation") or None,
+        calculations=state.get("screen_calculation") or None,
+    )
     context = build_context(
         action=action,
         customer_message=current_message,
         question=question,
         answer=answer,
+        grounded_facts=grounded,
+        pitch_resolution=state.get("pitch_resolution") or None,
         # 系统已经生成的"接话"（例如对自我介绍的回应）：LLM 可自行决定要不要用，
         # 无 LLM 时结构化拼装会带上它（不丢内容，也不再强制每轮都接话）
         opening=_opening_for(state, current_message, allow_ack=allow_ack),

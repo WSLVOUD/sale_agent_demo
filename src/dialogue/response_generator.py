@@ -117,6 +117,22 @@ NATIVE_SYSTEM_PROMPT = (
     "Do not invent specifications, prices, models, lead times,\n"
     "engineering results, or commitments.\n"
     "\n"
+    "You may use confirmed, inferred, calculated, retrieved,\n"
+    "and recommended facts provided in the business context.\n"
+    "You may explain or rephrase these facts naturally.\n"
+    "Do not introduce any new business fact that is not present\n"
+    "in the provided business context.\n"
+    "Do not invent:\n"
+    "- product specifications\n"
+    "- viewing distance\n"
+    "- brightness\n"
+    "- installation method\n"
+    "- waterproofing\n"
+    "- rental features\n"
+    "- product suitability\n"
+    "- engineering calculations\n"
+    "- customer requirements\n"
+    "\n"
     "Keep the response concise and conversational.\n"
     "\n"
     "Output language: {language_rule}\n"
@@ -181,6 +197,8 @@ def generate_response(
         supported_parameters=_supported_parameters(context),
         required_question=context.question or context.required_question,
         engineering_result=context.engineering_result,
+        grounded_facts=context.grounded_facts,
+        pitch_resolution=context.pitch_resolution,
     )
     if not check.ok:
         logger.info("[ResponseGenerator] %s 生成结果不合格 %s → 结构化拼装", active, check.issues)
@@ -304,6 +322,8 @@ def build_context(
     missing_fields: Optional[List[str]] = None,
     conflicts: Optional[List[str]] = None,
     known_facts: Optional[List[str]] = None,
+    grounded_facts: Optional[List[Any]] = None,
+    pitch_resolution: Optional[Dict[str, Any]] = None,
     opening: str = "",
     business_goal: str = "",
     required_question: str = "",
@@ -326,6 +346,8 @@ def build_context(
         answer=answer,
         opening=opening,
         known_facts=list(known_facts or []),
+        grounded_facts=list(grounded_facts or []),
+        pitch_resolution=pitch_resolution,
         missing_facts=list(missing_fields or []),
         business_goal=business_goal,
         required_question=required_question or (missing_fields[0] if missing_fields else ""),

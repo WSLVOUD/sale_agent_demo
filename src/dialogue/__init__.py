@@ -33,6 +33,16 @@ from .action import (
     decide_dialogue_action,
 )
 from .ab_test import compare_strategies, run_strategy
+from .final_guard import (
+    FinalResponseGuard,
+    GuardResult,
+    QuestionCandidate,
+    finalize_response,
+)
+from .grounded_facts import (
+    GroundedFact,
+    build_grounded_facts,
+)
 from .response_context import ResponseContext
 from .response_generator import (
     DEFAULT_STRATEGY,
@@ -67,8 +77,12 @@ __all__ = [
     "DEFAULT_STRATEGY",
     "DIRECT_ANSWER",
     "DialogueDecision",
+    "FinalResponseGuard",
+    "GuardResult",
+    "GroundedFact",
     "HARD_SLOTS",
     "QuestionPlan",
+    "QuestionCandidate",
     "RECOMMEND",
     "ResponseCoordinator",
     "ResponseContext",
@@ -78,11 +92,13 @@ __all__ = [
     "STRATEGY_NATIVE",
     "STRATEGY_TEMPLATE_POLISH",
     "build_context",
+    "build_grounded_facts",
     "compose_from_context",
     "compare_strategies",
     "compute_metrics",
     "decide_dialogue_action",
     "echo_ratio",
+    "finalize_response",
     "generate_response",
     "get_response_strategy",
     "llm_available",

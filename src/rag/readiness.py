@@ -614,6 +614,10 @@ def _is_confirmed(profile: Any, field_name: str) -> bool:
 
 
 def _environment_settled(profile: Any) -> bool:
+    return environment_settled(profile)
+
+
+def environment_settled(profile: Any) -> bool:
     """使用环境是否已经"确定"，不必再问客户。
 
       - 客户明说过室内/室外            → 确定
@@ -771,6 +775,16 @@ def check_recommendation_ready(
         if action in (ASK, ASK_EASIER, ASK_LATER)
     ]
     askable.sort(key=lambda item: policy_for(item[0]).ask_priority)
+    # v2.5+++（计划 §8 配套修复）：**上一轮刚问过的那一项排到最后** ——
+    # 客户答非所问 / 只报了别的需求时，不能把同一个问题紧接着再问一遍
+    # （实测 bug：客户回 "3*5"，系统又把"室内还是户外"问了一次）。
+    # 客户口径不变：没答的那一项留到"其它问题问完"的硬性条件复问再问。
+    _last_asked = str(getattr(profile, "last_asked_slot", "") or "")
+    if _last_asked:
+        _others = [item for item in askable if item[0] != _last_asked]
+        _just_asked = [item for item in askable if item[0] == _last_asked]
+        if _others:
+            askable = _others + _just_asked
     # v2.2.5：客户说过"不知道"的字段（ASK_LATER）**不马上重复问** ——
     #   先把其它问题问完（immediate），最后才回头用降门槛的问法问一次（parked）。
     immediate = [(slot, action) for slot, action in askable if action != ASK_LATER]
@@ -993,6 +1007,7 @@ __all__ = [
     "check_calculation_ready",
     "check_recommendation_ready",
     "environment_confirm_question",
+    "environment_settled",
     "first_missing_slot",
     "format_measurement",
     "question_for",

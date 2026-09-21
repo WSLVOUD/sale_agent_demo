@@ -126,6 +126,27 @@ def plan_next_question(
     from src.rag.readiness import question_for
     from src.models.requirement import SLOT_PRIORITY
 
+    # ── v2.5+++（计划 §8）：Environment Hard Priority ────────────────────
+    # 室内外还没定（也没被明显场景推断出来）→ 第一项问题必须是 Indoor / Outdoor；
+    # 已经确定 / 已推断 / 客户答过 → 跳过，剩下的问题再按原有顺序问。
+    from src.dialogue.question_flow import environment_should_ask_now
+
+    if environment_should_ask_now(profile):
+        state = slot_state(profile, "environment")
+        easier = state == "UNKNOWN" and profile.ask_count("environment") >= 1
+        question = question_for("environment", language, seed, easier=easier)
+        if question:
+            return {
+                "slot": "environment",
+                "question": question,
+                "blocking": True,
+                "state": state,
+                "easier": easier,
+                "priority": SLOT_PRIORITY.get("environment", "HIGH"),
+                "missing": profile.missing_slots(),
+                "reason": "environment_hard_gate",
+            }
+
     for slot, question_en, question_zh in QUESTION_PLAN:
         if _slot_filled(profile, slot):
             continue

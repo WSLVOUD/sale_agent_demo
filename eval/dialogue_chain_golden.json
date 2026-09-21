@@ -1,0 +1,60 @@
+[
+  {
+    "id": "case1-environment-missing",
+    "kind": "environment",
+    "customer_message": "I need a LED display.",
+    "expect_first_question_slot": "environment"
+  },
+  {
+    "id": "case2-environment-inferable",
+    "kind": "environment",
+    "customer_message": "I need a church screen.",
+    "expect_first_question_slot_not": "environment"
+  },
+  {
+    "id": "case3-pitch-exact",
+    "kind": "pitch",
+    "customer_message": "P3 please.",
+    "environment": "indoor",
+    "installation": "fixed",
+    "requested_pitch": 3.0,
+    "model": "TW11-3216-P3.0",
+    "expect_match_type": "EXACT",
+    "expect_explanation": false
+  },
+  {
+    "id": "case4-pitch-nearest",
+    "kind": "pitch",
+    "customer_message": "P3 please.",
+    "environment": "indoor",
+    "installation": "rental",
+    "requested_pitch": 3.0,
+    "model": "TW11-IR-P2.9",
+    "model_pitch": 2.976,
+    "available_pitches": [1.95, 2.6, 2.976, 3.91, 4.81],
+    "expect_match_type": "NEAREST_AVAILABLE",
+    "expect_explanation": true,
+    "expect_explanation_mentions": ["P3", "P2.9"]
+  },
+  {
+    "id": "case5-pitch-implies-distance",
+    "kind": "grounded",
+    "customer_message": "P2.9",
+    "pitch": 2.976,
+    "expect_fact_source": {"pixel_pitch": "inferred_from_distance"}
+  },
+  {
+    "id": "case6-one-turn-one-question",
+    "kind": "single_question",
+    "customer_message": "I need a LED display, 3x5m.",
+    "response": "Indoor or outdoor? And is that 3m wide by 5m tall?",
+    "expect_question_count": 1
+  },
+  {
+    "id": "case7-llm-invents-product-facts",
+    "kind": "grounded_block",
+    "customer_message": "we need a screen",
+    "response": "This rental model is quick to install and ideal for church events.",
+    "expect_blocked_claims": ["rental", "quick to install"]
+  }
+]

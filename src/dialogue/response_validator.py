@@ -16,6 +16,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
+from .grounded_facts import (
+    CLAIM_REQUIREMENTS,
+    NUMBER_WITH_UNIT_RE,
+    allowed_tokens,
+    fact_fields,
+)
+
 GENERIC_ACK_RE = re.compile(
     r"^\s*(?:thanks for (?:that|the information|sharing)|got it|understood|"
     r"noted|sure|okay|ok|no problem|thanks)[.!,—\s]",
@@ -80,6 +87,10 @@ class ResponseValidation:
     questionnaire_pattern: bool = False
     repeated_question_slot: str = ""
     missing_required_question: bool = False
+    # v2.5+++（计划 §11.2 / §11.4 / §11.5）：事实 / 数字 / 点间距一致性
+    ungrounded_facts: List[str] = field(default_factory=list)
+    ungrounded_numbers: List[str] = field(default_factory=list)
+    pitch_mismatch_unexplained: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -99,7 +110,17 @@ class ResponseValidation:
             "questionnaire_pattern": self.questionnaire_pattern,
             "repeated_question_slot": self.repeated_question_slot,
             "missing_required_question": self.missing_required_question,
+            "ungrounded_facts": list(self.ungrounded_facts),
+            "ungrounded_numbers": list(self.ungrounded_numbers),
+            "pitch_mismatch_unexplained": self.pitch_mismatch_unexplained,
         }
+
+
+_PITCH_EXPLANATION_RE = re.compile(
+    r"closest|nearest|not an exact|isn't an exact|is not an exact|"
+    r"instead|rather than|available match|not available|closest available",
+    re.IGNORECASE,
+)
 
 
 def _content_tokens(text: str) -> List[str]:
@@ -168,6 +189,9 @@ def validate_response(
     customer_message: str = "",
     required_question: str = "",
     engineering_result: Optional[Dict[str, Any]] = None,
+    grounded_facts: Optional[Iterable[Any]] = None,
+    pitch_resolution: Optional[Dict[str, Any]] = None,
+    allowed_numbers: Optional[Iterable[str]] = None,
 ) -> ResponseValidation:
     """校验一轮回复是否越界（不改文本，只报告；调用方据此重写或回退）。"""
     result = ResponseValidation(text=str(text or ""))
@@ -245,6 +269,36 @@ def validate_response(
             result.customer_question_answered = False
             result.issues.append("customer_question_not_answered")
 
+    # ── Fact Guard（§11.2）：业务事实必须有来源 ──────────────────────────
+    facts = list(grounded_facts or [])
+    fields = fact_fields(facts)
+    lowered = asserted.lower()
+    for phrase, required_field in CLAIM_REQUIREMENTS.items():
+        if phrase in lowered and required_field not in fields:
+            result.ungrounded_facts.append(phrase)
+    if result.ungrounded_facts:
+        result.issues.append("ungrounded_business_fact")
+
+    # ── Numeric Guard（§11.5）：数字必须能在事实 / 客户原话里找到 ─────────
+    if facts or allowed_numbers:
+        allowed = set(str(item) for item in (allowed_numbers or []))
+        allowed |= allowed_tokens(facts, [customer_message, answer])
+        for number, _unit in NUMBER_WITH_UNIT_RE.findall(asserted):
+            normalised = number.replace(",", ".")
+            if normalised not in allowed and number not in allowed:
+                result.ungrounded_numbers.append(f"{number}")
+        if result.ungrounded_numbers:
+            result.issues.append("ungrounded_numeric")
+
+    # ── Pitch Guard（§11.4）：requested != resolved 必须解释 ──────────────
+    resolution = pitch_resolution or {}
+    if resolution.get("needs_explanation"):
+        requested = str(resolution.get("requested_pitch_text") or "").strip()
+        if requested and requested.lower() in asserted.lower():
+            if not _PITCH_EXPLANATION_RE.search(asserted):
+                result.pitch_mismatch_unexplained = True
+                result.issues.append("pitch_mismatch_not_explained")
+
     result.ok = not result.issues
     return result
 
@@ -283,6 +337,8 @@ def compute_metrics(samples: Iterable[Dict[str, Any]]) -> Dict[str, float]:
                 item["validation"].unsupported_parameters
                 or item["validation"].unsupported_models
                 or item["validation"].changed_engineering_results
+                or item["validation"].ungrounded_facts
+                or item["validation"].ungrounded_numbers
             )
         ),
         "internal_term_leak_rate": rate(

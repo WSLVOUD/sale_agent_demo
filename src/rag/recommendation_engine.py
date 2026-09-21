@@ -282,13 +282,37 @@ class RecommendationEngine:
         top = scored[:top_k]
 
         violations = constraints.violations([item.model for item in top])
+        # ── v2.5+++（计划 §4）：每个候选都带上 requested → resolved 的显式说明 ──
+        # 客户说 P3、系统只能给 P2.9 时，话术里必须能解释这层关系（不是无声替换）。
+        from src.rag.pitch_resolution import resolve_pitch
+
+        # "现成可选的点间距"= 这一套配置下真正过滤出来的候选（不是整个目录）
+        available_pitches = [m.pixel_pitch_mm for m in (candidates or self.models)]
+        recommendations = []
+        for item in top:
+            payload = item.to_dict()
+            pitch_resolution = resolve_pitch(
+                profile,
+                item.model,
+                available_pitches=available_pitches,
+                band_min=technical.get("pixel_pitch_min_mm"),
+                band_max=technical.get("pixel_pitch_max_mm"),
+            )
+            payload["pitch_resolution"] = pitch_resolution.to_dict()
+            if pitch_resolution.needs_explanation:
+                explanation = pitch_resolution.explain()
+                if explanation and explanation not in payload.get("reasons", []):
+                    payload.setdefault("reasons", []).insert(0, explanation)
+            recommendations.append(payload)
+
         result = {
             "profile": profile.model_dump(),
             "technical_parameters": technical,
             "hard_constraints": constraints.to_dict(),
             "candidate_count": len(candidates),
             "rejected_count": len(rejected),
-            "recommendations": [item.to_dict() for item in top],
+            "recommendations": recommendations,
+            "pitch_resolution": recommendations[0]["pitch_resolution"] if recommendations else None,
             "violations": violations,
             "relaxed_model": relaxed.model if relaxed else None,
             "original_model": constraints.model,

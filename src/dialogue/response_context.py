@@ -31,6 +31,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from .grounded_facts import (
+    SOURCE_CALCULATED,
+    SOURCE_CALCULATED_FROM_DIMENSIONS,
+    SOURCE_CUSTOMER,
+    SOURCE_INFERRED,
+    SOURCE_INFERRED_FROM_DISTANCE,
+    SOURCE_INFERRED_FROM_PITCH,
+    SOURCE_INFERRED_FROM_SCENE,
+    SOURCE_RECOMMENDED,
+    SOURCE_RECOMMENDED_BY_ENGINE,
+    SOURCE_RETRIEVED,
+    SOURCE_RETRIEVED_FROM_PRODUCT_KB,
+    GroundedFact,
+)
+
 DEFAULT_RESTRICTIONS = (
     "ask_only_one_question",
     "do_not_invent_facts",
@@ -61,6 +76,9 @@ class ResponseContext:
     business_goal: str = ""
     required_question: str = ""
     engineering_constraints: List[str] = field(default_factory=list)
+    # v2.5+++（计划 §5 / §6）：客户可见事实必须带来源
+    grounded_facts: List[GroundedFact] = field(default_factory=list)
+    pitch_resolution: Optional[Dict[str, Any]] = None
     language: str = "en"
     restrictions: List[str] = field(default_factory=list)
     style: str = "natural_b2b_sales"
@@ -79,6 +97,48 @@ class ResponseContext:
         if not self.allow_connector and "do_not_use_formulaic_connectors" not in items:
             items.append("do_not_use_formulaic_connectors")
         return items
+
+    # ── v2.5+++：按来源分类的事实（计划 §10.4）────────────────────────────
+    @property
+    def customer_facts(self) -> List[GroundedFact]:
+        return [f for f in self.grounded_facts if f.source == SOURCE_CUSTOMER]
+
+    @property
+    def inferred_facts(self) -> List[GroundedFact]:
+        return [
+            f for f in self.grounded_facts
+            if f.source in (
+                SOURCE_INFERRED, SOURCE_INFERRED_FROM_SCENE,
+                SOURCE_INFERRED_FROM_PITCH, SOURCE_INFERRED_FROM_DISTANCE,
+            )
+        ]
+
+    @property
+    def calculated_facts(self) -> List[GroundedFact]:
+        return [
+            f for f in self.grounded_facts
+            if f.source in (SOURCE_CALCULATED, SOURCE_CALCULATED_FROM_DIMENSIONS)
+        ]
+
+    @property
+    def retrieved_facts(self) -> List[GroundedFact]:
+        return [
+            f for f in self.grounded_facts
+            if f.source in (SOURCE_RETRIEVED, SOURCE_RETRIEVED_FROM_PRODUCT_KB)
+        ]
+
+    @property
+    def recommended_facts(self) -> List[GroundedFact]:
+        return [
+            f for f in self.grounded_facts
+            if f.source in (SOURCE_RECOMMENDED, SOURCE_RECOMMENDED_BY_ENGINE)
+        ]
+
+    def fact_lines(self) -> List[str]:
+        lines: List[str] = []
+        for fact in self.grounded_facts:
+            lines.append(f"- {fact.text()} [{fact.source}]")
+        return lines
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -99,6 +159,8 @@ class ResponseContext:
             "business_goal": self.business_goal,
             "required_question": self.required_question,
             "engineering_constraints": list(self.engineering_constraints),
+            "grounded_facts": [fact.to_dict() for fact in self.grounded_facts],
+            "pitch_resolution": self.pitch_resolution,
             "language": self.language,
             "restrictions": self.effective_restrictions(),
             "style": self.style,
@@ -121,6 +183,11 @@ class ResponseContext:
                 "Newly confirmed by the customer: "
                 + ", ".join(f"{k}={v}" for k, v in self.newly_confirmed_fields.items())
             )
+        # v2.5+++：带来源的事实清单（LLM 只能使用这里出现过的业务事实）
+        fact_lines = self.fact_lines()
+        if fact_lines:
+            lines.append("Grounded facts (each one carries its source):")
+            lines.extend(fact_lines)
         missing = list(self.missing_facts or self.missing_fields)
         if missing:
             lines.append("Still missing: " + ", ".join(missing))
@@ -144,6 +211,24 @@ class ResponseContext:
                     "Resolution check: actual "
                     f"{fit.get('actual')} vs target {fit.get('target')} "
                     f"({fit.get('fit_level')})"
+                )
+        if self.pitch_resolution:
+            requested = str(self.pitch_resolution.get("requested_pitch_text") or "")
+            resolved = str(self.pitch_resolution.get("resolved_pitch_text") or "")
+            match_type = str(self.pitch_resolution.get("pitch_match_type") or "")
+            if requested or resolved:
+                lines.append(
+                    "Pitch resolution: "
+                    + (f"requested {requested}, " if requested else "")
+                    + (f"resolved {resolved}, " if resolved else "")
+                    + f"match={match_type}"
+                )
+            if self.pitch_resolution.get("needs_explanation"):
+                lines.append(
+                    "You MUST explain that the requested pitch is not an exact available "
+                    "option and name the closest available one. Never say the requested "
+                    f"pitch is the chosen one. Suggested wording: "
+                    f"{self.pitch_resolution.get('pitch_resolution_reason') or ''}"
                 )
         for constraint in self.engineering_constraints:
             lines.append(f"Engineering constraint: {constraint}")
