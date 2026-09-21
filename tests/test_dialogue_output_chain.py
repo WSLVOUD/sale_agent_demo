@@ -80,11 +80,14 @@ class TestEnvironmentQuestion:
             plan = next_question_plan(profile, session_id=session)
             assert plan is not None and plan.slot == "environment", session
 
-    def test_environment_not_asked_twice_when_customer_answers_something_else(self):
-        """实测 bug：客户回 "3*5"（没答室内外）→ 系统又把室内外问了一遍。
+    def test_environment_is_still_first_when_customer_answers_something_else(self):
+        """客户回 "3*5"（没答室内外）→ **这一轮仍然只问室内外**。
 
-        正确行为（v2.4 既定规则）：答非所问 → 换下一个问题，
-        没答的那一项留到"其它问题问完"的硬性条件复问。
+        v2.6 计划 §10 / §12 / §13 / §26 Case 2：环境未确定时它是唯一最高优先级，
+        随机轮不参与（实测 bug：客户回 3×5 后系统跑去问 P 值，室内外一直没被确认）。
+
+        这条口径**取代** v2.4 的"答非所问先换下一问"：环境依旧最多问两次，
+        第二次还拿不到就走 Gate 的 DEFERRED / BLOCKED，不会无限追问。
         """
         profile = _profile(display_type="LED", target_width_mm=3000, target_height_mm=5000)
         first = next_question_plan(profile, session_id="env-5")
@@ -94,12 +97,11 @@ class TestEnvironmentQuestion:
 
         second = next_question_plan(profile, session_id="env-5")
         assert second is not None
-        assert second.slot != "environment", "刚问过没答 → 这一轮换别的问"
-        # 而且换的是"更容易/降门槛"以外的正常问法
-        assert second.easier is False
+        assert second.slot == "environment", "环境未定 → 这一轮还是它"
+        assert "indoor" in second.question.lower()
 
-    def test_environment_returns_in_hard_recap_with_easier_wording(self):
-        """其它问题都问完 → 回头用降门槛的问法再问一次室内外。"""
+    def test_environment_returns_in_hard_recap_with_plain_wording(self):
+        """其它问题都问完 → 室内外作为硬性条件复问回来（直问，不用降门槛说法）。"""
         from src.dialogue import ASK_POOL, HARD_SLOTS
 
         profile = _profile(display_type="LED")
@@ -110,7 +112,7 @@ class TestEnvironmentQuestion:
         plan = next_question_plan(profile, session_id="env-6")
         assert plan is not None
         assert plan.slot == "environment"
-        assert plan.easier is True
+        assert plan.easier is False
         assert plan.slot in HARD_SLOTS
 
 

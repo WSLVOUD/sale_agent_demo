@@ -181,34 +181,22 @@ def environment_needs_asking(profile: Any) -> bool:
         return True
 
 
-def _environment_was_just_asked(profile: Any) -> bool:
-    """上一轮刚问过环境、客户还没给出答案（答非所问 / 只报了别的需求）。
-
-    客户口径（v2.4 起一直有效）：**答非所问 → 本轮不再重复问同一项，换下一个**；
-    这一项留到"一轮走完后的硬性条件复问"再问（那时才用降门槛的问法）。
-    实测 bug：客户回 "3*5"（没答室内外），系统紧接着又把"室内还是室外"问了一遍，
-    还换成"That's okay, most installations are indoors…"，客户连看两次同一个问题。
-    """
-    if profile is None:
-        return False
-    try:
-        if str(getattr(profile, "last_asked_slot", "") or "") != "environment":
-            return False
-        return int(profile.ask_count("environment") or 0) >= 1
-    except Exception:  # pragma: no cover - 防御式
-        return False
-
-
 def environment_should_ask_now(profile: Any) -> bool:
     """环境这一轮该不该作为**第一问**出现。
 
-    · 环境还没定（MISSING / UNKNOWN）      → 该问（硬性 Gate）
-    · 但上一轮刚问过、客户还没答           → 这一轮先让位给别的问题
-      （留到"一轮走完后的硬性条件复问"，那时才用降门槛的问法）
+    v2.6 计划 §10 / §12 / §13 / §26 Case 2：
+
+      · 环境还没定（MISSING / UNKNOWN）→ **这一轮它就是唯一最高优先级**，
+        即使上一轮刚问过、客户答的是别的东西（答非所问），也要把 indoor/outdoor
+        作为本轮唯一的问题再问一次；
+      · 问满 ``MAX_ASKS_PER_SLOT`` 次仍拿不到 → ``is_exhausted`` 为真，
+        交给 Gate 走 DEFERRED / BLOCKED（不会无限追问，也不会连问第三次）。
+
+    与 v2.4 的差异（有意为之，按 v2.6 计划调整）：v2.4 曾在"答非所问"时把环境
+    让位给随机轮的下一个问题，导致"客户回 3×5 之后系统去问 P 值、室内外从头到尾
+    没被确认"。v2.6 §13 明确禁止这种随机，环境未定时随机轮不参与。
     """
-    if not environment_needs_asking(profile):
-        return False
-    return not _environment_was_just_asked(profile)
+    return environment_needs_asking(profile)
 
 
 def environment_gate_plan(
@@ -222,11 +210,10 @@ def environment_gate_plan(
         return None
     from src.rag.readiness import question_for
 
+    # 问法固定用**直问**："Will the screen be installed indoors or outdoors?"
+    # 不用 "That's okay — most installations are indoors…" 那种降门槛版
+    # （客户明确反馈过：紧接着再看到一次同一个问题、还换了说法，观感更差）。
     easier = False
-    try:
-        easier = profile.ask_count("environment") >= 1
-    except Exception:  # pragma: no cover - 防御式
-        easier = False
     question = question_for("environment", language, seed, easier=easier)
     if not question:
         return None
@@ -263,6 +250,14 @@ def next_question_plan(
     from src.rag.readiness import question_for
 
     skip = {str(item) for item in (exclude or set())}
+    # v2.6 §22：本会话已经 ANSWERED / CONFIRMED / INFERRED 的字段不再问
+    # （问题登记簿是档案之外的第二道保险：档案被重建时也不会重复问同一项）
+    registry = getattr(conversation, "registry", None)
+    if registry is not None:
+        try:
+            skip |= {slot for slot in ASK_POOL if registry.should_skip(slot)}
+        except Exception:  # pragma: no cover - 防御式
+            pass
 
     # 客户报了一个裸尺寸（"129,2cm"）但没说方向 → 交给 Gate 的专用确认问句，
     # 不参与随机轮（这是"回应客户刚说的话"，优先级最高）。

@@ -25,6 +25,13 @@ class PerfTracker:
         self.intent: str = ""
         self.llm_calls: int = 0
         self.final_products: int = 0
+        # ── v2.6 §27：统一可观测口径（一轮一个 turn_id）───────────────────
+        self.turn_id: str = ""
+        self.action: str = ""
+        self.speech_act: str = ""
+        self.question_slot: str = ""
+        self.response_count: int = 0
+        self.question_count: int = 0
 
     def mark(self, name: str) -> None:
         self._markers[name] = time.time()
@@ -32,6 +39,23 @@ class PerfTracker:
     @property
     def total_ms(self) -> float:
         return (time.time() - self._t0) * 1000
+
+    def live_llm_calls(self) -> int:
+        """这一轮**到目前为止**的 LLM 调用数（还没 end_turn 时也能拿到真值）。
+
+        实测问题：`PERF ... llm_calls=0` 而同一轮的 `[Turn] llm_calls=2` —— 因为
+        PERF 那行是在 `end_turn()` 之前打的，只能看到手工计数器。日志口径必须一致，
+        所以这里直接向 LLMCallTracker 要当前轮的真实计数。
+        """
+        try:
+            from .llm_tracker import get_llm_tracker
+
+            context = get_llm_tracker().current_turn()
+            if context is not None:
+                return int(context.stats().calls)
+        except Exception:  # pragma: no cover - 统计失败不影响业务
+            pass
+        return int(self.llm_calls)
 
     def latency(self, after: str) -> float:
         """Milliseconds between marker 'after' and now."""
@@ -66,6 +90,13 @@ class PerfTracker:
             "final_products": self.final_products,
             "first_contact_intro": getattr(self, "first_contact_intro", ""),
             "first_contact_messages": getattr(self, "first_contact_messages", []),
+            # ── v2.6 §27 ───────────────────────────────────────────────────
+            "turn_id": self.turn_id,
+            "action": self.action,
+            "speech_act": self.speech_act,
+            "question_slot": self.question_slot,
+            "response_count": self.response_count,
+            "question_count": self.question_count,
         }
 
     def _llm_stats(self):

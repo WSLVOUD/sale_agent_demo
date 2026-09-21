@@ -350,4 +350,9 @@ class SalesAgentRunner:
             "pending_slot": result.get("pending_slot", ""),
             "requirements_reset": bool(reset.should_reset),
             "acknowledgement": result.get("acknowledgement", ""),
+            # v2.6 §16/§17：Dialogue Policy 的判定结果（SpeechAct + 唯一 Action）
+            # 透传给 orchestrator / 日志 / DecisionAudit，避免上层再猜一遍。
+            "speech_act": result.get("speech_act", {}),
+            "dialogue_action": result.get("dialogue_action", {}),
+            "response_plan": result.get("response_plan", {}),
         }

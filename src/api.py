@@ -113,8 +113,18 @@ class ChatResponse(BaseModel):
     complexity: Optional[str] = None
     first_contact_intro: Optional[str] = None  # First contact self-introduction
     first_contact_messages: Optional[List[dict]] = None  # First contact generated messages (intro + assets)
-    extra_messages: Optional[List[str]] = None  # 追加的独立气泡（如推荐后的联系方式询问）
+    # v2.6 §4/§24：一个 turn 只有一条客户可见回复 —— 追加内容已并入 answer，
+    # 这个字段仅为老客户端兼容而保留（正常恒为空列表）。
+    extra_messages: Optional[List[str]] = None
     vision: Optional[dict] = None  # 视觉需求提取指标（计划第二十二阶段）
+    # ── v2.6 §24：对外只暴露"一个 turn 的最终决定"────────────────────────
+    turn_id: Optional[str] = None
+    action: Optional[str] = None
+    question_slot: Optional[str] = None
+    question_count: Optional[int] = None
+    response_count: Optional[int] = None
+    # debug_context 只给内部排查用，**前端不得**当成第二条消息渲染
+    debug_context: Optional[dict] = None
 
 class ClearMemoryRequest(BaseModel):
     session_id: str
@@ -655,6 +665,14 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
         response_text = relaxation_answer(reply_language(request.question))
 
     logger.info("Response: %s...", response_text[:100])
+    # v2.6 §24：对外只暴露"一个 turn → 一个 action → 一条回复"；
+    # 其余内部信息（候选动作 / 会话状态 / 被丢弃的问题）只在 debug_context 里。
+    final_response = result.get("final_response") or {}
+    debug_context = {
+        "conversation_state": result.get("conversation_state") or {},
+        "decision_audit": result.get("decision_audit") or {},
+        "final_response": final_response,
+    }
     return ChatResponse(
         session_id=request.session_id,
         answer=response_text,
@@ -665,8 +683,15 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
         complexity=result.get("complexity"),
         first_contact_intro=result.get("_perf", {}).get("first_contact_intro"),
         first_contact_messages=result.get("_perf", {}).get("first_contact_messages"),
-        extra_messages=result.get("extra_messages"),
+        # 计划 §4.2：追加气泡已并入 answer，这里不再单独返回
+        extra_messages=[],
         vision=result.get("vision"),
+        turn_id=result.get("turn_id"),
+        action=result.get("action"),
+        question_slot=result.get("question_slot"),
+        question_count=result.get("question_count"),
+        response_count=result.get("response_count", 1),
+        debug_context=debug_context,
     )
 
 
@@ -701,7 +726,8 @@ async def _stream_chat(request: ChatRequest):
         from src.rag.reply_composer import enforce_english
 
         answer = enforce_english(answer, message=question) or _get_fallback_response(question)
-        # 追加的独立气泡（如推荐后的联系方式询问）在流式里也一并输出
+        # v2.6 §4：追加气泡已经在收口层并入 `response`；这里若还有（老链路兜底）
+        # 也只是拼进**同一条**消息，绝不再产生第二个气泡。
         extras = [str(item) for item in (result.get("extra_messages") or []) if item]
         if extras:
             answer = answer + "\n\n" + "\n\n".join(extras)

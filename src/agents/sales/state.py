@@ -65,6 +65,13 @@ class SalesState(TypedDict):
     pending_question: str
     pending_slot: str   # 待问的是哪一个槽位（用于判断答案里是否已经在问同一件事）
 
+    # ── v2.6 §16/§17：Dialogue Policy 的判定结果（SpeechAct + 唯一 Action）──
+    # 必须写进 state schema，否则 LangGraph 不会把这两个键带出图，
+    # 上层就只能看到空值（实测：日志里 speech_act=-、action=ask 而不是 ask_only）。
+    speech_act: Dict[str, Any]
+    dialogue_action: Dict[str, Any]
+    response_plan: Dict[str, Any]
+
     # ── 会话内需求重置（客户拿到推荐后又要换产品 / 换项目 / 改需求）──────
     # requirements_reset=True 时本轮必须回到需求采集，不得沿用旧需求直接推荐。
     requirements_reset: bool

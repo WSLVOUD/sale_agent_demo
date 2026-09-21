@@ -62,7 +62,8 @@ class TestRandomOrder:
 
 class TestPass1NoRepeat:
 
-    def test_asked_once_switches_the_environment_wording(self):
+    def test_answered_once_keeps_environment_as_the_first_question(self):
+        """v2.6 §12/§13：环境没定 → 仍然是第一问（问满两次才让位）。"""
         profile = _profile(display_type="LED")
         first = next_question_plan(profile, session_id="p1")
         assert first is not None
@@ -71,8 +72,10 @@ class TestPass1NoRepeat:
         assert first.slot not in pending, "问过没答的问题，本轮不再问"
         second = next_question_plan(profile, session_id="p1")
         assert second is not None
-        assert second.slot == "environment", "环境没定 → 仍然是第一问（计划 §8）"
-        assert second.easier is True and second.question != first.question
+        assert second.slot == "environment", "环境没定 → 仍然是第一问（v2.6 §12）"
+        # 复问统一用直问：客户反馈过 "That's okay — most installations are indoors…"
+        # 这种降门槛说法紧接着再出现，观感更差。
+        assert second.easier is False
 
     def test_environment_gate_releases_after_two_contacts(self):
         """问满两次仍拿不到 → 环境让位给其它问题（不会死循环问同一项）。"""

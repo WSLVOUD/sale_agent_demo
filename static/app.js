@@ -397,8 +397,12 @@ class LEDChatApp {
                 }
             } else {
                 this.addMessage('ai', data.answer);
-                for (const extra of (data.extra_messages || [])) {
-                    if (extra) this.addMessage('ai', extra);
+                // v2.6 §4/§24：一个 turn 只有一条客户可见回复（追加内容已并入 answer）；
+                // 只有老后端（不带 response_count）才可能给出额外气泡。
+                if (!data.response_count) {
+                    for (const extra of (data.extra_messages || [])) {
+                        if (extra) this.addMessage('ai', extra);
+                    }
                 }
             }
         } catch (error) {

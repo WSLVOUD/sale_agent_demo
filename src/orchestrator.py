@@ -4,6 +4,7 @@ Coordinates between Sales Agent, Solution Agent, and First Contact Flow
 """
 import logging
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 from .agents.sales.runner import SalesAgentRunner
@@ -96,6 +97,11 @@ class DualAgentOrchestrator:
             Dict with response and metadata
         """
         perf = PerfTracker(session_id, message)
+        # v2.6 §24/§27：这一轮的 turn_id（FinalResponse / 日志 / DecisionAudit 共用）
+        turn_id = uuid.uuid4().hex[:12]
+        perf.turn_id = turn_id
+        # ── v2.6 §5~§10：客户这一句在回答上一轮哪个问题 ─────────────────────
+        self._note_customer_turn(session_id, message, turn_id=turn_id)
         # v2.5++++（计划 §15）：一轮的 LLM 调用统一记账（这一轮里所有 LLM 都算上）
         try:
             from .observability.llm_tracker import get_llm_tracker
@@ -104,6 +110,7 @@ class DualAgentOrchestrator:
                 session_id,
                 message_count=message_count,
                 aggregated=aggregated,
+                turn_id=turn_id,
             )
         except Exception as exc:  # pragma: no cover - 防御式
             logger.warning("LLM tracker begin_turn failed: %s", exc)
@@ -248,6 +255,8 @@ class DualAgentOrchestrator:
                 "requirements": initial_requirements,
                 "products": [],
                 "next_action": "first_contact_done",
+                # v2.6 §4/§24：素材通道单独记录（不是第二条对话回复）
+                "first_contact_messages": fc_messages,
             }
             self._finalize_turn_response(result, session_id, message)
             result["_perf"] = perf.summary()
@@ -387,6 +396,16 @@ class DualAgentOrchestrator:
             }
 
         # Emit structured performance log
+        # v2.6 §16/§17：Dialogue Policy 的结果（SpeechAct + 唯一 Action）透传给收口层，
+        # FinalResponse / 日志 / DecisionAudit 都用同一份判定，不再各猜一次。
+        result.setdefault("speech_act", sales_result.get("speech_act") or {})
+        result.setdefault("dialogue_action", sales_result.get("dialogue_action") or {})
+        # v2.6 §4.3：待问项也要带出来 —— 否则收口层不知道"这一轮问的是哪一项"，
+        # 日志里就会出现 question_slot=-、FinalResponse.question_slot 为空。
+        result.setdefault("pending_question", sales_result.get("pending_question") or "")
+        result.setdefault("pending_slot", sales_result.get("pending_slot") or "")
+        result.setdefault("acknowledgement", sales_result.get("acknowledgement") or "")
+        result.setdefault("action_candidates", self._action_candidates(sales_result))
         logger.info(
             "[%s] PERF route=%s solution_route=%s intent=%s "
             "total_ms=%.1f sales_ms=%.1f solution_ms=%.1f "
@@ -398,7 +417,9 @@ class DualAgentOrchestrator:
             perf.total_ms,
             perf._span("_start", "sales_done"),
             perf.latency("sales_done"),
-            perf.llm_calls,
+            # v2.6 §27：这一行在 end_turn 之前打，必须向 tracker 要实时计数，
+            # 否则会出现 "PERF llm_calls=0" 与 "[Turn] llm_calls=2" 自相矛盾
+            perf.live_llm_calls(),
             perf.final_products,
         )
 
@@ -460,37 +481,295 @@ class DualAgentOrchestrator:
 
         实测 bug（客户日志）：客户只发了图片 + "i need this"，系统直接跳到问点间距，
         既没跟客户核对图片识别结果，客户也没机会纠正判错的"固定/租赁"。
+
+        v2.6 §4（ONE TURN → ONE ACTION → ONE RESPONSE）：收口不再只是"把多出来的
+        问句删掉"，而是**只剩一条客户可见回复** —— 追加气泡并入正文，最终由
+        ``FinalResponseCoordinator`` 产出唯一的 ``FinalResponse``。
         """
-        # v2.5+++（计划 §3）：把本轮"想要问的那一项"作为候选问题交给 FinalResponseGuard，
-        # 由它按优先级（硬性 Gate > 工程必要 > 推荐优化 > 销售偏好）只保留一个。
-        questions = []
-        if result.get("pending_question"):
-            questions.append({
-                "text": str(result.get("pending_question") or ""),
-                "slot": str(result.get("pending_slot") or ""),
-                "source": "sales",
-            })
+        questions = self._question_candidates(result)
+        # §28：审计要记"做决定之前"的对话状态，所以先拍一张快照
+        conversation_before = self._conversation_snapshot(session_id)
+        # 计划 §4.4/§4.5：候选 Action → 唯一 Action（其余记进 discarded_actions）
+        selected_action, discarded_actions = self._select_turn_action(result)
+        action = (
+            selected_action.action
+            if selected_action is not None
+            else self._dialogue_action_label(result)
+        )
+        result["discarded_actions"] = [item.to_dict() for item in discarded_actions]
+        if selected_action is not None:
+            result["selected_action"] = selected_action.to_dict()
+            result["action_candidates"] = [
+                item.to_dict() for item in ([selected_action] + list(discarded_actions))
+            ]
+        question_slot = str(result.get("pending_slot") or "")
+        extras = [str(item) for item in (result.get("extra_messages") or []) if item]
+        result.setdefault("customer_input", str(message or ""))
+
+        # ① 售后口径 + 图片核对 + Guard 收口（原有链路，先算出"想说的话"）
         text = self._response_coordinator().finalize(
             str(result.get("response") or ""),
             session_id=session_id,
             message=message,
             questions=questions,
         )
-        if text:
-            result["response"] = text
-        # v2.5+++（计划 §3）：附加气泡（extra_messages）也要收口 ——
-        # 否则会出现"主回复问一个问题、附加气泡又冒出一个问题"两个气泡连着问。
-        extras = [str(item) for item in (result.get("extra_messages") or []) if item]
-        if extras:
-            guarded = self._response_coordinator().guard_extras(
-                str(result.get("response") or ""), extras
-            )
-            if guarded:
-                result["extra_messages"] = guarded
-            else:
-                result.pop("extra_messages", None)
+        # ② v2.6：合并追加气泡 → 只保留一条回复 + 最多一个问题
+        final = self._final_response_coordinator().build(
+            text=text or str(result.get("response") or ""),
+            extras=extras,
+            questions=questions,
+            action=action,
+            question_slot=question_slot,
+            turn_id=str(result.get("turn_id") or getattr(self, "_current_turn_id", "") or ""),
+            facts=self._facts_for_turn(result),
+            first_contact_messages=result.get("first_contact_messages"),
+        )
+
+        result["response"] = final.text
+        result["final_response"] = final.to_dict()
+        result["response_count"] = final.response_count
+        result["question_count"] = final.question_count
+        result["question_slot"] = final.question_slot
+        result["action"] = final.action
+        result["turn_id"] = final.turn_id
+        # 计划 §4.2：追加气泡不再单独发给客户（已并入唯一回复）
+        result.pop("extra_messages", None)
+        # 计划 §8：把"这一轮 AI 问了什么 / 最终说了什么"记进 ConversationState
+        self._note_ai_turn(result, session_id, final)
+        result["conversation_state_before"] = conversation_before
         self._finish_llm_turn(result, session_id)
         return result
+
+    # ── v2.6 §4：把本轮"想说的话"整理成候选 ──────────────────────────────
+    @staticmethod
+    def _question_candidates(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """本轮想问的问题（可能多个）；交给 Guard / FinalResponse 收成一个。"""
+        candidates: List[Dict[str, Any]] = []
+        pending = str(result.get("pending_question") or "")
+        if pending:
+            candidates.append({
+                "text": pending,
+                "slot": str(result.get("pending_slot") or ""),
+                "source": "sales",
+            })
+        for item in result.get("question_candidates") or []:
+            if isinstance(item, dict) and item.get("text"):
+                candidates.append(dict(item))
+            elif item:
+                candidates.append({"text": str(item)})
+        return candidates
+
+    @staticmethod
+    def _dialogue_action_label(result: Dict[str, Any]) -> str:
+        """这一轮的业务动作（Dialogue Policy 选的唯一 Action）。
+
+        v2.6 §4.4/§4.5：候选可以有多个，最终只能留一个 —— 由
+        ``select_single_action`` 挑，其余进 ``discarded_actions``。
+        """
+        decision = result.get("dialogue_action") or {}
+        if isinstance(decision, dict) and decision.get("action"):
+            return str(decision["action"])
+        if result.get("pending_question"):
+            return "ask_only"
+        return str(result.get("next_action") or "")
+
+    @staticmethod
+    def _select_turn_action(result: Dict[str, Any]):
+        """把本轮出现的候选 Action 收成唯一一个（计划 §4.4/§4.5）。
+
+        Returns:
+            ``(selected, discarded)``；没有候选时返回 ``(None, [])``。
+        """
+        try:
+            from .dialogue import (
+                DialogueDecision,
+                QUESTION_PRIORITY_SALES_PREFERENCE,
+                question_priority,
+                select_single_action,
+            )
+        except Exception:  # pragma: no cover - 防御式
+            return None, []
+        candidates = []
+        decision = result.get("dialogue_action") or {}
+        if isinstance(decision, dict) and decision.get("action"):
+            slot = str(decision.get("target_slot") or "") or str(
+                result.get("pending_slot") or ""
+            )
+            candidates.append(DialogueDecision(
+                action=str(decision.get("action")),
+                reason=str(decision.get("reason") or ""),
+                question_slot=slot if decision.get("question") else "",
+                question_target=slot if decision.get("question") else "",
+                question_priority=int(
+                    decision.get("priority") or QUESTION_PRIORITY_SALES_PREFERENCE
+                ),
+                question_count=1 if decision.get("question") else 0,
+            ))
+        if result.get("pending_question"):
+            slot = str(result.get("pending_slot") or "")
+            # 注意：这里必须用 **Dialogue Policy 的动作词表**（ask_only），
+            # 不能混进 DialogueDecision 的 ASK —— 否则日志里同一件事会有两个名字。
+            candidates.append(DialogueDecision(
+                action="ask_only",
+                reason="question_flow",
+                question_slot=slot,
+                question_target=slot,
+                question_priority=question_priority(slot) if slot else 99,
+                question_count=1,
+            ))
+        if not candidates:
+            return None, []
+        return select_single_action(candidates)
+
+    @staticmethod
+    def _action_candidates(sales_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """计划 §4.4：列出本轮出现过的**候选** Action（最终只执行一个）。
+
+        候选可以有多个（Policy 选的、QuestionFlow 想追问的…），
+        但"候选 ≠ 最终"：最终动作由 ``FinalResponse.action`` 唯一确定。
+        """
+        candidates: List[Dict[str, Any]] = []
+        decision = (sales_result or {}).get("dialogue_action") or {}
+        if isinstance(decision, dict) and decision.get("action"):
+            candidates.append(dict(decision))
+        if (sales_result or {}).get("pending_question"):
+            candidates.append({
+                "action": "ask_only",
+                "target_slot": str(sales_result.get("pending_slot") or ""),
+                "question": str(sales_result.get("pending_question") or ""),
+                "source": "question_flow",
+            })
+        return candidates
+
+    @staticmethod
+    def _facts_for_turn(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """这一轮用到的业务事实（GroundedFact），供 FinalResponse 留痕。"""
+        facts = result.get("grounded_facts") or []
+        out: List[Dict[str, Any]] = []
+        for item in facts if isinstance(facts, (list, tuple)) else []:
+            if isinstance(item, dict):
+                out.append(dict(item))
+            elif hasattr(item, "to_dict"):
+                try:
+                    out.append(dict(item.to_dict()))
+                except Exception:  # pragma: no cover - 防御式
+                    continue
+        return out
+
+    def _final_response_coordinator(self):
+        coordinator = getattr(self, "_final_response_instance", None)
+        if coordinator is None:
+            from .dialogue import FinalResponseCoordinator
+
+            coordinator = FinalResponseCoordinator()
+            self._final_response_instance = coordinator
+        return coordinator
+
+    def _conversation_snapshot(self, session_id: str) -> Dict[str, Any]:
+        """这一轮做决定**之前**的对话状态（给 §28 的审计用）。"""
+        try:
+            from .dialogue import get_conversation_state
+
+            return get_conversation_state(session_id).to_dict()
+        except Exception:  # pragma: no cover - 防御式
+            return {}
+
+    # ── v2.6 §8：AI 侧留痕 ───────────────────────────────────────────────
+    def _note_ai_turn(self, result: Dict[str, Any], session_id: str, final: Any) -> None:
+        try:
+            from .dialogue import get_conversation_state
+
+            state = get_conversation_state(session_id)
+            state.note_ai_turn(
+                action=final.action,
+                question=str(result.get("pending_question") or ""),
+                slot=final.question_slot or "",
+                response=final.text,
+                turn_id=final.turn_id,
+                # 计划 §27：这一轮的 SpeechAct 也要能落进日志
+                speech_act=str((result.get("speech_act") or {}).get("speech_act") or ""),
+            )
+            result["conversation_state"] = state.to_dict()
+        except Exception as exc:  # pragma: no cover - 留痕失败不影响业务
+            logger.warning("[ConversationState] note_ai_turn failed: %s", exc)
+        self._emit_decision_audit(result, session_id, final)
+
+    # ── v2.6 §28：Decision Audit ─────────────────────────────────────────
+    def _emit_decision_audit(self, result: Dict[str, Any], session_id: str, final: Any) -> None:
+        """记录"为什么这一轮问了这个问题"（只写日志，不影响业务）。"""
+        try:
+            import json
+
+            from .dialogue import get_conversation_state
+
+            state = get_conversation_state(session_id)
+            payload = {
+                "turn_id": final.turn_id,
+                "session_id": session_id,
+                "input": str(result.get("customer_input") or "")[:200],
+                "speech_act": state.current_speech_act,
+                # §28：决定之前的输入（需求档案 + 对话状态）
+                "requirement_state_before": self._requirement_summary(session_id),
+                "conversation_state_before": (
+                    result.get("conversation_state_before") or state.to_dict()
+                ),
+                "conversation_state_after": state.to_dict(),
+                "candidate_actions": list(result.get("action_candidates") or []),
+                "selected_action": final.action,
+                "discarded_actions": list(result.get("discarded_actions") or []),
+                "final_response": final.text[:400],
+                "question_count": final.question_count,
+                "question_slot": final.question_slot,
+                "validation_result": final.validation_result,
+            }
+            logger.info("[DecisionAudit] %s", json.dumps(payload, ensure_ascii=False))
+            result["decision_audit"] = payload
+        except Exception as exc:  # pragma: no cover - 审计失败不影响业务
+            logger.warning("[DecisionAudit] emit failed: %s", exc)
+
+    def _requirement_summary(self, session_id: str) -> Dict[str, Any]:
+        """当前已知需求（拿不到就留空，绝不让审计影响业务）。"""
+        try:
+            profile = self._stored_profile(session_id)
+            if profile is None:
+                return {}
+            facts = profile.to_facts() if hasattr(profile, "to_facts") else {}
+            return {str(key): value for key, value in dict(facts or {}).items()}
+        except Exception:  # pragma: no cover - 防御式
+            return {}
+
+    # ── v2.6 §5~§10：把客户这一句记进 ConversationState ──────────────────
+    def _note_customer_turn(self, session_id: str, message: str, *, turn_id: str = "") -> None:
+        """客户说完一句 → 判断"在回答哪一项"，并记账（不改变既有业务判定）。"""
+        self._current_turn_id = turn_id
+        if not str(message or "").strip():
+            return
+        try:
+            from .dialogue import get_conversation_state
+
+            state = get_conversation_state(session_id)
+            match = state.answer_to(message)
+            state.note_customer_turn(
+                text=message,
+                answer_slot=(
+                    match.slot
+                    if match.kind in ("ANSWER_PREVIOUS_QUESTION", "ANSWER_WRONG_SLOT")
+                    else ""
+                ),
+                turn_id=turn_id,
+            )
+            # 答非所问也不能丢信息（§10）：这一句明确给出的槽位都记 ANSWERED
+            for slot in match.covered_slots:
+                if slot == match.slot:
+                    continue
+                state.note_answered(str(slot))
+            if match.kind in ("ANSWER_PREVIOUS_QUESTION", "ANSWER_WRONG_SLOT"):
+                logger.info(
+                    "[ConversationState] turn=%s %s answer_slot=%s expected=%s slots=%s",
+                    turn_id, match.kind, match.slot, match.expected_slot, list(match.slots),
+                )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[ConversationState] note_customer_turn failed: %s", exc)
 
     # ── v2.5++++（计划 §15）：一轮的 LLM 统计收口 ────────────────────────
     def _finish_llm_turn(self, result: Dict[str, Any], session_id: str) -> None:
@@ -510,9 +789,24 @@ class DualAgentOrchestrator:
             if stats is None:
                 return
             total_ms = ((_time.time() - context.started_at) * 1000) if context else 0.0
+            # v2.6 §27：一行日志能回答"为什么问了两个问题 / 这一轮到底做了什么"
+            action = str(result.get("action") or "")
+            question_slot = str(result.get("question_slot") or "")
+            response_count = int(result.get("response_count") or 1)
+            question_count = int(result.get("question_count") or 0)
+            final_response = result.get("final_response") or {}
+            speech_act = ""
+            try:
+                from .dialogue import get_conversation_state
+
+                speech_act = str(get_conversation_state(session_id).current_speech_act or "")
+            except Exception:  # pragma: no cover - 防御式
+                speech_act = ""
             logger.info(
                 "[Turn] session=%s messages=%s aggregated=%s llm_calls=%s "
-                "llm_latency_ms=%s llm_tokens=%s total_ms=%s",
+                "llm_latency_ms=%s llm_tokens=%s total_ms=%s "
+                "turn_id=%s action=%s speech_act=%s question_slot=%s "
+                "response_count=%s question_count=%s validation=%s",
                 session_id,
                 context.message_count if context else 1,
                 context.aggregated if context else False,
@@ -520,13 +814,40 @@ class DualAgentOrchestrator:
                 round(stats.latency_ms, 1),
                 stats.total_tokens,
                 round(total_ms, 1),
+                result.get("turn_id") or (context.turn_id if context else "-"),
+                action or "-",
+                speech_act or "-",
+                question_slot or "-",
+                response_count,
+                question_count,
+                str(final_response.get("validation_result") or "-"),
             )
             result["_llm_stats"] = stats.to_dict()
+            perf_summary = result.get("_perf")
+            if isinstance(perf_summary, dict):
+                # 收口发生在 perf.summary() 之后 → 这里把 v2.6 的观测字段补进去
+                perf_summary.update({
+                    "turn_id": result.get("turn_id") or (context.turn_id if context else ""),
+                    "action": action,
+                    "speech_act": speech_act,
+                    "question_slot": question_slot,
+                    "response_count": response_count,
+                    "question_count": question_count,
+                })
             if context is not None:
                 result["_turn"] = {
                     "message_count": context.message_count,
                     "aggregated": context.aggregated,
                     "turn_id": context.turn_id,
+                    # v2.6 §27：统一可观测口径
+                    "action": action,
+                    "speech_act": speech_act,
+                    "question_slot": question_slot,
+                    "response_count": response_count,
+                    "question_count": question_count,
+                    "llm_calls": stats.calls,
+                    "llm_latency_ms": round(stats.latency_ms, 1),
+                    "total_latency_ms": round(total_ms, 1),
                 }
         except Exception as exc:  # pragma: no cover - 统计失败不影响业务
             logger.warning("LLM tracker end_turn failed: %s", exc)

@@ -29,6 +29,19 @@ ACK_ONLY = "ACK_ONLY"
 
 ALL_ACTIONS = (DIRECT_ANSWER, ASK, ANSWER_AND_ASK, RECOMMEND, CLARIFY, CONFIRM, ACK_ONLY)
 
+# 计划 §4.5：一个 Turn 只允许一个 Action（候选可以有多个，最终只能留一个）
+ONE_TURN_ONE_ACTION = "ONE_TURN_ONE_ACTION"
+
+# 客户可见回复里最多一个问题（计划 §4.6）
+MAX_QUESTIONS_PER_TURN = 1
+
+# "这一轮会问一个问题"的动作（两套词表都认：DialogueDecision 的大写 +
+# Dialogue Policy 的小写，避免同一个决策在不同层有两个名字）
+_ASKING_ACTIONS = frozenset({
+    ASK, ANSWER_AND_ASK, CLARIFY,
+    "ask_only", "answer_then_ask", "clarify_only",
+})
+
 # 客户在问这些 → 必须先回答
 _CUSTOMER_QUESTION_INTENTS = ("product_question", "objection", "others")
 
@@ -151,6 +164,41 @@ def decide_dialogue_action(
     return _decision(ACK_ONLY, "nothing_to_ask", "")
 
 
+def select_single_action(
+    candidates: "list[DialogueDecision] | tuple[DialogueDecision, ...]",
+) -> "tuple[DialogueDecision, list[DialogueDecision]]":
+    """计划 §4.4/§4.5：候选 Action → **唯一**最终 Action。
+
+    多个节点（Sales / Solution / 服务口径 / 图片核对）各自可能想"问一项"，
+    这里按优先级挑出唯一要执行的那一个（数字越小越优先，并列保留先出现的），
+    其余全部丢弃、留给下一轮。
+
+    Returns:
+        ``(selected, discarded)``；候选为空时返回 ``(ACK_ONLY 决策, [])``。
+    """
+    items = [item for item in (candidates or []) if isinstance(item, DialogueDecision)]
+    if not items:
+        return _decision(ACK_ONLY, "no_candidate_action", ""), []
+    best = items[0]
+    for item in items[1:]:
+        # 先比业务优先级，再比"是否真的要问问题"（要问的优先于仅供参考的）
+        if (item.question_priority, 0 if item.question_count else 1) < (
+            best.question_priority,
+            0 if best.question_count else 1,
+        ):
+            best = item
+    discarded = [item for item in items if item is not best]
+    # 计划 §4.6：answer_then_ask 也最多一个问题
+    if best.question_count > MAX_QUESTIONS_PER_TURN:
+        best.question_count = MAX_QUESTIONS_PER_TURN
+    if best.action not in _ASKING_ACTIONS:
+        # 这些动作这一轮不问需求问题 → 问题目标必须清空（不能再冒出一个问题）
+        best.question_count = 0
+        best.question_target = ""
+        best.question_slot = ""
+    return best, discarded
+
+
 __all__ = [
     "ACK_ONLY",
     "ALL_ACTIONS",
@@ -166,7 +214,10 @@ __all__ = [
     "QUESTION_PRIORITY_RECOMMENDATION",
     "QUESTION_PRIORITY_SALES_PREFERENCE",
     "RECOMMEND",
+    "MAX_QUESTIONS_PER_TURN",
+    "ONE_TURN_ONE_ACTION",
     "decide_dialogue_action",
     "question_priority",
     "question_priority_label",
+    "select_single_action",
 ]

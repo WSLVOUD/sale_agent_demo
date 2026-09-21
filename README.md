@@ -2,7 +2,7 @@
 
 > 基于大模型（DeepSeek）的 LED/LCD/IFP 全品类显示产品智能销售助手，采用多 Agent 协作 + 混合检索（RAG）架构，为销售团队提供实时产品推荐和技术咨询能力。
 
-> **当前版本：v2.5++（2026-09-21）** ｜ 全量测试：`python -m pytest tests/ -q` → **1459 passed, 4 skipped**
+> **当前版本：v2.6（2026-09-21）** ｜ 全量测试：`python -m pytest tests/ -q` → **1597 passed, 4 skipped**
 >
 > 当前行为口径集中在下面「当前行为口径」一节；历史版本的逐条变更见文末「变更明细」。
 
@@ -54,6 +54,34 @@ uvicorn src.api:app --port 8000
 
 ## 当前行为口径（v2.3.1）
 
+### 0a. 一轮一个动作 / 一条回复 + 对话状态（v2.6）
+
+```text
+硬约束（架构层，不靠 Prompt 补丁）
+    ONE TURN → ONE ACTION → ONE RESPONSE
+    · 一个客户 turn 最多一条客户可见回复（追加气泡并入同一条，不再另起一条）
+    · 一条回复最多一个"需要客户回答"的问题
+    · 一轮只有一个最终 DialogueAction（候选可以有多个，其余进 discarded_actions）
+
+双状态
+    RequirementProfile    "客户有什么需求"     environment=indoor / size=3×5 / P3 …
+    ConversationState     "客户现在在做什么"   last_question_slot / current_answer_slot …
+    · AI 每次提问都记 last_ai_question + last_question_slot
+    · 客户回答优先匹配上一轮问的那一项（P3 → 答的是 pixel_pitch）
+    · 答非所问不丢信息：问 indoor/outdoor、客户答 3×5 → 尺寸照记，环境仍未知
+    · 已答 / 已有结论的字段不再问（AskedQuestionRegistry 状态机）
+
+环境（室内外）例外：环境没定就是"唯一最高优先级"，即使客户答的是别的
+（"3×5"）也仍然只问这一项；问满两次拿不到才交给 Gate 的 DEFERRED / BLOCKED。
+（这条取代 v2.4 的"答非所问先换下一问"，按 v2.6 §10/§12/§13。）
+```
+
+实现位置：`src/dialogue/final_response.py`（唯一出口）、
+`src/dialogue/conversation_state.py`（对话状态 + 答问匹配）、
+`src/dialogue/question_registry.py`（问题状态机）、
+`src/dialogue/action.py`（候选 → 唯一 Action）、
+`src/orchestrator.py`（`_finalize_turn_response` 收口 + `[Turn]` / `[DecisionAudit]` 日志）。
+
 ### 0. 提问顺序与节奏（v2.4）
 
 ```text
@@ -63,6 +91,7 @@ uvicorn src.api:app --port 8000
 Phase 1 随机轮
     · 每轮从"还没问过"的池子里随机挑一个问
     · 客户说"不知道" / 没回答 / 答非所问 → 本轮不再问这一项，换下一个
+      （例外：室内外没定时不让位，见上文 0a —— 按 v2.6 §12/§13）
     · 能推导的项不问（给了观看距离就不问 P 值；给了 P 值就不问观看距离）
 
 Phase 2 复问（一轮走完之后）
