@@ -49,7 +49,8 @@ class TestEngineeringConflicts:
         assert detect_engineering_conflicts(profile) == []
         assert check_feasibility(profile).feasible is True
 
-    def test_resolution_and_size_conflict_surface_together(self):
+    def test_resolution_shortfall_is_stated_with_standard_size(self):
+        """4m × 2m + P2.5 只能到 1600x800 → 直说达不到 4K，并给出标准尺寸。"""
         profile = _profile(
             environment="indoor", installation="fixed", pixel_pitch_mm=2.5,
             target_width_mm=4000, target_height_mm=2000,
@@ -57,5 +58,7 @@ class TestEngineeringConflicts:
         result = check_feasibility(
             profile, resolution=parse_resolution("display resolution 3840x2160")
         )
-        assert result.status == "CONFLICT"
-        assert result.aspect_ratio_deviation and result.aspect_ratio_deviation > 0.03
+        assert result.feasible is False and result.status == "IMPOSSIBLE"
+        assert result.standard_size_m == pytest.approx((9.6, 5.4))
+        assert "3840x2160" in result.message
+        assert "1600x800" in result.message

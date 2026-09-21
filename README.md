@@ -2,7 +2,7 @@
 
 > 基于大模型（DeepSeek）的 LED/LCD/IFP 全品类显示产品智能销售助手，采用多 Agent 协作 + 混合检索（RAG）架构，为销售团队提供实时产品推荐和技术咨询能力。
 
-> **当前版本：v2.5（2026-09-21）** ｜ 全量测试：`python -m pytest tests/ -q` → **1421 passed, 4 skipped**
+> **当前版本：v2.5+（2026-09-21）** ｜ 全量测试：`python -m pytest tests/ -q` → **1427 passed, 4 skipped**
 >
 > 当前行为口径集中在下面「当前行为口径」一节；历史版本的逐条变更见文末「变更明细」。
 
@@ -78,6 +78,28 @@ Phase 2 复问（一轮走完之后）
 
 实现位置：`src/dialogue/question_flow.py`（随机轮 / 复问状态机）、
 `src/dialogue/question_order.py`（会话种子洗牌）、`src/agents/sales/nodes/requirement.py`（接线）。
+
+### 0b. 分辨率口径（v2.5+）
+
+```text
+客户只要提了分辨率（4K / 1080P / 3840x2160…）→ 一律按"屏体大约要达到"处理
+    · 不区分"4K 输入 / 4K 屏体 / 只说 4K"（INPUT / DISPLAY / UNKNOWN 只是记录）
+    · 不再向客户提任何澄清问题（"要输入还是要屏体"这类问题已删除）
+    · 屏体拼出来的像素数「达到或超过」目标即算达到（MEETS_OR_EXCEEDS），不要求一模一样
+
+尺寸 + 点间距 → 实际可拼接分辨率 → 与目标比：
+    够            → 正常推荐
+    换更细 P 值能做 → 直接交给引擎在更细档位选型（不打断对话）
+    连最细 P 值也不行 → 不推荐，直接告诉客户：
+        "这个尺寸下（即使最细点间距）只能到 AxB，达不到你要的 4K；
+         要 4K 的话屏幕需要做到 4.8m × 2.7m（标准尺寸），
+         或者保持这个尺寸接受 AxB。"
+客户没提分辨率 → 不做任何分辨率约束，按默认推荐
+```
+
+实现位置：`src/engineering/resolution.py`（`MEETS_OR_EXCEEDS`）、
+`src/engineering/feasibility.py`（`check_feasibility` / `check_model_feasibility`）、
+`src/rag/recommendation_coordinator.py`（把结论话术透出给客户）。
 
 ### 1. 架构收敛（v2.3 / v2.3.1）
 
@@ -220,6 +242,7 @@ RequirementProfile（唯一事实源）
 
 | 版本 | 内容 |
 |---|---|
+| v2.5+ | 分辨率口径调整：一律按"屏体大约能达到"处理（不再区分输入/屏体、不再提澄清问题）；达到或超过目标即算可行；连最细点间距也达不到时直接告诉客户需要的标准尺寸或降低分辨率，不再输出自相矛盾的提问 |
 | v2.5 | 多条消息聚合成一个 UserTurn（**前端已接入**：连续发送先聚合再一次性请求；debounce / 幂等 / 会话锁）；DialogueAction + ResponseContext（话术不再像问卷，附 7 项话术指标）；分辨率需求（INPUT/DISPLAY/UNKNOWN）+ 实际拼接分辨率 + Resolution Fit + Engineering Feasibility（不可绕过） |
 | v2.4 | 提问顺序随机化（会话种子、可复现）+ 问过/没答不再重复 + 一轮走完复问硬性条件（附"为什么需要知道"）+ 客户明确要推荐才立即推荐 |
 | v2.3.1 | Orchestrator 职责收敛：多屏业务 / Vision 接入 / 性能埋点 / 回复组装迁出，Orchestrator 只编排（1208 → 564 行），旧接口保留兼容层 |

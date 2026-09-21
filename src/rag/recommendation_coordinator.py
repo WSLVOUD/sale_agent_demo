@@ -32,7 +32,10 @@ from src.engineering import (
     check_provenance,
     conflict_message,
     detect_engineering_conflicts,
+    finest_pitch_in,
 )
+from src.engineering import CONFLICT as FEASIBILITY_CONFLICT
+from src.engineering import NEED_ADJUSTMENT as FEASIBILITY_NEED_ADJUSTMENT
 from src.models.requirement import RequirementProfile
 from src.observability.decision_log import record_from_recommendation
 from src.rag.parameter_inference import infer_technical_parameters
@@ -123,13 +126,18 @@ class RecommendationCoordinator:
             )
             return outcome
 
-        # ── v2.5 Phase 7：Engineering Feasibility（不可绕过）────────────
-        #   尺寸 / P值 / 分辨率 / 比例 / 箱体几何统一判断：
-        #     · 冲突或无法实现 → 不推荐，给出澄清问题或调整方向
-        #     · 可行 → 继续走来源守卫与引擎
-        feasibility = check_feasibility(profile)
+        # ── v2.5 Phase 7 / v2.5+：Engineering Feasibility（不可绕过）─────
+        #   尺寸 / P值 / 分辨率 / 箱体几何统一判断。客户口径（2026-09-21）：
+        #   分辨率**只按"屏体大约能不能达到"处理** —— 不区分输入/屏体、不提澄清问题。
+        #     · 数据自相矛盾 → 先澄清
+        #     · 这个尺寸即使最细点间距也达不到 → 直接给结论话术：
+        #         "需要更大尺寸（标准尺寸 X×Y）/ 需要更细的点间距 / 或者降低分辨率"
+        #     · 换成更细的 P 值就能做到 → 不阻塞，继续走引擎（由引擎在更细档位选型）
+        feasibility = check_feasibility(
+            profile, finest_pitch_mm=self._finest_pitch_mm()
+        )
         if not feasibility.feasible:
-            status = CONFLICT if feasibility.status == "CONFLICT" else REJECTED
+            status = CONFLICT if feasibility.status == FEASIBILITY_CONFLICT else REJECTED
             logger.info(
                 "[Feasibility] status=%s conflicts=%d alternatives=%d",
                 feasibility.status, len(feasibility.conflicts), len(feasibility.alternatives),
@@ -138,7 +146,8 @@ class RecommendationCoordinator:
                 status=status,
                 result={},
                 gate={**gate_dict, "status": status, "ready": False},
-                next_question=feasibility.question
+                # 这里给客户的是"结论 + 调整方向"，不是提问
+                next_question=feasibility.message
                 or (conflict_message(profile) if status == CONFLICT else ""),
                 missing_fields=[],
                 reject_reasons=[
@@ -150,20 +159,10 @@ class RecommendationCoordinator:
             )
             outcome.audit["feasibility"] = feasibility.to_dict()
             return outcome
-        if feasibility.status == "NEED_CLARIFICATION" and feasibility.question:
-            outcome = RecommendationOutcome(
-                status=NEED_CLARIFICATION,
-                result={},
-                gate={**gate_dict, "ready": False, "status": "CONTINUE_ASKING"},
-                next_question=feasibility.question,
-                missing_fields=["resolution"],
-                reject_reasons=list(feasibility.notes),
-            )
-            outcome.audit = self._audit(
-                profile, technical, outcome, session_id, customer_input, final_response
-            )
-            outcome.audit["feasibility"] = feasibility.to_dict()
-            return outcome
+        if feasibility.status == FEASIBILITY_NEED_ADJUSTMENT:
+            # 当前 P 值达不到，但目录里有更细的点间距能做到 → 交给引擎去选，
+            # 不在这里打断对话（型号级可行性会在下一步逐款复核）
+            logger.info("[Feasibility] %s", "；".join(feasibility.notes))
 
         # ── §5：Provenance Guard ─────────────────────────────────────────
         # 客户直接点名型号 / 系列时，"来源"就是客户自己那句话（型号自带参数），
@@ -226,7 +225,12 @@ class RecommendationCoordinator:
                     result=result,
                     gate=gate_dict,
                     provenance=provenance,
-                    reject_reasons=["没有型号能在当前约束下拼到足够接近的目标分辨率"],
+                    # 逐款都不达标时，把可行性层给出的"要多大尺寸 / 多细的点间距 /
+                    # 或者降低分辨率"直接讲给客户
+                    next_question=feasibility.message
+                    or self._resolution_shortfall_message(profile, feasibility),
+                    reject_reasons=["没有型号能在当前约束下拼到足够接近的目标分辨率"]
+                    + list(feasibility.alternatives),
                     missing_fields=["resolution"],
                 )
                 outcome.audit = self._audit(
@@ -274,6 +278,34 @@ class RecommendationCoordinator:
             if str(getattr(model, "model", "")) == name:
                 return model
         return None
+
+    # ── 内部：目录里最细的点间距（可行性判断的物理极限）──────────────────
+    def _finest_pitch_mm(self) -> Optional[float]:
+        return finest_pitch_in(getattr(self.engine, "models", None))
+
+    # ── 内部：型号逐款都不达标时给客户的兜底话术（结论，不是提问）────────
+    def _resolution_shortfall_message(
+        self, profile: RequirementProfile, feasibility: Any
+    ) -> str:
+        target = (feasibility.resolution_result.target if feasibility.resolution_result else None)
+        if not target:
+            requirement = getattr(profile, "resolution_requirement", None) or {}
+            width_px = requirement.get("target_width")
+            height_px = requirement.get("target_height")
+            target = (width_px, height_px) if width_px and height_px else None
+        if not target:
+            return ""
+        width_m = float(getattr(profile, "target_width_m", 0) or 0)
+        height_m = float(getattr(profile, "target_height_m", 0) or 0)
+        size_text = (
+            f" at {width_m:.2f}m x {height_m:.2f}m" if width_m and height_m else ""
+        )
+        return (
+            f"None of our models can reach {target[0]}x{target[1]} pixels{size_text} "
+            "within the other requirements you gave. Going a bit larger on the screen, "
+            "allowing a finer pitch, or aiming slightly lower on resolution would all work "
+            "— tell me which one you'd prefer and I'll rebuild it for you."
+        )
 
     # ── 审计 ────────────────────────────────────────────────────────────
     def _audit(

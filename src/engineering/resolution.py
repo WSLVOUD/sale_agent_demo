@@ -1,12 +1,13 @@
 """v2.5 Phase 3 / 5：分辨率需求（Resolution Requirement）与"接近程度"判断。
 
-客户口径（2026-09-20）：
+客户口径（2026-09-21 修订）：
 
-  · 分辨率不是"必须一模一样"，要算**偏差**再判断可接受性；
-  · 必须区分三种含义：
-        INPUT   控制系统能接收这个信号（不代表 LED 本身达到这个像素数）
-        DISPLAY LED 本身要做到这个像素数（进入实际拼接计算）
-        UNKNOWN 客户只说"要 4K"，含义不明 → **不允许猜**，必要时问一个澄清问题
+  · 分辨率**一律按"屏体大约能达到"处理** —— 和"这是输入信号还是屏体指标"无关，
+    所以不再区分含义、也不再问澄清问题（``mode`` 仅作为记录/排查用）；
+  · 屏体拼出来的像素数 **达到或超过** 客户要的分辨率即可，不要求像素级严丝合缝
+    （MEETS_OR_EXCEEDS）；略低一点但偏差在容差内也算（NEAR_MATCH / ACCEPTABLE）；
+  · 偏差大到明显达不到时，由可行性层直接告诉客户：需要更细的点间距 / 更大的尺寸，
+    或者降低分辨率目标；
   · 1080P / 2K / 1440P / 4K / 8K / 自定义 WxH 全部支持；
   · 阈值集中放在 constants 里，后续用 Golden Dataset 调整。
 """
@@ -28,6 +29,7 @@ DISPLAY = "DISPLAY"
 UNKNOWN = "UNKNOWN"
 
 EXACT = "EXACT"
+MEETS_OR_EXCEEDS = "MEETS_OR_EXCEEDS"
 NEAR_MATCH = "NEAR_MATCH"
 ACCEPTABLE = "ACCEPTABLE"
 NOT_ACCEPTABLE = "NOT_ACCEPTABLE"
@@ -91,9 +93,13 @@ class ResolutionRequirement:
         return self.mode == DISPLAY and self.target is not None
 
     @property
-    def needs_clarification(self) -> bool:
-        """只说"要 4K"（UNKNOWN）时，含义不明 → 需要澄清（由调用方决定要不要问）。"""
-        return self.mode == UNKNOWN and self.target is not None
+    def constrains_screen(self) -> bool:
+        """客户提到分辨率时是否构成对**屏体**的约束。
+
+        v2.5+ 客户口径：只要客户说了分辨率，就按"屏体大约要达到"处理 ——
+        不再区分 INPUT / DISPLAY，也不问澄清问题。
+        """
+        return self.target is not None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -155,7 +161,7 @@ class ResolutionFitResult:
 
     @property
     def acceptable(self) -> bool:
-        return self.fit_level in (EXACT, NEAR_MATCH, ACCEPTABLE)
+        return self.fit_level in (EXACT, MEETS_OR_EXCEEDS, NEAR_MATCH, ACCEPTABLE)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -212,6 +218,10 @@ def fit_resolution(
     worst = max(result.horizontal_deviation, result.vertical_deviation)
     if aw == tw and ah == th:
         result.fit_level = EXACT
+    elif aw >= tw and ah >= th:
+        # 客户口径：屏体贴出来的像素数够（甚至更多）就算达到目标分辨率 ——
+        # 客户要的是"这块屏能到 4K"，比 4K 更高当然也算到。
+        result.fit_level = MEETS_OR_EXCEEDS
     elif worst <= tol:
         result.fit_level = NEAR_MATCH
     elif worst <= RESOLUTION_FIT_ACCEPTABLE and result.aspect_ratio_deviation <= aspect_tolerance:
@@ -229,6 +239,7 @@ __all__ = [
     "EXACT",
     "IMPOSSIBLE",
     "INPUT",
+    "MEETS_OR_EXCEEDS",
     "NEAR_MATCH",
     "NOT_ACCEPTABLE",
     "RESOLUTION_PRESETS",

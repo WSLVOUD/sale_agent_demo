@@ -58,6 +58,16 @@ class TestFitLevels:
         strict = fit_resolution((3840, 2160), (3780, 2160), tolerance=0.001)
         assert strict.fit_level == "ACCEPTABLE"
 
+    def test_meeting_or_exceeding_target_is_acceptable(self):
+        """客户口径：屏体像素数**达到或超过**目标就算达到（10m 宽的屏当然够 4K）。"""
+        fit = fit_resolution((3840, 2160), (8000, 4000))
+        assert fit.fit_level == "MEETS_OR_EXCEEDS"
+        assert fit.acceptable is True
+
+    def test_partial_exceed_still_counts_as_short(self):
+        """只有一个方向超过、另一个方向不够 → 仍然算不达标。"""
+        assert fit_resolution((3840, 2160), (4000, 1800)).acceptable is False
+
     def test_geometry_aware_minimum_deviation(self):
         """半个模组都做不到更近时，算 NEAR_MATCH（拼到最接近了），不算失败。"""
         minimum = min_achievable_deviation(

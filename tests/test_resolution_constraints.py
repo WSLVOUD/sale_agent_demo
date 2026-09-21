@@ -45,11 +45,27 @@ class TestModes:
         assert requirement.mode == DISPLAY
         assert requirement.is_display is True
 
-    def test_ambiguous_needs_clarification(self):
+    def test_ambiguous_4k_is_treated_as_screen_target(self):
+        """v2.5+ 客户口径：只说"4K"不再澄清 —— 一律按"屏体大约要达到"处理。"""
         requirement = parse_resolution("We need 4K")
         assert requirement.mode == UNKNOWN
-        assert requirement.needs_clarification is True
+        assert requirement.constrains_screen is True
         assert requirement.is_display is False
+
+    def test_no_clarification_question_is_raised(self):
+        """可行性判断里不允许再出现"要问客户"的字段（历史 bug：input / display 澄清）。"""
+        from src.engineering import check_feasibility
+        from src.models.requirement import RequirementProfile
+
+        profile = RequirementProfile.from_slots(
+            {"environment": "indoor", "installation": "fixed"},
+            explicit_keys={"environment", "installation"},
+        )
+        result = check_feasibility(
+            profile, resolution=parse_resolution("we need 4k"), finest_pitch_mm=1.25
+        )
+        assert not hasattr(result, "question")
+        assert "LED itself" not in result.message
 
     def test_profile_records_the_requirement(self):
         from src.core.requirement_extractor import RequirementExtractor
