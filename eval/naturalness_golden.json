@@ -1,0 +1,68 @@
+[
+  {
+    "id": "indoor-only",
+    "customer_message": "Indoor.",
+    "slots": {"environment": "indoor"},
+    "answered_slots": ["environment"]
+  },
+  {
+    "id": "church-scene",
+    "customer_message": "It's for a church, around 200 people.",
+    "slots": {"purpose": "church"},
+    "answered_slots": ["purpose"]
+  },
+  {
+    "id": "distance-given",
+    "customer_message": "The audience will be about 5 meters away.",
+    "slots": {"environment": "indoor", "viewing_distance_m": 5},
+    "answered_slots": ["environment", "viewing_distance"]
+  },
+  {
+    "id": "size-given",
+    "customer_message": "The wall is 3*5 meters.",
+    "slots": {"environment": "indoor", "target_width_mm": 3000, "target_height_mm": 5000},
+    "answered_slots": ["environment", "size"]
+  },
+  {
+    "id": "pitch-unknown",
+    "customer_message": "I don't know the pixel pitch.",
+    "slots": {"environment": "indoor", "viewing_distance_m": 5},
+    "unknown_slots": ["pixel_pitch"],
+    "answered_slots": ["environment", "viewing_distance", "pixel_pitch"]
+  },
+  {
+    "id": "permanent-install",
+    "customer_message": "It's a permanent installation.",
+    "slots": {"environment": "indoor", "installation": "fixed"},
+    "answered_slots": ["environment", "installation"]
+  },
+  {
+    "id": "4k-requirement",
+    "customer_message": "We need the screen itself to be 4K.",
+    "slots": {"environment": "indoor", "target_width_mm": 3000, "target_height_mm": 5000},
+    "resolution": "the screen itself needs to be 3840x2160",
+    "answered_slots": ["environment", "size"]
+  },
+  {
+    "id": "price-question",
+    "customer_message": "What is the price of this screen?",
+    "slots": {"environment": "indoor"},
+    "answered_slots": ["environment"],
+    "answer": "Once the spec is confirmed I can put a full quotation together for you.",
+    "customer_asked": true
+  },
+  {
+    "id": "delivery-question",
+    "customer_message": "How long does delivery take?",
+    "slots": {"environment": "indoor"},
+    "answered_slots": ["environment"],
+    "answer": "Production and delivery usually run about 15 to 20 days from order confirmation.",
+    "customer_asked": true
+  },
+  {
+    "id": "another-model-request",
+    "customer_message": "Can you recommend another model?",
+    "slots": {"environment": "indoor", "purpose": "church", "installation": "fixed"},
+    "answered_slots": ["environment", "purpose", "installation"]
+  }
+]

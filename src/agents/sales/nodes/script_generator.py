@@ -280,6 +280,171 @@ def _vision_confirmation(state: SalesState) -> str:
         return ""
 
 
+# ── v2.5++（僵硬话术优化 §9）：话术唯一出口 ─────────────────────────────
+# 业务决策（问什么 / 答什么 / 推什么）由 Python 定；措辞由 LLM 从结构化上下文
+# 原生生成（DialogueAction → ResponseContext → ResponseGenerator → Validator）。
+# 旧模板链路只在"生成失败 / 特殊轮次"时兜底（§16：先建新链路，旧链路留作回退）。
+
+
+def _dialogue_llm():
+    """有凭据才拿 LLM；没有就返回 None（走结构化兜底，不发请求）。"""
+    try:
+        import os as _os
+
+        if not _os.getenv("DEEPSEEK_API_KEY"):
+            from ....config import config as _config
+
+            if not getattr(_config, "DEEPSEEK_API_KEY", ""):
+                return None
+        return get_llm(temperature=_question_temperature())
+    except Exception:  # pragma: no cover - 防御式
+        return None
+
+
+def _known_facts(state: SalesState) -> list:
+    """客户已经确认的事实（给 LLM 当上下文，不让它自己猜）。"""
+    profile = state.get("requirement_profile")
+    if profile is None:
+        requirements = state.get("requirements") or {}
+        return [f"{key}={value}" for key, value in requirements.items() if value]
+    items = []
+    for slot, field in (
+        ("display_type", "display_type"),
+        ("environment", "environment"),
+        ("purpose", "purpose"),
+        ("installation", "installation"),
+        ("viewing_distance", "viewing_distance_m"),
+        ("size", "target_size"),
+        ("pixel_pitch", "pixel_pitch_mm"),
+        ("budget", "budget_level"),
+    ):
+        try:
+            if not profile.slot_is_confirmed(slot):
+                continue
+        except Exception:  # pragma: no cover - 防御式
+            continue
+        if slot == "size":
+            value = f"{profile.target_width_m}m x {profile.target_height_m}m"
+        else:
+            value = getattr(profile, field, None)
+        if value in (None, "", [], {}):
+            continue
+        items.append(f"{slot}={value}")
+    return items
+
+
+# ── v2.5++（僵硬话术优化 §9/§11）：只保留"有内容"的接话 ──────────────────
+# reply_composer.acknowledge 仍然是有用的 Fact / Format 工具（公司办事处、产品有没有
+# 某规格这类**事实回答**都从它来）。但它是"接话 + 复述 + 客套"三合一的旧写法：
+#   · 泛客套（"Got it" / "Thanks"）→ 不再作为固定开场（LLM 自己决定要不要客套）
+#   · 机械复述客户刚说的话        → 不再带上（客户口径：不要每轮复述）
+# 只有"事实回答"（既不是客套、也不是复述）才作为可选开场交给 LLM / 兜底拼装。
+def _opening_for(state: SalesState, current_message: str, *, allow_ack: bool = True) -> str:
+    if not allow_ack:
+        return ""
+    try:
+        from ....dialogue import echo_ratio
+        from ....dialogue.response_validator import GENERIC_ACK_RE
+        from ....rag.reply_composer import acknowledge, reply_language
+
+        acknowledgement = str(state.get("acknowledgement") or "").strip()
+        if not acknowledgement:
+            acknowledgement = str(
+                acknowledge(
+                    current_message,
+                    requirement=state.get("requirements") or {},
+                    language=reply_language(current_message),
+                    seed=_turn_seed(state),
+                    llm_ack="",
+                    slot=str(state.get("pending_slot") or ""),
+                )
+                or ""
+            ).strip()
+        if not acknowledgement:
+            return ""
+        if GENERIC_ACK_RE.search(acknowledgement):
+            return ""
+        if echo_ratio(acknowledgement, current_message) >= 0.5:
+            return ""
+        return acknowledgement
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("[Dialogue] opening line failed: %s", exc)
+        return str(state.get("acknowledgement") or "")
+
+
+def _natural_reply(
+    state: SalesState,
+    *,
+    answer: str = "",
+    question: str = "",
+    slot: str = "",
+    allow_ack: bool = True,
+    business_goal: str = "",
+) -> str:
+    """唯一话术出口：结构化上下文 → LLM 原生生成 → 校验 → 结构化拼装 → 旧模板兜底。"""
+    from ....dialogue import (
+        ANSWER_AND_ASK,
+        ASK,
+        DIRECT_ANSWER,
+        build_context,
+        generate_response,
+    )
+
+    current_message = str(state.get("current_message") or "")
+    slot = slot or str(state.get("pending_slot") or "")
+    if answer and question:
+        action = ANSWER_AND_ASK
+    elif answer:
+        action = DIRECT_ANSWER
+    else:
+        action = ASK
+    context = build_context(
+        action=action,
+        customer_message=current_message,
+        question=question,
+        answer=answer,
+        # 系统已经生成的"接话"（例如对自我介绍的回应）：LLM 可自行决定要不要用，
+        # 无 LLM 时结构化拼装会带上它（不丢内容，也不再强制每轮都接话）
+        opening=_opening_for(state, current_message, allow_ack=allow_ack),
+        newly_confirmed={},
+        missing_fields=[slot] if slot else [],
+        known_facts=_known_facts(state),
+        business_goal=business_goal,
+        required_question=slot,
+        language="en",          # 客户口径：对客户始终说英文
+        restrictions=[
+            "ask_only_one_question",
+            "do_not_invent_facts",
+            "do_not_repeat_customer_unnecessarily",
+        ],
+        style="natural_b2b_sales",
+    )
+    context.allow_ack = allow_ack
+    context.allow_connector = allow_ack
+    text = ""
+    try:
+        text = generate_response(context, llm=_dialogue_llm(), seed=_turn_seed(state))
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("[Dialogue] generate_response failed: %s", exc)
+        text = ""
+    if text:
+        return _strip_markdown(text)
+    # 兜底：旧模板链路（保证一定有话可说）
+    return _strip_markdown(
+        compose_requirement_reply(
+            answer=answer,
+            question=question,
+            slot=slot,
+            message=current_message,
+            seed=_turn_seed(state),
+            requirement=state.get("requirements") or {},
+            include_ack=allow_ack,
+            llm_ack=str(state.get("acknowledgement") or ""),
+            vision_confirmation="",
+        )
+    )
+
+
 def script_generator(state: SalesState) -> SalesState:
     """Produce the final user-facing response."""
     # Check if router has already processed
@@ -316,8 +481,16 @@ def script_generator(state: SalesState) -> SalesState:
                 vision_confirmation=confirmation,
             )
             # 图片确认句是系统精心写好的，不要让 LLM 改写（改写了也不好核对）
-            polished = "" if confirmation else _polish_question_message(draft, state=state)
-            state["response"] = _strip_markdown(polished or draft)
+            if confirmation:
+                # 图片确认句是系统写好的事实核对，保持原样
+                state["response"] = _strip_markdown(draft)
+            else:
+                # v2.5++：唯一话术出口（结构化上下文 → LLM 原生生成 → 校验 → 回退）
+                state["response"] = _natural_reply(
+                    state,
+                    question=pending,
+                    business_goal="acknowledge the customer, then keep collecting requirements",
+                )
         else:
             state["response"] = _strip_markdown(ack)
         state["next_action"] = "ask"
@@ -342,19 +515,13 @@ def script_generator(state: SalesState) -> SalesState:
     )
     if delivery_reply:
         pending = str(state.get("pending_question") or "")
-        state["response"] = _strip_markdown(
-            compose_requirement_reply(
-                answer=delivery_reply,
-                question=pending,
-                slot=str(state.get("pending_slot") or ""),
-                message=current_message_text,
-                seed=_turn_seed(state),
-                requirement=state.get("requirements") or {},
-                # 交付口径本身就是"接住客户这句话"（含档期复述），不再叠 LLM 客套，
-                # 否则会出现 "Got it… Got it, 11月 is your target…" 这种重复。
-                include_ack=False,
-                vision_confirmation=_vision_confirmation(state),
-            )
+        state["response"] = _natural_reply(
+            state,
+            answer=delivery_reply,
+            question=pending,
+            slot=str(state.get("pending_slot") or ""),
+            allow_ack=False,
+            business_goal="answer the delivery or schedule question, then continue",
         )
         state["next_action"] = "ask"
         logger.info("Delivery / lead-time reply: %s", state["response"])
@@ -391,11 +558,16 @@ def script_generator(state: SalesState) -> SalesState:
         # 需求重置时 runner 已经加了"我们重新来一遍"的确认语；这里再让 LLM 改写
         # 容易又叠一句客套（实测："Sure, let's collect… Sure, happy to help…"）
         # 带图的这一轮也不改写：图片确认句要保持原样，客户才好核对。
-        polished = (
-            "" if (state.get("requirements_reset") or confirmation)
-            else _polish_question_message(draft, state=state)
-        )
-        state["response"] = _strip_markdown(polished or draft)
+        if state.get("requirements_reset") or confirmation:
+            # 需求重置时 runner 已经加过确认语；带图那一轮要保持图片核对句原样
+            state["response"] = _strip_markdown(draft)
+        else:
+            # v2.5++：唯一话术出口（结构化上下文 → LLM 原生生成 → 校验 → 回退）
+            state["response"] = _natural_reply(
+                state,
+                question=pending_question,
+                business_goal="collect the missing hard requirement",
+            )
         state["next_action"] = "ask"
         logger.info(
             "Requirement mining continues — reply: %s", state["response"]
@@ -474,17 +646,13 @@ def script_generator(state: SalesState) -> SalesState:
                 answer = _answer_objection_like(state, current_message)
 
             pending_question = str(state.get("pending_question") or "")
-            state["response"] = _strip_markdown(
-                compose_requirement_reply(
-                    answer=answer,
-                    question=pending_question,
-                    slot=str(state.get("pending_slot") or ""),
-                    message=current_message,
-                    seed=_turn_seed(state),
-                    requirement=requirements,
-                    llm_ack=str(state.get("acknowledgement") or ""),
-                    vision_confirmation=_vision_confirmation(state),
-                )
+            state["response"] = _natural_reply(
+                state,
+                answer=answer,
+                question=str(state.get("pending_question") or ""),
+                slot=str(state.get("pending_slot") or ""),
+                allow_ack=False,
+                business_goal="answer the customer's question, then continue collecting",
             )
             state["next_action"] = "ask"
             logger.info("Objection/industry without ready gate — reply: %s", state["response"])

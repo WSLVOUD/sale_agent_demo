@@ -24,6 +24,7 @@ from .response_planner import ResponsePlan, plan_response, reassure_line
 from .action import (
     ACK_ONLY,
     ANSWER_AND_ASK,
+    ASK,
     CLARIFY,
     CONFIRM,
     DIRECT_ANSWER,
@@ -31,17 +32,39 @@ from .action import (
     RECOMMEND,
     decide_dialogue_action,
 )
+from .ab_test import compare_strategies, run_strategy
 from .response_context import ResponseContext
-from .response_generator import build_context, compose_from_context, generate_response
-from .response_validator import ResponseValidation, compute_metrics, validate_response
+from .response_generator import (
+    DEFAULT_STRATEGY,
+    NATIVE_SYSTEM_PROMPT,
+    STRATEGY_NATIVE,
+    STRATEGY_TEMPLATE_POLISH,
+    build_context,
+    compose_from_context,
+    generate_response,
+    get_response_strategy,
+    llm_available,
+    reset_llm_breaker,
+    set_response_strategy,
+)
+from .response_validator import (
+    ResponseValidation,
+    compute_metrics,
+    echo_ratio,
+    questionnaire_pattern,
+    repeated_question_slot,
+    validate_response,
+)
 
 __all__ = [
     "ACK_ONLY",
     "ANSWER_AND_ASK",
     "ASK_POOL",
+    "ASK",
     "CLARIFY",
     "CONFIRM",
     "ConversationState",
+    "DEFAULT_STRATEGY",
     "DIRECT_ANSWER",
     "DialogueDecision",
     "HARD_SLOTS",
@@ -51,11 +74,18 @@ __all__ = [
     "ResponseContext",
     "ResponsePlan",
     "ResponseValidation",
+    "NATIVE_SYSTEM_PROMPT",
+    "STRATEGY_NATIVE",
+    "STRATEGY_TEMPLATE_POLISH",
     "build_context",
     "compose_from_context",
+    "compare_strategies",
     "compute_metrics",
     "decide_dialogue_action",
+    "echo_ratio",
     "generate_response",
+    "get_response_strategy",
+    "llm_available",
     "get_conversation_state",
     "hard_recap_pending",
     "known_question",
@@ -67,7 +97,12 @@ __all__ = [
     "plan_response",
     "random_order",
     "reassure_line",
+    "questionnaire_pattern",
+    "repeated_question_slot",
     "reset_conversation_state",
+    "reset_llm_breaker",
+    "run_strategy",
+    "set_response_strategy",
     "shuffled_slots",
     "stage_from_status",
     "update_conversation_state",

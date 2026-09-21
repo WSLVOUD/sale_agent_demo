@@ -386,7 +386,7 @@ class TestSalesGraphAcksThenAsks:
             "reset_reason": "",
         }
 
-    def test_scenario_answer_is_acknowledged_then_question(self, fake_llm, monkeypatch):
+    def test_scenario_answer_is_followed_by_one_question(self, fake_llm, monkeypatch):
         classify_mod, sales_req, _make = fake_llm
         monkeypatch.setattr(classify_mod, "ChatOpenAI", _make("need_query"))
         monkeypatch.setattr(sales_req, "ChatOpenAI", _make("need_query"))
@@ -398,7 +398,9 @@ class TestSalesGraphAcksThenAsks:
         assert result["next_action"] == "ask"
         assert result["pending_question"]
         # 先接住客户这句话（复述场景），再问同一个 Gate 问题
-        assert "church" in result["response"]
+        assert result["response"].count("?") == 1
+        # v2.5++（僵硬话术优化）：不再机械复述客户刚说的场景词
+        assert "church" not in result["response"].lower()
         # 有过渡语时，回复结尾是"问句本体"（模板里的固定铺垫会被过渡语替换掉）
         tail = result["pending_question"].rsplit("—", 1)[-1].strip().lower()
         assert result["response"].lower().endswith(tail)

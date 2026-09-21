@@ -2,7 +2,7 @@
 
 > 基于大模型（DeepSeek）的 LED/LCD/IFP 全品类显示产品智能销售助手，采用多 Agent 协作 + 混合检索（RAG）架构，为销售团队提供实时产品推荐和技术咨询能力。
 
-> **当前版本：v2.5++（2026-09-21）** ｜ 全量测试：`python -m pytest tests/ -q` → **1446 passed, 4 skipped**
+> **当前版本：v2.5++（2026-09-21）** ｜ 全量测试：`python -m pytest tests/ -q` → **1459 passed, 4 skipped**
 >
 > 当前行为口径集中在下面「当前行为口径」一节；历史版本的逐条变更见文末「变更明细」。
 
@@ -127,6 +127,37 @@ Phase 2 复问（一轮走完之后）
 
 实现位置：`src/core/requirement_extractor.py`（`_merge_extractions` / Step 6）、
 `src/rag/readiness.py`（`_environment_settled`）。
+
+### 0d. 话术出口（v2.5++，僵硬话术优化）
+
+```text
+旧：业务逻辑 → 固定模板（ACK + 复述 + 过渡词 + 问题）→ LLM 润色 → 客户     （僵硬）
+新：业务上下文 → LLM 原生生成 → Validator → 客户                          （默认）
+
+Python 决定"说什么"：Action / 必须问的那一项 / 必须答的内容 / 推荐型号 / 工程结论
+LLM   决定"怎么说"：要不要接话、要不要复述、句子长短、直接问还是先铺垫
+Validator 只管边界：客户问题是否回答、有无编造参数/型号/价格/交期、
+                    有无改动工程结论、是否超过一个问题、有无内部术语泄漏
+不再强制：ACK、连接词、过渡句、复述客户
+
+唯一客户文本出口：src/dialogue/response_generator.py
+    Strategy B（默认）ResponseContext → LLM 原生生成（没有草稿）
+    Strategy A（对比/回退）草稿 → 润色
+    无 LLM / 生成不合格 → 结构化拼装 → 旧模板兜底（旧链路保留，未删除）
+
+十项自然度指标（src/dialogue/response_validator.py）：
+    generic_ack_rate / question_repeat_rate / connector_repeat_rate /
+    customer_echo_rate / questionnaire_pattern_rate / customer_question_answer_rate /
+    one_question_compliance / unsupported_fact_rate / internal_term_leak_rate /
+    response_length
+
+黄金数据集（行为约束，不是固定文案）：eval/naturalness_golden.json
+A/B 对比：src/dialogue/ab_test.py::compare_strategies()
+```
+
+实现位置：`src/dialogue/response_context.py`、`response_generator.py`、
+`response_validator.py`、`ab_test.py`、`src/agents/sales/nodes/script_generator.py`；
+计划与逐项标注见 `LED_RAG_僵硬话术优化工程计划.md`。
 
 ### 1. 架构收敛（v2.3 / v2.3.1）
 
@@ -269,6 +300,7 @@ RequirementProfile（唯一事实源）
 
 | 版本 | 内容 |
 |---|---|
+| v2.5++ | **僵硬话术优化**：ResponseContext 纯结构化 + ResponseGenerator 成为唯一客户文本出口（LLM 原生生成，不再"模板 + 润色"）；Validator 只守事实边界（不强制 ACK / 连接词 / 复述）；10 项自然度指标 + 黄金数据集 + A/B 对比 |
 | v2.5++ | 分辨率优先于视距点间距（客户没锁死 P 值时，视距区间只当倾向，不再挡掉能拼到 4K 的细点间距）；尺寸 "x×y" 不区分宽高，两种摆法 × 横拼/竖拼四种几何取最优；"室内/户外"答过就不再重复问（含"只答一个词"和语义模型带证据的情形） |
 | v2.5+ | 分辨率口径调整：一律按"屏体大约能达到"处理（不再区分输入/屏体、不再提澄清问题）；达到或超过目标即算可行；连最细点间距也达不到时直接告诉客户需要的标准尺寸或降低分辨率，不再输出自相矛盾的提问 |
 | v2.5 | 多条消息聚合成一个 UserTurn（**前端已接入**：连续发送先聚合再一次性请求；debounce / 幂等 / 会话锁）；DialogueAction + ResponseContext（话术不再像问卷，附 7 项话术指标）；分辨率需求（INPUT/DISPLAY/UNKNOWN）+ 实际拼接分辨率 + Resolution Fit + Engineering Feasibility（不可绕过） |

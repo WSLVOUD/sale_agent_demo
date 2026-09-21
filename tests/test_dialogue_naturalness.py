@@ -170,11 +170,20 @@ class TestResponseValidation:
             {"is_question": True, "validation": validate_response("Got it. Size?", allow_ack=False)},
             {"is_question": False, "validation": validate_response("Sure, what size do you need?")},
             {"is_question": True, "validation": validate_response("Delivery is 15 days.")},
+            {
+                "is_question": True,
+                "validation": validate_response(
+                    "Got it. Based on that, what size do you need?"
+                ),
+            },
         ]
         metrics = compute_metrics(samples)
         assert set(metrics) == {
-            "generic_ack_rate", "connector_repeat_rate", "question_repeat_rate",
-            "one_question_compliance", "internal_term_leak_rate",
-            "unsupported_fact_rate", "customer_question_answer_rate",
+            "generic_ack_rate", "question_repeat_rate", "connector_repeat_rate",
+            "customer_echo_rate", "questionnaire_pattern_rate",
+            "customer_question_answer_rate", "one_question_compliance",
+            "unsupported_fact_rate", "internal_term_leak_rate", "response_length",
         }
         assert metrics["generic_ack_rate"] > 0
+        assert metrics["questionnaire_pattern_rate"] > 0
+        assert metrics["response_length"] > 0

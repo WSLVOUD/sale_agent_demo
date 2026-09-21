@@ -15,6 +15,12 @@
      这里只负责给不同轮次换不同的引导语，避免每次都同一套固定话术。
   3. 纯规则 / 复用既有解析器，不额外增加 LLM 调用。
 """
+# ── v2.5++（僵硬话术优化 §8）：本模块现在的定位是 **Fact / Format Utility** ──
+# 保留：产品事实格式化、数值/单位格式化、语言工具、安全清洗、输出辅助。
+# 逐步退出：ACK 选择、Connector 选择、Bridge 选择、客户信息 Echo、问题前置话术 ——
+#   它们**不再承担"最终话术结构"职责**。客户可见文本的唯一出口是
+#   ``src/dialogue/response_generator.py``（ResponseContext → LLM 原生生成 → Validator）；
+#   下面的组合函数只在"没有 LLM / LLM 不可用"时作为兜底使用。
 from __future__ import annotations
 
 import logging
@@ -1034,6 +1040,8 @@ def _ack_is_customer_answer(message: str, data_dir: Optional[str] = None) -> boo
     return bool(availability_answer(text, data_dir=data_dir))
 
 
+# 【Legacy · 仅作兜底】v2.5++ 起主链路不再用它"拼"客户话术（见文件头说明）：
+# 只在 ResponseGenerator 拿不到 LLM / 生成失败时，由 sales 节点回退到这里。
 def compose_requirement_reply(
     *,
     answer: str = "",
