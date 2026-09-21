@@ -107,14 +107,26 @@ def _max_asks() -> int:
 
 
 def pass1_pending(profile: Any, session_id: str = "") -> List[str]:
-    """随机轮里"还没问过、也还没答案"的槽位（按会话随机顺序）。"""
+    """随机轮里"还没问过、也还没答案"的槽位。
+
+    v2.5++++（计划 §8）：先按会话随机取顺序，再按**业务价值**排序 ——
+    随机只在价值相同的槽位之间生效（不会再随机到不重要的字段）。
+    """
     actions = _actions(profile)
-    return [
+    slots = [
         slot for slot in random_order(session_id)
         if _askable(profile, slot, actions)
         and not _settled(profile, slot)
         and _asked(profile, slot) == 0
     ]
+    if len(slots) <= 1:
+        return slots
+    try:
+        from .policy import rank_slots_by_value
+
+        return rank_slots_by_value(slots, profile, session_id=session_id)
+    except Exception:  # pragma: no cover - 防御式
+        return slots
 
 
 def pass1_complete(profile: Any) -> bool:

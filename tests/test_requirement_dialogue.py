@@ -1087,7 +1087,13 @@ class TestPriceQuestionWhileCollecting:
         state.update(overrides)
         return state
 
-    def test_price_question_answers_policy_then_keeps_collecting(self):
+    def test_price_question_answers_policy_without_forced_question(self):
+        """v2.5++++（《消息聚合与自然对话链路优化计划》§16.4）：
+
+        客户问价格 → 先答价格口径（要先确认产品才能报价），**不再硬塞**需求问题；
+        待问项仍然记着，客户下一轮继续说需求时再继续采集。
+        （旧口径"答完必须再问一个需求"正是实测里的问卷腔来源。）
+        """
         from src.agents.sales.nodes.script_generator import script_generator
 
         result = script_generator(self._state())
@@ -1096,10 +1102,9 @@ class TestPriceQuestionWhileCollecting:
         assert result["should_generate_solution"] is False
         # 先说明"要确认产品才能报价"
         assert "quot" in result["response"].lower()
-        # 紧接着继续问需求（同一个待问项；引导语后面的问句首字母会被小写化）
-        assert result["response"].rstrip().lower().endswith(
-            result["pending_question"].lower()
-        )
+        # 不再机械追加需求问题；而且这一轮最多一个问题
+        assert result["pending_question"] not in result["response"]
+        assert result["response"].count("?") <= 1
 
     def test_price_question_does_not_trigger_solution_on_usage(self):
         """回归：旧版这里会因为 requirements 里有 usage 就直接 trigger_solution。"""

@@ -80,6 +80,8 @@ class DualAgentOrchestrator:
         session_id: str,
         history: List[Dict[str, Any]] = None,
         images: Optional[List[Any]] = None,
+        message_count: int = 1,
+        aggregated: bool = False,
     ) -> Dict[str, Any]:
         """
         Process user message through appropriate agent(s).
@@ -94,6 +96,17 @@ class DualAgentOrchestrator:
             Dict with response and metadata
         """
         perf = PerfTracker(session_id, message)
+        # v2.5++++（计划 §15）：一轮的 LLM 调用统一记账（这一轮里所有 LLM 都算上）
+        try:
+            from .observability.llm_tracker import get_llm_tracker
+
+            get_llm_tracker().begin_turn(
+                session_id,
+                message_count=message_count,
+                aggregated=aggregated,
+            )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("LLM tracker begin_turn failed: %s", exc)
 
         # ── 纯图片消息（计划第二十四阶段 Case 1）────────────────────────────
         # 客户只发了图片、没有文字时，用一句"照片已收到"的话驱动需求采集，
@@ -476,7 +489,47 @@ class DualAgentOrchestrator:
                 result["extra_messages"] = guarded
             else:
                 result.pop("extra_messages", None)
+        self._finish_llm_turn(result, session_id)
         return result
+
+    # ── v2.5++++（计划 §15）：一轮的 LLM 统计收口 ────────────────────────
+    def _finish_llm_turn(self, result: Dict[str, Any], session_id: str) -> None:
+        """结束本轮记账，并把 messages / aggregated / llm_calls / latency 打到日志里。
+
+        实测问题：同一轮实际打了好几次 DeepSeek，日志却是 `llm_calls=0`。
+        现在无论走哪条分支（首轮接待 / Sales / Solution / 多屏），都会在这里收口。
+        """
+        try:
+            import time as _time
+
+            from .observability.llm_tracker import get_llm_tracker
+
+            tracker = get_llm_tracker()
+            context = tracker.current_turn()
+            stats = tracker.end_turn()
+            if stats is None:
+                return
+            total_ms = ((_time.time() - context.started_at) * 1000) if context else 0.0
+            logger.info(
+                "[Turn] session=%s messages=%s aggregated=%s llm_calls=%s "
+                "llm_latency_ms=%s llm_tokens=%s total_ms=%s",
+                session_id,
+                context.message_count if context else 1,
+                context.aggregated if context else False,
+                stats.calls,
+                round(stats.latency_ms, 1),
+                stats.total_tokens,
+                round(total_ms, 1),
+            )
+            result["_llm_stats"] = stats.to_dict()
+            if context is not None:
+                result["_turn"] = {
+                    "message_count": context.message_count,
+                    "aggregated": context.aggregated,
+                    "turn_id": context.turn_id,
+                }
+        except Exception as exc:  # pragma: no cover - 统计失败不影响业务
+            logger.warning("LLM tracker end_turn failed: %s", exc)
 
 
 

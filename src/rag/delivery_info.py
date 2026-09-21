@@ -29,6 +29,7 @@ _DELIVERY_QUESTION_RE = re.compile(
     r"(?:多久|多长时间)能?(?:交货|发货|到货|送到|做好|生产完)|"
     r"下单(?:后)?(?:多久|多长时间)|"
     r"\b(?:lead time|delivery time|delivery date|delivery lead|shipping time|time to deliver|"
+    r"how long (?:is|are|for)\s+(?:the\s+)?(?:delivery|shipping|lead\s*time)|"
     r"when (?:can|will|do) you (?:ship|deliver)|how long (?:does|will|would|to)|how soon)\b",
     re.IGNORECASE,
 )

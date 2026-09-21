@@ -13,8 +13,8 @@ class LEDChatApp {
         this.messageInput = document.getElementById('message-input');
         this.sendBtn = document.getElementById('send-btn');
         // v2.5：多条消息聚合（客户连续发送时合成一个 turn）
-        this.turnDebounceMs = 1500;   // 客户停止发送 1.5s 后发出
-        this.turnMaxWindowMs = 6000;  // 最长等 6s，避免一直不回复
+        this.turnDebounceMs = Number(localStorage.getItem('led_turn_debounce_ms')) || 600;  // v2.5++++ 计划 §4.2：600ms 静默期（可 localStorage 覆盖）
+        this.turnMaxWindowMs = Number(localStorage.getItem('led_turn_max_window_ms')) || 1800;  // v2.5++++ 计划 §4.2：1800ms 上限
         this.pendingTurn = null;
         this.statusIndicator = document.getElementById('status-indicator');
         this.newChatBtn = document.getElementById('new-chat-btn');

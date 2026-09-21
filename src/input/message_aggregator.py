@@ -29,8 +29,22 @@ from .user_turn import UserTurn
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DEBOUNCE_SECONDS = 1.8      # 计划建议 1.5~2 秒
-DEFAULT_MAX_WINDOW_SECONDS = 7.0    # 计划建议 6~8 秒
+# v2.5++++（《消息聚合与自然对话链路优化计划》§4.2）：**600ms 静默期 + 1800ms 上限**
+# 客户连续快速发消息时尽量合成一个 turn；单条消息最多多等 0.6s，不会有明显延迟。
+def _env_seconds(name: str, default: float) -> float:
+    import os
+
+    raw = str(os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(0.0, float(raw) / 1000.0)   # 环境变量按毫秒配
+    except ValueError:
+        return default
+
+
+DEFAULT_DEBOUNCE_SECONDS = _env_seconds("LED_RAG_TURN_DEBOUNCE_MS", 0.6)
+DEFAULT_MAX_WINDOW_SECONDS = _env_seconds("LED_RAG_TURN_MAX_WINDOW_MS", 1.8)
 
 
 @dataclass

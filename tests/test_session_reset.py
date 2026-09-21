@@ -54,7 +54,6 @@ class TestExplicitResetDetection:
         "不要这个了，再来一个方案",
         "我想要另外一款",
         "请重新帮我梳理需求",
-        "给我推荐别的",
         "我要别的产品",
     ])
     def test_chinese_reset_phrases(self, message):
@@ -233,6 +232,101 @@ class _StubGraph:
 
 
 class TestRunnerClearsRequirements:
+
+    @pytest.mark.parametrize("message", [
+        "你还能给我推荐其他的吗？",
+        "还能再推荐几款吗",
+        "还有别的推荐吗",
+        "有没有其他推荐",
+        "推荐点别的型号",
+        "给我推荐别的",
+        "can you recommend others?",
+        "any other options?",
+        "recommend more models",
+    ])
+    def test_more_options_request_does_not_clear_requirements(self, message):
+        """实测 bug 复现：客户说"你还能给我推荐其他的吗？"
+
+        旧行为：被判成"换产品" → 清空需求 → 又问一遍"室内还是室外""尺寸多少"
+        （客户明明刚说过 3*5 室内）。
+
+        正确行为：这是"想看更多型号"，**不能重置需求**，也不能重问已经答过的字段。
+        """
+        from src.memory.store import memory
+        from src.rag.session_switch import detect_requirement_reset
+
+        session_id = "more-options-no-reset"
+        memory.clear(session_id)
+        try:
+            slot_profile = _profile(
+                environment="indoor", purpose="church", installation="fixed",
+                viewing_distance_m=5, target_width_mm=3000, target_height_mm=5000,
+            )
+            decision = detect_requirement_reset(
+                message,
+                requirements=dict(CHURCH_REQUIREMENTS),
+                profile=slot_profile,
+                recommended=True,
+            )
+            assert decision.should_reset is False, decision.to_dict()
+        finally:
+            memory.clear(session_id)
+
+    @pytest.mark.parametrize("message", [
+        "我要换一款产品",
+        "I want a different product",
+        "算了重新来",
+        "start over",
+    ])
+    def test_real_switch_still_resets(self, message):
+        """反向保证：真要换产品 / 重新来，仍然必须重置（不能一刀切不重置）。"""
+        from src.rag.session_switch import detect_requirement_reset
+
+        decision = detect_requirement_reset(
+            message,
+            requirements=dict(CHURCH_REQUIREMENTS),
+            profile=_profile(environment="indoor", purpose="church", viewing_distance_m=5),
+            recommended=True,
+        )
+        assert decision.should_reset is True, decision.to_dict()
+
+    def test_more_options_turn_keeps_requirements(self):
+        """整轮行为：客户说"你还能给我推荐其他的吗？"→ 不清需求、不重问、按现有参数再推荐。
+
+        实测 bug：这一轮被当成"换产品"，回复里出现 "Understood, let me re-check your
+        requirements for this one."，接着又把 indoor / 尺寸重问一遍。
+        """
+        from src.memory.store import memory
+
+        session_id = "more-options-keeps"
+        memory.clear(session_id)
+        try:
+            memory.add(session_id, "user", "3*5 indoor church, 5m, fixed")
+            memory.add(
+                session_id, "assistant",
+                "For your 3x5m indoor church screen, the TW11-3216-P3.0 fits well.",
+            )
+            memory.set_requirements(session_id, dict(CHURCH_REQUIREMENTS))
+            memory.set_requirement_profile(
+                session_id,
+                _profile(
+                    environment="indoor", purpose="church", installation="fixed",
+                    viewing_distance_m=5, target_width_mm=3000, target_height_mm=5000,
+                ),
+            )
+            memory.mark_recommendation_done(session_id, [{"model": "TW11-3216-P3.0"}])
+
+            graph = _StubGraph(response="Here are two more options for the same 3x5m indoor setup.")
+            runner = self._runner(graph)
+            result = runner.run(session_id, "你还能给我推荐其他的吗？")
+
+            assert graph.seen_state["requirements_reset"] is False
+            assert graph.seen_state["requirements"] == CHURCH_REQUIREMENTS
+            assert result["requirements_reset"] is False
+            assert not any(result["response"].startswith(ack) for ack in RESET_ACKS["en"])
+            assert memory.get_requirements(session_id) == CHURCH_REQUIREMENTS
+        finally:
+            memory.clear(session_id)
 
     def _runner(self, graph):
         from src.agents.sales.runner import SalesAgentRunner

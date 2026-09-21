@@ -121,13 +121,13 @@ class TestScriptGeneratorDeliveryBranch:
             "pending_slot": "environment",
         }
 
-    def test_delivery_question_is_answered_and_question_kept(self):
+    def test_delivery_question_is_answered_without_forced_question(self):
         from src.agents.sales.nodes.script_generator import script_generator
 
         out = script_generator(self._state("你们多久能发货？"))
         reply = out["response"]
         assert "15" in reply and "30" in reply, reply
-        assert "indoors or outdoors" in reply, reply      # 仍然继续问缺失项
+        assert "indoors or outdoors" not in reply, reply   # v2.5++++ 计划 §16.5：answer_only，不硬塞需求问题
         assert out["next_action"] == "ask"
 
     def test_install_month_is_acknowledged(self):

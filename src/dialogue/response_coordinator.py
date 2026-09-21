@@ -148,6 +148,19 @@ class ResponseCoordinator:
         question = str(sales_result.get("pending_question") or "")
         if not question:
             return answer
+        # v2.5++++（计划 §9 / §16.4 / §16.5）：Dialogue Policy 说"这一轮只回答"时，
+        # 不追加需求问题 —— 客户问价格 / 交期，答完就是答完，别硬塞问卷题。
+        try:
+            from .policy import should_append_requirement_question
+
+            profile = self._profile(session_id)
+            if not should_append_requirement_question(message, profile):
+                logger.info(
+                    "[DialoguePolicy] answer_only：本轮回答客户后不再追加需求问题"
+                )
+                return answer
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[DialoguePolicy] 判定失败，按原口径追加：%s", exc)
         try:
             from src.rag.reply_composer import compose_requirement_reply, reply_language
 

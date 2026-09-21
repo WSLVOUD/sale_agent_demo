@@ -47,11 +47,34 @@ def _with_retry(func: Callable[..., T]) -> Callable[..., T]:
     return wrapper
 
 
+def _tracked_invoke(instance, base_invoke, input, config=None, **kwargs):
+    """v2.5++++（计划 §15）：所有 LLM 调用统一记账（每次调用都算一次）。
+
+    实测问题：一轮里打了多次 DeepSeek，日志却 `llm_calls=0` —— 只有手工 ++ 的
+    那一处被统计。这里把统计放到**唯一调用入口**，Sales 图内部的调用也能算上。
+    """
+    from src.observability.llm_tracker import get_llm_tracker, track_usage
+
+    tracker = get_llm_tracker()
+    model_name = str(getattr(instance, "model_name", "") or getattr(instance, "model", "") or "")
+    with tracker.track(model=model_name) as record:
+        response = base_invoke(input, config=config, **kwargs)
+        track_usage(record, response)
+        return response
+
+
 class RetryableChatOpenAI(ChatOpenAI):
     """带重试能力的 ChatOpenAI。超时走基类 timeout，避免写入未声明字段。"""
 
     def invoke(self, input, config=None, **kwargs):
-        return _with_retry(super().invoke)(input, config=config, **kwargs)
+        return _tracked_invoke(self, _with_retry(super().invoke), input, config=config, **kwargs)
+
+
+class TrackedChatOpenAI(ChatOpenAI):
+    """不带重试，但同样记账。"""
+
+    def invoke(self, input, config=None, **kwargs):
+        return _tracked_invoke(self, super().invoke, input, config=config, **kwargs)
 
 
 def get_llm(
@@ -78,4 +101,4 @@ def get_llm(
     }
     if use_retry:
         return RetryableChatOpenAI(**kwargs)
-    return ChatOpenAI(**kwargs)
+    return TrackedChatOpenAI(**kwargs)

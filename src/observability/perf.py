@@ -48,6 +48,7 @@ class PerfTracker:
 
     def summary(self) -> Dict[str, Any]:
         """Build a structured perf summary dict."""
+        stats = self._llm_stats()
         return {
             "session_id": self.session_id,
             "route": self.route,
@@ -56,8 +57,31 @@ class PerfTracker:
             "total_latency_ms": round(self.total_ms, 1),
             "sales_latency_ms": round(self._span("_start", "sales_done"), 1),
             "solution_latency_ms": round(self.latency("sales_done"), 1),
-            "llm_calls": self.llm_calls,
+            # v2.5++++（计划 §15）：LLM 调用数由 LLMCallTracker 统一记账，
+            # 手工 ++ 的计数只在没有登记簿时兜底（避免再出现"实际调了多次却 llm_calls=0"）
+            "llm_calls": max(self.llm_calls, getattr(stats, "calls", 0)),
+            "llm_latency_ms": round(getattr(stats, "latency_ms", 0.0), 1),
+            "llm_tokens": getattr(stats, "total_tokens", 0),
+            "llm_errors": getattr(stats, "errors", 0),
             "final_products": self.final_products,
             "first_contact_intro": getattr(self, "first_contact_intro", ""),
             "first_contact_messages": getattr(self, "first_contact_messages", []),
         }
+
+    def _llm_stats(self):
+        """本轮（或刚结束的这一轮）的 LLM 统计。"""
+        try:
+            from .llm_tracker import get_llm_tracker
+
+            tracker = get_llm_tracker()
+            current = tracker.current_turn()
+            if current is not None:
+                return current.stats()
+            stats = tracker.last_turn()
+            if stats is not None and (
+                not self.session_id or stats.session_id == self.session_id
+            ):
+                return stats
+        except Exception as exc:  # pragma: no cover - 统计失败不影响业务
+            logger.warning("LLM stats unavailable: %s", exc)
+        return None

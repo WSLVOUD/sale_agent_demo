@@ -525,6 +525,17 @@ def script_generator(state: SalesState) -> SalesState:
     )
     if delivery_reply:
         pending = str(state.get("pending_question") or "")
+        # v2.5++++（计划 §16.5）：客户问交期 → 先答交期，**不得无理由追加**需求问题
+        try:
+            from ....dialogue.policy import should_append_requirement_question
+
+            if not should_append_requirement_question(
+                current_message_text, state.get("requirement_profile")
+            ):
+                pending = ""
+                logger.info("[DialoguePolicy] answer_only：交期问题本轮不追加需求问题")
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[DialoguePolicy] 判定失败：%s", exc)
         state["response"] = _natural_reply(
             state,
             answer=delivery_reply,
@@ -656,10 +667,21 @@ def script_generator(state: SalesState) -> SalesState:
                 answer = _answer_objection_like(state, current_message)
 
             pending_question = str(state.get("pending_question") or "")
+            # v2.5++++（计划 §9）：客户问价格 → 先答价格口径，**不**硬塞需求问题
+            try:
+                from ....dialogue.policy import should_append_requirement_question
+
+                if not should_append_requirement_question(
+                    current_message, state.get("requirement_profile")
+                ):
+                    pending_question = ""
+                    logger.info("[DialoguePolicy] answer_only：价格/交期问题本轮不追加需求问题")
+            except Exception as exc:  # pragma: no cover - 防御式
+                logger.warning("[DialoguePolicy] 判定失败：%s", exc)
             state["response"] = _natural_reply(
                 state,
                 answer=answer,
-                question=str(state.get("pending_question") or ""),
+                question=pending_question,
                 slot=str(state.get("pending_slot") or ""),
                 allow_ack=False,
                 business_goal="answer the customer's question, then continue collecting",

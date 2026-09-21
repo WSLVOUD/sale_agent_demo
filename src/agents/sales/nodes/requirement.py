@@ -209,6 +209,9 @@ _USAGE_KEYWORDS: tuple[tuple[str, str], ...] = (
 # 客户明确要求"再推荐 / 报价 / 下单"（这种即便已经推荐过也应重新给方案）
 _EXPLICIT_RECO_REQUEST_RE = re.compile(
     r"推荐|帮我选|再选|换一款|换个型号|其他型号|别的型号|还有别的|其他方案|报价|报价单|价格表|下单|采购|"
+    # v2.5++++：客户说"和刚刚一样的参数 / same as before" → 按现有需求再推荐一次，
+    # 不要因为"这轮没给新信息"就去追问已经答过的字段
+    r"和刚刚一样|跟刚刚一样|和之前一样|一样的参数|同样的参数|照刚才的|same as before|same specs|same parameters|"
     r"\b(?:recommend|suggest|quote|quotation|proposal|price list|another model|other options?|"
     r"alternative|come back with|proceed)\b",
     re.IGNORECASE,
@@ -934,6 +937,29 @@ ack 的写法（很重要，销售不能只会追问）：
             decision.missing, decision.unknown_slots,
         )
         current_intent = str(state.get("intent") or "")
+
+        # ── v2.5++++（计划 §6/§7）：识别客户这一轮"在做什么" + 政策决定 ──────
+        # 只做记录与观测：业务判定仍然交给下面的 Gate / QuestionFlow（口径不变）。
+        try:
+            from ....dialogue import decide_speech_policy
+
+            policy_bundle = decide_speech_policy(
+                str(current_msg_text or ""),
+                profile=profile,
+                ready_to_recommend=bool(decision.ready),
+                session_id=_session_id,
+            )
+            state["speech_act"] = policy_bundle["speech_act"]
+            state["dialogue_action"] = policy_bundle["dialogue_action"]
+            logger.info(
+                "[SpeechAct] act=%s questions=%s → action=%s (priority=%s)",
+                policy_bundle["speech_act"].get("speech_act"),
+                policy_bundle["speech_act"].get("customer_questions"),
+                policy_bundle["dialogue_action"].get("action"),
+                policy_bundle["dialogue_action"].get("priority_label"),
+            )
+        except Exception as exc:  # pragma: no cover - 观测失败不影响业务
+            logger.warning("Speech act detection failed: %s", exc)
 
         # ── v2.4：提问顺序随机化 + "一轮走完再回头问硬性条件" ────────────────
         # 客户口径（2026-09-20）：

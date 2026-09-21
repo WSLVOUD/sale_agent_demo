@@ -79,6 +79,16 @@ _MORE_OPTIONS_GUARDS = (
     r"(?:看看|看下|瞧瞧)(?:别的|其他|其它)",
     r"(?:再|多)推荐",
     r"多看(?:几)?(?:款|个)",
+    # 实测 bug：客户说"你还能给我推荐其他的吗？"被当成"换产品" → 清空需求重问。
+    # 下面这几条覆盖"推荐 + 其他/别的/更多"的常见口语顺序（中间可以有 能/给我/再）。
+    r"(?:还|再|又|多)?(?:能|可以|能不能|可不可以)?(?:帮我|给我|帮忙)?(?:再)?推荐"
+    r"[^。！？?]{0,8}?(?:其他|其它|别的|别款|更多|几款|几个|另一款)",
+    r"(?:还有|有没有|有)[^。！？?]{0,4}(?:其他|其它|别的|更多)"
+    r"[^。！？?]{0,8}?(?:推荐|型号|方案|选择|款|屏|吗|么)",
+    r"其他(?:的)?(?:推荐|型号|方案|选择|款式)",
+    r"\b(?:recommend|suggest|show)\s+(?:me\s+)?(?:others?|more|some\s+more|additional)\b",
+    r"\b(?:any|some|more|other)\s+(?:other\s+)?(?:options?|models?|choices?|suggestions?|alternatives?)\b",
+    r"\bothers?\s+(?:please|too)\b",
     r"\b(?:any|anything|something)\s+else\b",
     r"\bmore\s+(?:options|models|products|choices|recommendations)\b",
     r"\bother\s+(?:options|models|products|choices|recommendations)\b",
@@ -90,7 +100,15 @@ _MORE_OPTIONS_GUARDS = (
 # 注意：这个判断要**优先于**强重置信号，因为 "另(?:外|…)" 也会命中强信号。
 _OTHER_MODEL_REQUEST_RE = re.compile(
     r"(?:另外|再|又|还)(?:帮我|给我|帮忙)?(?:再)?推荐(?:一|几|两)?(?:款|个|种|台)"
-    r"|\b(?:recommend|suggest)\s+(?:me\s+)?(?:another|one more|a different)\b",
+    # 客户口语："你还能给我推荐其他的吗 / 还能再推荐几款吗 / 推荐点别的"
+    r"|(?:还|再|又|多)?(?:能|可以|能不能|可不可以)?(?:帮我|给我|帮忙)?(?:再)?推荐"
+    r"[^。！？?]{0,8}?(?:其他|其它|别的|别款|更多|几款|几个|另一款)"
+    r"|(?:还有|有没有|有)[^。！？?]{0,4}(?:其他|其它|别的|更多)"
+    r"[^。！？?]{0,8}?(?:推荐|型号|方案|选择|款)"
+    r"|\b(?:recommend|suggest)\s+(?:me\s+)?(?:another|one more|a different)\b"
+    # 英文："can you recommend others / any other options / more models"
+    r"|\b(?:recommend|suggest|show)\s+(?:me\s+)?(?:others?|more|some\s+more|additional)\b"
+    r"|\b(?:any|some|more|other)\s+(?:other\s+)?(?:options?|models?|choices?|suggestions?|alternatives?)\b",
     re.IGNORECASE,
 )
 

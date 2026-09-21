@@ -572,10 +572,15 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
     try:
         # v2.5：多条消息合成一个 turn（含 message_id 幂等）
         merged_text, request_images = _merge_turn_request(request)
+        _parts = list(getattr(request, "messages", None) or [])
         result = orchestrator.process_message(
             message=merged_text,
             session_id=request.session_id,
             images=request_images or None,
+            # v2.5++++（计划 §15）：把"这一轮由几条消息聚合而来"告诉编排器，
+            # 日志里就能看到 messages=3 aggregated=true
+            message_count=len(_parts) or 1,
+            aggregated=len(_parts) > 1,
         )
         # 记录成功
         fallback_manager.record_success("chat")

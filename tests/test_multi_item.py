@@ -385,7 +385,7 @@ class TestMultiScreenReplySurvivesSanitizer:
         from src import api
 
         class _StubOrchestrator:
-            def process_message(self, message, session_id, images=None):
+            def process_message(self, message, session_id, images=None, **kwargs):
                 return {
                     "response": TestMultiScreenReplySurvivesSanitizer.MULTI_REPLY,
                     "requirements": {"outdoor": True, "location_type": "室外"},
