@@ -2,7 +2,7 @@
 
 > 基于大模型（DeepSeek）的 LED/LCD/IFP 全品类显示产品智能销售助手，采用多 Agent 协作 + 混合检索（RAG）架构，为销售团队提供实时产品推荐和技术咨询能力。
 
-> **当前版本：v2.5+（2026-09-21）** ｜ 全量测试：`python -m pytest tests/ -q` → **1427 passed, 4 skipped**
+> **当前版本：v2.5++（2026-09-21）** ｜ 全量测试：`python -m pytest tests/ -q` → **1446 passed, 4 skipped**
 >
 > 当前行为口径集中在下面「当前行为口径」一节；历史版本的逐条变更见文末「变更明细」。
 
@@ -95,11 +95,38 @@ Phase 2 复问（一轮走完之后）
          要 4K 的话屏幕需要做到 4.8m × 2.7m（标准尺寸），
          或者保持这个尺寸接受 AxB。"
 客户没提分辨率 → 不做任何分辨率约束，按默认推荐
+
+分辨率优先于"视距推点间距"（v2.5++）
+    · 客户没锁死 P 值时：视距/环境推出来的点间距区间**只当倾向**，
+      不再把"能拼到 4K 的更细点间距"一票否决
+      （实测 bug：室内 5m → P3.0 以上，把 P0.7 能达标的型号整个挡掉）
+    · 客户把 P 值定死了 → 不偷偷换，直接告诉他做不到 + 需要多细 / 多大
+
+尺寸 "x × y" 不区分哪边是宽（v2.5++）
+    · 客户说 "3*5" 时不再追问哪个是高哪个是宽，也不再只按一种摆法算
+    · 两种摆法 × 箱体横拼/竖拼 一共四种几何都算，哪种能拼到客户要的分辨率就按哪种
+      （实测：3m×5m 要 4K → 按 5m 作宽，P1.2 正好 3840×2160）
 ```
 
 实现位置：`src/engineering/resolution.py`（`MEETS_OR_EXCEEDS`）、
+`src/engineering/screen_geometry.py`（`size_orientations`）、
 `src/engineering/feasibility.py`（`check_feasibility` / `check_model_feasibility`）、
-`src/rag/recommendation_coordinator.py`（把结论话术透出给客户）。
+`src/rag/recommendation_engine.py`（`resolution_driven_pitch`）、
+`src/rag/recommendation_coordinator.py`（把结论话术与摆法透出给客户）。
+
+### 0c. 硬性条件问过就不再问（v2.5++）
+
+```text
+客户回答过"室内/户外" → 档案里就是"客户确认"，任何轮次都不会再问一遍：
+    · 关键词命中（indoor / 室内…）        → 客户明说
+    · 语义模型读出且带客户原话证据        → 客户明说
+    · 客户正在回答这一问（哪怕只有一个词）→ 直接采信（不再要求"证据片段"）
+    · 客户已经被问过这一项、档案里已有值   → 一律不再重复问
+客户从没说过、系统只是猜的 → 仍然会跟他确认一次（这条口径不变）
+```
+
+实现位置：`src/core/requirement_extractor.py`（`_merge_extractions` / Step 6）、
+`src/rag/readiness.py`（`_environment_settled`）。
 
 ### 1. 架构收敛（v2.3 / v2.3.1）
 
@@ -242,6 +269,7 @@ RequirementProfile（唯一事实源）
 
 | 版本 | 内容 |
 |---|---|
+| v2.5++ | 分辨率优先于视距点间距（客户没锁死 P 值时，视距区间只当倾向，不再挡掉能拼到 4K 的细点间距）；尺寸 "x×y" 不区分宽高，两种摆法 × 横拼/竖拼四种几何取最优；"室内/户外"答过就不再重复问（含"只答一个词"和语义模型带证据的情形） |
 | v2.5+ | 分辨率口径调整：一律按"屏体大约能达到"处理（不再区分输入/屏体、不再提澄清问题）；达到或超过目标即算可行；连最细点间距也达不到时直接告诉客户需要的标准尺寸或降低分辨率，不再输出自相矛盾的提问 |
 | v2.5 | 多条消息聚合成一个 UserTurn（**前端已接入**：连续发送先聚合再一次性请求；debounce / 幂等 / 会话锁）；DialogueAction + ResponseContext（话术不再像问卷，附 7 项话术指标）；分辨率需求（INPUT/DISPLAY/UNKNOWN）+ 实际拼接分辨率 + Resolution Fit + Engineering Feasibility（不可绕过） |
 | v2.4 | 提问顺序随机化（会话种子、可复现）+ 问过/没答不再重复 + 一轮走完复问硬性条件（附"为什么需要知道"）+ 客户明确要推荐才立即推荐 |

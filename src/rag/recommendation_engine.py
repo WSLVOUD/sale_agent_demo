@@ -184,6 +184,17 @@ class RecommendationEngine:
                 }
 
         technical = infer_technical_parameters(profile.to_facts())
+        # 【客户口径 2026-09-21】客户明确要了分辨率（4K…）又没锁死点间距 →
+        # 点间距以"能不能拼到目标分辨率"为准：视距推出来的区间只是倾向，
+        # 不能把更细的点间距一票否决（见 _violation 里的 resolution_driven_pitch）。
+        resolution_target = _resolution_target(profile)
+        if resolution_target and profile.pixel_pitch_mm is None:
+            technical["resolution_driven_pitch"] = True
+            technical["resolution_target"] = list(resolution_target)
+            logger.info(
+                "[Resolution] 分辨率优先：目标 %sx%s → 不限制点间距下限（视距区间仅作倾向）",
+                resolution_target[0], resolution_target[1],
+            )
         # v2.1 Phase 7：客户授权 AI 决定点间距 → 由环境 + 观看距离 / 场景偏好确定性推导
         # （绝不让 LLM 猜一个 P 值当事实）
         if profile.is_delegated("pixel_pitch"):
@@ -238,6 +249,27 @@ class RecommendationEngine:
                     "型号 %s 不在产品库，已放宽为 系列=%s / 点间距≈%s",
                     constraints.model, relaxed.series_id, profile.pixel_pitch_mm,
                 )
+        # 【客户口径 2026-09-21】客户明确要了分辨率 → 先只留"尺寸上真能拼到目标分辨率"
+        # 的型号（否则更粗点间距的型号会靠打分排到前面，把能达标的型号挤出 Top-K）。
+        if technical.get("resolution_driven_pitch") and candidates:
+            capable = []
+            for model in candidates:
+                try:
+                    from src.engineering import check_model_feasibility
+
+                    check = check_model_feasibility(profile, model)
+                except Exception:  # pragma: no cover - 防御式
+                    check = {"applicable": False}
+                if not check.get("applicable") or check.get("acceptable"):
+                    capable.append(model)
+            if capable and len(capable) < len(candidates):
+                logger.info(
+                    "[Resolution] 分辨率优先：%d/%d 个型号在目标尺寸上能拼到目标分辨率",
+                    len(capable), len(candidates),
+                )
+            if capable:
+                candidates = capable
+
         scored = sorted(
             (self._score(model, profile, technical) for model in candidates),
             key=lambda item: (
@@ -386,6 +418,11 @@ class RecommendationEngine:
         if c.pixel_pitch_min is None and c.pixel_pitch_max is None:
             band_min = technical.get("pixel_pitch_min_mm")
             band_max = technical.get("pixel_pitch_max_mm")
+            # 【客户口径 2026-09-21】客户明确要了分辨率（4K…）时，点间距必须先满足
+            # 分辨率：视距/环境推出来的区间只是"倾向"，不能把"能拼到 4K 的更细点间距"
+            # 一票否决掉（实测 bug：3×5m 要 4K，P0.7 的型号被"室内 5m → P3 以上"挡掉）。
+            if technical.get("resolution_driven_pitch") and band_min is not None:
+                band_min = None
             if band_min is not None and pitch < float(band_min) - 1e-6:
                 return f"点间距 {pitch}mm 低于该距离/环境的推荐下限 {band_min}mm"
             if band_max is not None and pitch > float(band_max) + 1e-6:
@@ -540,6 +577,19 @@ class RecommendationEngine:
         breakdown: Dict[str, Optional[float]],
     ) -> List[str]:
         reasons: List[str] = []
+        # 【客户口径 2026-09-21】客户明确要了分辨率 → 话术里说清"为什么用更细的点间距"。
+        # 有尺寸时，达不到目标分辨率的型号在推荐出口已经被剔掉，所以这里可以据此说明。
+        resolution_target = _resolution_target(profile)
+        if (
+            resolution_target
+            and profile.pixel_pitch_mm is None
+            and profile.target_width_mm
+            and profile.target_height_m
+        ):
+            reasons.append(
+                f"{model.pixel_pitch_mm}mm pitch so the screen reaches about "
+                f"{resolution_target[0]}x{resolution_target[1]} pixels"
+            )
         if (breakdown.get("pitch") or 0) >= 0.8:
             reasons.append(f"pixel pitch {model.pixel_pitch_mm}mm matches the viewing distance")
         if profile.environment == "outdoor" and model.waterproof:
@@ -559,6 +609,27 @@ class RecommendationEngine:
 
 
 # ── 打分辅助 ────────────────────────────────────────────────────────────────
+def _resolution_target(profile: Any) -> Optional[Tuple[int, int]]:
+    """客户的分辨率目标（有才返回）—— 用于"分辨率优先决定点间距"。"""
+    requirement = getattr(profile, "resolution_requirement", None)
+    if isinstance(requirement, dict) and requirement:
+        width = requirement.get("target_width")
+        height = requirement.get("target_height")
+        if width and height:
+            return int(width), int(height)
+    raw = str(getattr(profile, "resolution_raw", "") or "")
+    if raw:
+        try:
+            from src.engineering import parse_resolution
+
+            parsed = parse_resolution(raw)
+            if parsed and parsed.target:
+                return parsed.target
+        except Exception:  # pragma: no cover - 防御式
+            return None
+    return None
+
+
 def _band_fit(value: float, low: Optional[float], high: Optional[float]) -> float:
     """值落在 [low, high] 内得 1.0，越界按相对距离线性衰减（最低 0）。"""
     if low is None or high is None:

@@ -628,6 +628,16 @@ def _environment_settled(profile: Any) -> bool:
         return False
     if _is_confirmed(profile, "environment"):
         return True
+    # v2.5+ 修复：客户已经被问过这一项、而且档案里确实有值 —— 就不再重复问。
+    # 实测 bug：客户答了"室内"，系统还追着问"室内还是室外"（因为那次回答落档时
+    # 来源不够硬）。环境只可能来自"客户说的"或"场景判定的"（EnvironmentResolver
+    # 不会给系统默认值），问过一次拿到值就该算数；客户真要改，后面说"户外的"
+    # 会被 conflict 检测接住。
+    try:
+        if profile.ask_count("environment") >= 1:
+            return True
+    except Exception:  # pragma: no cover - 防御式
+        pass
     if not _is_confirmed(profile, "purpose"):
         return False
     try:

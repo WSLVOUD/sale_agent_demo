@@ -203,6 +203,7 @@ class RecommendationCoordinator:
             from src.models.product import CanonicalModel  # noqa: F401  (类型提示)
 
             keep = []
+            checks_by_model: Dict[str, Dict[str, Any]] = {}
             for item in result.get("recommendations") or []:
                 model = self._model_by_name(str(item.get("model") or ""))
                 if model is None:
@@ -210,6 +211,7 @@ class RecommendationCoordinator:
                     continue
                 check = check_model_feasibility(profile, model)
                 resolution_checks.append(check)
+                checks_by_model[str(getattr(model, "model", ""))] = check
                 if not check.get("applicable") or check.get("acceptable"):
                     keep.append(item)
                 else:
@@ -219,6 +221,12 @@ class RecommendationCoordinator:
                     )
             if keep:
                 result["recommendations"] = keep
+                # 客户口径（2026-09-21）："x × y" 不区分哪边是宽 —— 把可行性层挑出来的
+                # 摆法透传给表达层，让箱体 / 尺寸数字跟可行性判断一致。
+                top_check = checks_by_model.get(str(keep[0].get("model") or ""))
+                if top_check and top_check.get("applicable"):
+                    result["size_orientation"] = top_check.get("orientation") or "as_given"
+                    result["size_layout"] = top_check.get("layout")
             else:
                 outcome = RecommendationOutcome(
                     status=REJECTED,

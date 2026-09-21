@@ -146,7 +146,15 @@ class RequirementExtractor:
         logger.debug(f"LLM extraction: {llm_result}")
 
         # Step 4: 合并结果（规则优先，LLM 作补充）
-        merged_slots = self._merge_extractions(rule_slots, llm_result, message)
+        # 【修复】把"上一轮问的是哪一项"传下去：客户正在回答的那一项，
+        # 语义模型给的值就算**客户本人说的**（短回答往往没有可引用的"原话片段"，
+        # 旧实现会因为缺少证据把答案丢掉 → 于是同一个问题被反复问）。
+        expected_slot = ""
+        if previous_profile is not None:
+            expected_slot = str(getattr(previous_profile, "last_asked_slot", "") or "")
+        merged_slots = self._merge_extractions(
+            rule_slots, llm_result, message, expected_slot=expected_slot
+        )
         logger.debug(f"Merged slots: {merged_slots}")
 
         # Step 5: Purpose 标准化
@@ -177,7 +185,18 @@ class RequirementExtractor:
             for marker in ("_inferred_slots", "_default_slots", "_scenario_derived")
             for x in (rule_slots.get(marker) or [])
         }
-        rule_env_is_explicit = "environment" in rule_slots and "environment" not in rule_env_markers
+        # 【修复】环境是否"客户明说"不能只看规则层：
+        #   · 规则层命中室内/室外关键词            → 客户明说
+        #   · 语义模型给出环境且带客户原话证据      → 客户明说（_merge_extractions 已校验证据）
+        #   · 客户正在回答"室内还是室外"这一问      → 客户明说（_merge_extractions 已放行并标记）
+        # 旧实现忽略后两种，一律降级成 inferred，导致"客户说了室内还被追着问室内外"。
+        merged_explicit_keys = {
+            str(item) for item in (merged_slots.get("_explicit_keys") or set())
+        }
+        rule_env_is_explicit = (
+            ("environment" in rule_slots and "environment" not in rule_env_markers)
+            or "environment" in merged_explicit_keys
+        )
         explicit_env = merged_slots.get("environment")
 
         resolved_env, env_priority = EnvironmentResolver.resolve(
@@ -415,6 +434,7 @@ class RequirementExtractor:
         rule_slots: Dict[str, Any],
         llm_result: Dict[str, Any],
         message: str = "",
+        expected_slot: str = "",
     ) -> Dict[str, Any]:
         """
         合并规则提取和 LLM 提取的结果。
@@ -429,6 +449,13 @@ class RequirementExtractor:
         """
         merged = dict(rule_slots)
         semantic_conflicts: List[str] = []
+
+        # 【v2.5+ 修复】客户正在回答我们上一轮问的那一项时，短回答（"indoor" /
+        # "permanent"）常常没有可引用的"原话片段"；此时语义模型的答案是客户本人说的，
+        # 直接采信 —— 否则答案被丢掉，同一个问题会被反复问。
+        from src.models.requirement import canonical_slot
+
+        expected = canonical_slot(expected_slot) if expected_slot else ""
 
         for key, value in llm_result.items():
             if key.endswith("_evidence"):
@@ -459,11 +486,18 @@ class RequirementExtractor:
                 continue
             if key in ("environment", "installation"):
                 evidence = llm_result.get(f"{key}_evidence")
-                if not self._evidence_ok(message, evidence):
+                answers_missing_slot = bool(
+                    expected and canonical_slot(key) == expected
+                )
+                if not self._evidence_ok(message, evidence) and not answers_missing_slot:
                     logger.info(
                         "Dropping LLM %s=%r — 缺少客户原话证据", key, value
                     )
                     continue
+                if answers_missing_slot:
+                    logger.info(
+                        "LLM %s=%r 直接采信（客户正在回答上一轮问的这一项）", key, value,
+                    )
             merged[key] = value
             if key in ("purpose", "environment", "installation", "display_type"):
                 merged.setdefault("_explicit_keys", set()).add(key)

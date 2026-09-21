@@ -62,6 +62,7 @@ from .screen_geometry import screen_dims_m, screen_size_for_distance, suggest_sc
 from .screen_geometry import (
     actual_pixel_resolution,
     min_achievable_deviation,
+    size_orientations,
     stitching_geometry,
 )
 from .resolution import (
@@ -148,6 +149,7 @@ __all__ = [
     "required_pitch_mm",
     "screen_dims_m",
     "screen_size_for_distance",
+    "size_orientations",
     "standard_size_for_resolution",
     "stitching_geometry",
     "min_achievable_deviation",

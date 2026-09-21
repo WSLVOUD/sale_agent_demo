@@ -27,6 +27,7 @@ from .resolution import (
     parse_resolution,
 )
 from .screen_geometry import actual_pixel_resolution, min_achievable_deviation
+from .screen_geometry import size_orientations
 
 FEASIBLE = "FEASIBLE"
 NEED_ADJUSTMENT = "NEED_ADJUSTMENT"
@@ -208,25 +209,25 @@ def check_feasibility(
     # ② 尺寸已知 + 知道目录最细点间距：
     #    先看"这个尺寸的物理极限（最细 P 值）能不能大约达到" —— 达不到就没救，
     #    直接告诉客户要多大尺寸 / 要多细的点间距 / 或者降低分辨率。
+    #    客户口径：x×y 不区分哪边是宽，两种摆法都算，取更好的那种。
     if width_mm and height_mm and finest_pitch_mm:
-        ceiling = actual_pixel_resolution(
-            actual_width_mm=width_mm,
-            actual_height_mm=height_mm,
-            pixel_pitch_mm=float(finest_pitch_mm),
-        )
-        if ceiling:
-            best = fit_resolution(
-                target, ceiling, tolerance=tolerance, min_achievable_deviation=deviation
+        ceiling_best = _pick_best_option(
+            _ideal_ceiling_options(
+                width_mm, height_mm, float(finest_pitch_mm), target, tolerance, deviation
             )
-            result.resolution_result = best
+        )
+        if ceiling_best:
+            ceiling = ceiling_best["resolution"]
+            result.resolution_result = ceiling_best["fit"]
             result.achievable_resolution = ceiling
             result.geometry_result = {
                 "target_resolution": list(target),
                 "target_size_mm": [round(width_mm, 1), round(height_mm, 1)],
                 "finest_pitch_mm": float(finest_pitch_mm),
                 "best_resolution_at_this_size": list(ceiling),
+                "target_orientation": ceiling_best["orientation"],
             }
-            if not best.acceptable:
+            if not ceiling_best["fit"].acceptable:
                 standard = standard_size_for_resolution(target, finest_pitch_mm)
                 if standard and standard[0] > MAX_USEFUL_STANDARD_WIDTH_M:
                     standard = None
@@ -235,7 +236,8 @@ def check_feasibility(
                 result.standard_size_m = standard
                 result.required_pitch_mm = required_pitch_mm(target, width_mm, height_mm)
                 result.message = _size_too_small_message(
-                    target, ceiling, width_mm, height_mm, standard
+                    target, ceiling, width_mm, height_mm, standard,
+                    orientation=ceiling_best["orientation"],
                 )
                 result.alternatives = _size_alternatives(ceiling, standard)
                 result.notes.append("这个尺寸（即使最细点间距）达不到客户要的分辨率")
@@ -309,9 +311,18 @@ def _size_too_small_message(
     width_mm: float,
     height_mm: float,
     standard: Optional[Tuple[float, float]],
+    orientation: str = "as_given",
 ) -> str:
+    if orientation == "swapped":
+        # 客户口径：x×y 不区分哪边是宽，这里说清是"按哪边做宽"算的
+        size_text = (
+            f"{width_mm / 1000:.2f}m x {height_mm / 1000:.2f}m "
+            f"(taking the {height_mm / 1000:.2f}m side as the width)"
+        )
+    else:
+        size_text = f"{width_mm / 1000:.2f}m x {height_mm / 1000:.2f}m"
     text = (
-        f"A {width_mm / 1000:.2f}m x {height_mm / 1000:.2f}m screen tops out at about "
+        f"A {size_text} screen tops out at about "
         f"{achievable[0]}x{achievable[1]} pixels, even with our finest pitch, so this size "
         f"can't reach {target[0]}x{target[1]}."
     )
@@ -405,77 +416,146 @@ def check_model_feasibility(
     if min(width_mm, height_mm, cabinet_w, cabinet_h, pitch) <= 0:
         return {"applicable": False, "reason": "缺少尺寸 / 箱体 / 点间距信息"}
 
-    # 横拼与竖拼（旋转 90°）两种排布都算一遍，取更接近目标分辨率的那种 ——
-    # 客户口径：尺寸可以横着拼也可以竖着拼，两种都要能算。
-    layouts = _model_layouts(width_mm, height_mm, cabinet_w, cabinet_h, pitch)
-    best_key, best = min(layouts.items(), key=lambda item: item[1]["rank"])
     target = requirement.target
     module_px = _module_pixels(
         getattr(model, "module_width_mm", None),
         getattr(model, "module_height_mm", None),
         pitch,
     )
-    fit = fit_resolution(
-        target, best["resolution"], tolerance=requirement.tolerance,
-        min_achievable_deviation=min_achievable_deviation(
-            target_width_px=target[0], target_height_px=target[1],
-            module_width_px=module_px[0], module_height_px=module_px[1],
-        ),
+    deviation = min_achievable_deviation(
+        target_width_px=target[0], target_height_px=target[1],
+        module_width_px=module_px[0], module_height_px=module_px[1],
     )
+    # 客户口径（2026-09-21）："x × y" 不区分哪边是宽，两种摆法都算；
+    # 箱体又能横拼 / 竖拼（旋转 90°）→ 一共四种几何，取最能满足目标分辨率的那种。
+    options = [
+        _fit_option(option, target, requirement.tolerance, deviation)
+        for option in _geometry_options(width_mm, height_mm, cabinet_w, cabinet_h, pitch)
+    ]
+    best = _pick_best_option(options)
+    if best is None:
+        return {"applicable": False, "reason": "缺少尺寸 / 箱体 / 点间距信息"}
     return {
         "applicable": True,
         "model": getattr(model, "model", ""),
+        "orientation": best["orientation"],
+        "layout": best["layout"],
         "geometry": best["geometry"],
-        "best_layout": best_key,
-        "layouts": {key: value["geometry"] for key, value in layouts.items()},
-        "resolution_fit": fit.to_dict(),
-        "acceptable": fit.acceptable,
+        "resolution_fit": best["fit"].to_dict(),
+        "acceptable": best["fit"].acceptable,
+        "options": [
+            {
+                "orientation": option["orientation"],
+                "layout": option["layout"],
+                "geometry": option["geometry"],
+                "fit_level": option["fit"].fit_level,
+            }
+            for option in options
+        ],
     }
 
 
-def _model_layouts(
+def _geometry_options(
     width_mm: float,
     height_mm: float,
     cabinet_w: float,
     cabinet_h: float,
     pitch: float,
-) -> Dict[str, Dict[str, Any]]:
-    """横拼 / 竖拼（箱体旋转 90°）两种排布的实际尺寸与像素分辨率。"""
-    layouts: Dict[str, Dict[str, Any]] = {}
-    for key, (box_w, box_h) in (
-        ("landscape", (cabinet_w, cabinet_h)),
-        ("portrait", (cabinet_h, cabinet_w)),
-    ):
-        columns = max(1, int(width_mm // box_w))
-        rows = max(1, int(height_mm // box_h))
-        actual_w = columns * box_w
-        actual_h = rows * box_h
-        resolution = actual_pixel_resolution(
-            actual_width_mm=actual_w, actual_height_mm=actual_h, pixel_pitch_mm=pitch
+) -> List[Dict[str, Any]]:
+    """摆法（客户报的 x×y 两种）× 拼法（箱体横拼 / 竖拼）的全部几何组合。
+
+    客户口径（2026-09-21）：客户说 "3*5" 时不用管哪边是高哪边是宽 ——
+    两种摆法都算，哪种能拼到目标分辨率就用哪种。
+    """
+    options: List[Dict[str, Any]] = []
+    for orientation, option_width, option_height in size_orientations(width_mm, height_mm):
+        for layout, (box_w, box_h) in (
+            ("landscape", (cabinet_w, cabinet_h)),
+            ("portrait", (cabinet_h, cabinet_w)),
+        ):
+            columns = max(1, int(option_width // box_w))
+            rows = max(1, int(option_height // box_h))
+            actual_w = columns * box_w
+            actual_h = rows * box_h
+            options.append({
+                "orientation": orientation,
+                "layout": layout,
+                "resolution": actual_pixel_resolution(
+                    actual_width_mm=actual_w, actual_height_mm=actual_h, pixel_pitch_mm=pitch
+                ),
+                "geometry": {
+                    "columns": columns,
+                    "rows": rows,
+                    "actual_width_mm": round(actual_w, 1),
+                    "actual_height_mm": round(actual_h, 1),
+                    "target_orientation": orientation,
+                    "layout": layout,
+                },
+            })
+    return options
+
+
+def _fit_option(
+    option: Dict[str, Any],
+    target: Tuple[int, int],
+    tolerance: Optional[float],
+    deviation: Optional[float],
+) -> Dict[str, Any]:
+    """给一种几何算"离目标分辨率有多近"。"""
+    fit = fit_resolution(
+        target, option.get("resolution"), tolerance=tolerance,
+        min_achievable_deviation=deviation,
+    )
+    return {**option, "fit": fit}
+
+
+def _ideal_ceiling_options(
+    width_mm: float,
+    height_mm: float,
+    pitch_mm: float,
+    target: Tuple[int, int],
+    tolerance: Optional[float],
+    deviation: Optional[float],
+) -> List[Dict[str, Any]]:
+    """不按箱体取整的"物理天花板"：两种摆法各能拼到多少像素。"""
+    options: List[Dict[str, Any]] = []
+    for orientation, option_width, option_height in size_orientations(width_mm, height_mm):
+        pixels = actual_pixel_resolution(
+            actual_width_mm=option_width,
+            actual_height_mm=option_height,
+            pixel_pitch_mm=float(pitch_mm),
         )
-        rank = _layout_rank(resolution)
-        layouts[key] = {
-            "columns": columns,
-            "rows": rows,
-            "actual_width_mm": round(actual_w, 1),
-            "actual_height_mm": round(actual_h, 1),
-            "resolution": resolution,
-            "rank": rank,
-            "geometry": {
-                "columns": columns,
-                "rows": rows,
-                "actual_width_mm": round(actual_w, 1),
-                "actual_height_mm": round(actual_h, 1),
+        if not pixels:
+            continue
+        options.append(_fit_option(
+            {
+                "orientation": orientation,
+                "layout": "ideal",
+                "resolution": pixels,
+                "geometry": {
+                    "actual_width_mm": round(option_width, 1),
+                    "actual_height_mm": round(option_height, 1),
+                    "target_orientation": orientation,
+                },
             },
-        }
-    return layouts
+            target, tolerance, deviation,
+        ))
+    return options
 
 
-def _layout_rank(resolution: Optional[Tuple[int, int]]) -> float:
-    """横拼 / 竖拼两种排布的排序键：像素总数越多越好（越接近/超过目标越稳）。"""
-    if not resolution:
-        return 0.0
-    return -float(resolution[0]) * float(resolution[1])
+def _pick_best_option(options: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """挑最能满足目标分辨率的几何：先看能不能达标，再看偏差谁更小。"""
+    usable = [option for option in options if option.get("fit") is not None]
+    if not usable:
+        return None
+    return min(
+        usable,
+        key=lambda option: (
+            0 if option["fit"].acceptable else 1,
+            max(option["fit"].horizontal_deviation, option["fit"].vertical_deviation),
+            -(option.get("resolution") or (0, 0))[0] * (option.get("resolution") or (0, 0))[1],
+        ),
+    )
 
 
 __all__ = [

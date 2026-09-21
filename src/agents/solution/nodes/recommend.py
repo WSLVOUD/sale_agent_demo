@@ -592,6 +592,19 @@ def recommend_node(state: SolutionState) -> SolutionState:
                 target_width_mm = profile.target_width_mm
                 target_height_mm = profile.target_height_mm
 
+            # 客户口径（2026-09-21）：客户报 "x × y" 时不区分哪边是宽 ——
+            # 可行性层已经挑出"哪个方向能拼到客户要的分辨率"，这里按它换边计算，
+            # 保证回复里的箱体数 / 实际尺寸与可行性判断一致。
+            if (
+                str(selection.get("size_orientation") or "") == "swapped"
+                and target_width_mm and target_height_mm
+            ):
+                target_width_mm, target_height_mm = target_height_mm, target_width_mm
+                logger.info(
+                    "[Orientation] 按客户报的尺寸换边计算：%.2fm 作宽、%.2fm 作高",
+                    target_width_mm / 1000, target_height_mm / 1000,
+                )
+
             # 客户口径：箱体可以横拼也可以竖拼 → 两种排布都给客户
             calculation_variants = calculate_screen_variants(
                 recommendations[0]["model"],

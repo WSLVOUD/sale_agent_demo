@@ -131,6 +131,25 @@ def actual_pixel_resolution(
     return width_px, height_px
 
 
+def size_orientations(width_mm: float, height_mm: float) -> Tuple[Tuple[str, float, float], ...]:
+    """客户报的 "x × y" 尺寸的两种摆法（**不区分哪一边是宽**）。
+
+    客户口径（2026-09-21）：
+        客户说 "3*5" 时不要再追问"哪个是宽哪个是高" —— 两种摆法都算，
+        哪种摆法能拼到客户要的分辨率就按哪种（做屏本来就是可以横着装也可以竖着装）。
+
+    返回 ``(("as_given", x, y), ("swapped", y, x))``；正方形只返回一种。
+    """
+    width = float(width_mm or 0)
+    height = float(height_mm or 0)
+    if min(width, height) <= 0:
+        return ()
+    options = [("as_given", width, height)]
+    if abs(width - height) > 1e-6:
+        options.append(("swapped", height, width))
+    return tuple(options)
+
+
 def min_achievable_deviation(
     *,
     target_width_px: int,
@@ -156,6 +175,7 @@ __all__ = [
     "min_achievable_deviation",
     "screen_dims_m",
     "screen_size_for_distance",
+    "size_orientations",
     "stitching_geometry",
     "suggest_screen_size",
 ]
