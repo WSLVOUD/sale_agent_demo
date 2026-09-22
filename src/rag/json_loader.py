@@ -254,10 +254,195 @@ def canonical_model_to_document(
 
 
 def load_model_documents(data_dir: str) -> list[Document]:
-    """Phase 2 语料：每个 Model 一个 Document，Series 作为 metadata。"""
+    """Phase 2 语料：每个 Model 一个 Document，Series 作为 metadata。
+
+    客户口径（2026-09-22）：LCD / IFP 也要进向量库 —— 以前这里只展开 LED，
+    客户上传了 LCD/IFP 产品资料后它们在库里检索不到（只有 LED 56 条）。
+    现在 LED 走 CanonicalModel，LCD/IFP 走下面同一套 Model 级 metadata。
+    """
     models = load_canonical_models(data_dir)
     documents = [canonical_model_to_document(m) for m in models]
-    logger.info("Built %d model-level documents", len(documents))
+    led_count = len(documents)
+    extra = non_led_model_documents(data_dir)
+    if extra:
+        documents.extend(extra)
+        logger.info(
+            "Built %d model-level documents（LED %d + LCD/IFP %d）",
+            len(documents), led_count, len(extra),
+        )
+    else:
+        logger.info("Built %d model-level documents", len(documents))
+    return documents
+
+
+# ── LCD / IFP 的 Model 级语料（2026-09-22）─────────────────────────────────
+def _display_metadata(
+    *,
+    model: str,
+    series_id: str,
+    series: str,
+    display_type: str,
+    environment: str = "indoor",
+    brightness_nit: Optional[int] = None,
+    features: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """非 LED 产品共用的 metadata（键与 LED 的 Model 级语料保持一致）。
+
+    注意：点间距 / 模组 / 箱体这些 LED 专有字段**不写**（不留编造的默认值）；
+    ``modules_per_cabinet`` 是向量库校验要求的键，非 LED 用 0 表示"不适用"。
+    """
+    indoors = environment in ("indoor", "室内")
+    meta: dict[str, Any] = {
+        # 身份
+        "chunk_id": f"model-{model}",
+        "level": "model",
+        "model": model,
+        "product_id": model,
+        "series_id": series_id,
+        "series": series,
+        "display_type": display_type,
+        # 硬约束
+        "environment": environment,
+        "indoor": indoors,
+        "outdoor": not indoors,
+        "installation": "fixed",
+        "is_rental": False,
+        # 亮度
+        "brightness_nit": brightness_nit or 0,
+        "brightness_min_cd": brightness_nit or 0,
+        "brightness_max_cd": brightness_nit or 0,
+        # 非 LED：没有模组/箱体概念
+        "modules_per_cabinet": 0,
+        "gob": False,
+        "flexible": False,
+        "warranty_years": 1,
+        "features": _clean_metadata_value(features or []),
+        # 系统字段
+        "environment_metadata_version": ENVIRONMENT_METADATA_VERSION,
+        "product_category": "display",
+        "source": "canonical_json",
+    }
+    return meta
+
+
+def _lcd_text(product: "LCDProduct", model: str) -> str:
+    """LCD 型号的检索文本（只写资料里有的事实）。"""
+    parts = [
+        f"{model} | {product.series} | LCD | {'indoor' if 'indoor' in product.environment else 'outdoor'}",
+        f"size={product.display_size_inch}",
+        f"resolution={product.resolution}",
+        f"brightness={product.brightness_nit}nit",
+        f"contrast={product.contrast_ratio}",
+        f"operation={product.operation_hours}",
+        f"lifespan={product.service_life_hours}h",
+        "splicing-video-wall" if product.is_splicing else "single-display",
+    ]
+    if product.bazel_mm:
+        parts.append(f"bezel={product.bazel_mm}")
+    if product.power_consumption_w:
+        parts.append(f"power={product.power_consumption_w}W")
+    if product.features:
+        parts.append("features: " + ", ".join(product.features))
+    return " | ".join(part for part in parts if part)
+
+
+def _lcd_model_document(product: "Product", lcd: "LCDProduct") -> Document:
+    """一个 LCD 型号（尺寸档）= 一条 Model 级文档。"""
+    model = product.product_id
+    metadata = _display_metadata(
+        model=model,
+        series_id=product.product_id,
+        series=product.series,
+        display_type="LCD",
+        environment="indoor" if "indoor" in product.environment else "outdoor",
+        brightness_nit=lcd.brightness_nit,
+        features=list(product.features or []) + list(lcd.features or []),
+    )
+    metadata.update({
+        "display_size_inch": lcd.display_size_inch,
+        "resolution": lcd.resolution,
+        "bazel_mm": lcd.bazel_mm or "",
+        "operation_hours": lcd.operation_hours,
+        "service_life_hours": lcd.service_life_hours,
+        "is_splicing": lcd.is_splicing,
+        "contrast_ratio": lcd.contrast_ratio,
+    })
+    return Document(page_content=_lcd_text(lcd, model), metadata=metadata)
+
+
+def _ifp_text(product: "IFPProduct", model: str, size_inch: str) -> str:
+    parts = [
+        f"{model} | {product.series} | IFP interactive flat panel | indoor",
+        f"size={size_inch}",
+        f"resolution={product.resolution}",
+        f"system={product.system}",
+        f"touch={product.touch_points}-point",
+        f"memory={product.memory}",
+        f"wifi={product.wifi}",
+    ]
+    if product.features:
+        parts.append("features: " + ", ".join(product.features))
+    return " | ".join(part for part in parts if part)
+
+
+def _ifp_model_documents(product: "Product", ifp: "IFPProduct") -> list[Document]:
+    """IFP：每个尺寸型号一条 Model 级文档（没有 sub_models 时退回系列一条）。"""
+    sub_models = list(ifp.sub_models or [])
+    if not sub_models:
+        metadata = _display_metadata(
+            model=product.product_id,
+            series_id=product.product_id,
+            series=product.series,
+            display_type="IFP",
+            environment="indoor" if "indoor" in product.environment else "outdoor",
+            features=list(product.features or []),
+        )
+        metadata.update({
+            "system": ifp.system,
+            "touch_points": ifp.touch_points,
+            "memory": ifp.memory,
+            "wifi": ifp.wifi,
+        })
+        return [
+            Document(
+                page_content=_ifp_text(ifp, product.product_id, ""),
+                metadata=metadata,
+            )
+        ]
+
+    documents: list[Document] = []
+    for sub in sub_models:
+        metadata = _display_metadata(
+            model=sub.model,
+            series_id=product.product_id,
+            series=product.series,
+            display_type="IFP",
+            environment="indoor" if "indoor" in product.environment else "outdoor",
+            features=list(product.features or []),
+        )
+        metadata.update({
+            "system": ifp.system,
+            "touch_points": ifp.touch_points,
+            "memory": ifp.memory,
+            "wifi": ifp.wifi,
+            "display_size_inch": sub.size_inch,
+            "has_camera_mic": bool(sub.has_camera_mic),
+            "resolution": ifp.resolution,
+        })
+        documents.append(
+            Document(page_content=_ifp_text(ifp, sub.model, sub.size_inch), metadata=metadata)
+        )
+    return documents
+
+
+def non_led_model_documents(data_dir: str) -> list[Document]:
+    """LCD / IFP 的 Model 级文档（LED 继续走 CanonicalModel）。"""
+    documents: list[Document] = []
+    for product in load_structured_products(data_dir):
+        if product.lcd_data is not None:
+            documents.append(_lcd_model_document(product, product.lcd_data))
+        elif product.ifp_data is not None:
+            documents.extend(_ifp_model_documents(product, product.ifp_data))
     return documents
 
 

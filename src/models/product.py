@@ -343,7 +343,9 @@ class LCDProduct(BaseModel):
     brightness_nit: int = Field(..., description="亮度（cd/m²）", ge=100, le=3000)
     contrast_ratio: str = Field(..., description="对比度，如 1200:1")
     display_size_inch: str = Field(..., description="屏幕尺寸，如 55\"")
-    bazel_mm: str = Field(..., description="拼缝（边框）宽度，如 1.8mm")
+    bazel_mm: Optional[str] = Field(
+        None, description="拼缝（边框）宽度，如 1.8mm；单体显示器（非拼接）可为空"
+    )
     resolution: str = Field(..., description="分辨率，如 3840x2160@60Hz")
     panel_brand: Optional[str] = Field(None, description="面板品牌，如 LG、BOE")
     operation_hours: str = Field(..., description="支持运行时长，如 7x24h")
@@ -369,8 +371,9 @@ class IFPSubModel(BaseModel):
     """IFP 交互平板具体型号。"""
     model: str = Field(..., description="完整型号名")
     size_inch: str = Field(..., description="尺寸，如 65\"")
-    applicable_area_sqm: str = Field(..., description="适用面积，如 15-20m²")
-    price_usd: float = Field(..., description="单价（美元）")
+    # 客户口径：资料里没有的字段**不编**（留空即可），下面两个字段允许缺省
+    applicable_area_sqm: Optional[str] = Field(None, description="适用面积，如 15-20m²")
+    price_usd: Optional[float] = Field(None, description="单价（美元）")
     has_camera_mic: bool = Field(False, description="是否含摄像头/麦克风")
 
 

@@ -20,7 +20,7 @@
 | 增强记忆（EnhancedMemoryStore + CustomerProfile + Summary） | ✅ 已完成 |
 | 可观测性（PerfTracker + 可选 Langfuse） | ✅ 已完成 |
 | 评估体系（Golden Dataset + 自动评测） | ✅ 已完成 |
-| Model 级产品数据与语料（56 Model / 12 Series） | ✅ 已完成 |
+| Model 级产品数据与语料（87 Model / 35 Series：56 LED + 21 LCD + 10 IFP） | ✅ 已完成 |
 | 推荐就绪 Gate（Recommendation Ready Gate） | ✅ 已完成 |
 | 计算就绪 Gate（Calculation Ready Gate） | ✅ 已完成 |
 | 确定性推荐引擎（Recommendation Engine） | ✅ 已完成 |
@@ -189,6 +189,24 @@ target_width_mm → 环境、安装方式、尺寸全丢。
 
 > 回归测试：`tests/dialogue/test_others_context.py`（提示词带语境 / 已确认需求完整 /
 > legacy 字典被识别 / 占位符被替换）。
+
+### 0a++++. LCD / IFP 也进 Model 级语料（2026-09-22）
+
+```text
+data/LCD display.txt（客户资料，IFP 混在 LCD 里）
+    → data/lcd_products.json   21 个 LCD 型号：P 系列单屏 8 / B 系列拼接 7 / P TM 触摸 6
+    → data/ifp_products.json   Omni G4/G4C + Omni K4/K4C，10 个型号（按尺寸拆成 Model 级）
+    → 向量库 Model 级语料 87 条 = 56 LED + 21 LCD + 10 IFP（35 个 Series）
+```
+
+- 资料里没有的字段一律留空（IFP 的价格 / 适用面积、单体显示器的拼缝），**不编数据**
+- `src/rag/json_loader.py` 新增非 LED 的 Model 级文档构建：与 LED 共用同一套 metadata
+  （`level=model` / `indoor,outdoor` / `display_type` / `environment_metadata_version` …），
+  但**不写**点间距 / 模组 / 箱体这些 LED 专有字段
+- 推荐引擎目前仍然只吃 LED 的 `CanonicalModel`（LCD/IFP 先供检索问答用）；
+  要让 LCD/IFP 也能被"推荐"，是下一步的事
+- 重建：`python init_vectorstore.py`（或直接启动服务，启动自检发现条数不符会自动重建）
+- 回归：`tests/test_api_http.py`（`record_count=87`、`lcd_records=21`、`ifp_records=10`）
 
 ### 0. 提问顺序与节奏（v2.4）
 
@@ -1757,6 +1775,9 @@ led-rag-system/
 ├── data/                             # 产品数据源
 │   ├── LED display.txt               # LED 屏原始规格数据
 │   ├── led_products.json             # LED 产品结构化数据（ProductFilter 用）
+│   ├── LCD display.txt               # LCD / IFP 原始规格数据（同一份资料）
+│   ├── lcd_products.json             # LCD 结构化数据（21 个型号）
+│   ├── ifp_products.json             # IFP 结构化数据（Omni G4/G4C、K4/K4C，10 个型号）
 │   ├── company_profile.txt           # 公司与销售人员信息配置
 │   ├── first_contact/                # 首次客户接待素材目录
 │   │   ├── README.md               # 素材配置说明

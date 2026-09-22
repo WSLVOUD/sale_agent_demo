@@ -28,12 +28,23 @@ def build_retrieval_corpus(data_dir: str | None = None) -> List[Document]:
         # 数据缺失时给出明确错误，避免静默退回 Series 级语料造成"看起来还能跑"
         raise RuntimeError(
             f"未能在 {data_dir} 构建 Model 级语料；请先运行 "
-            f"`python -m src.rag.json_loader --validate` 检查 led_products.json"
+            f"`python -m src.rag.json_loader --validate` 检查产品 JSON"
         )
-    models = load_canonical_models(data_dir)
-    series_count = len({m.series_id for m in models})
+    # Series 数按语料里的 metadata 统计（LED + LCD + IFP 都算）
+    series_count = len(
+        {
+            doc.metadata.get("series_id")
+            for doc in documents
+            if doc.metadata.get("series_id")
+        }
+    )
+    by_type: Dict[str, int] = {}
+    for doc in documents:
+        key = str(doc.metadata.get("display_type") or "?")
+        by_type[key] = by_type.get(key, 0) + 1
     logger.info(
-        "检索语料就绪：%d 个 Model / %d 个 Series（Model 级）", len(documents), series_count
+        "检索语料就绪：%d 个 Model / %d 个 Series（Model 级）%s",
+        len(documents), series_count, by_type,
     )
     return documents
 
