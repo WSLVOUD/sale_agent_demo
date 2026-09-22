@@ -100,7 +100,22 @@ def classify(state: SalesState) -> SalesState:
 
 只返回意图类型，不要其他内容。""")
 
-    response = llm.invoke([prompt, HumanMessage(content=message)])
+    # 客户口径（2026-09-21）：不能只看当前这一句 —— 带上最近 50 条对话，
+    # 让模型结合上下文判断"这句话到底在做什么"（回答？提问？要推荐？）。
+    conversation = ""
+    try:
+        from ....memory.history_window import dialogue_window_text
+
+        conversation = dialogue_window_text(str(state.get("session_id") or ""))
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("History window unavailable for classify: %s", exc)
+
+    human_content = (
+        f"最近的对话（越靠下越新）：\n{conversation}\n\n客户最新一句：{message}"
+        if conversation
+        else message
+    )
+    response = llm.invoke([prompt, HumanMessage(content=human_content)])
     intent = response.content.strip().lower()
 
     logger.info(f"Classified intent: {intent}")

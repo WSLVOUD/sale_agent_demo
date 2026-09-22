@@ -101,6 +101,7 @@ NATIVE_SYSTEM_PROMPT = (
     "- rephrase the required question completely, as long as it still asks for\n"
     "  exactly the same thing\n"
     "- vary sentence order, length and tone from turn to turn\n"
+    "- continue the conversation from the recent messages you are given\n"
     "\n"
     "You are NOT required to:\n"
     "- acknowledge every customer message\n"
@@ -120,6 +121,7 @@ NATIVE_SYSTEM_PROMPT = (
     "Do not force phrases such as:\n"
     "\"Got it\", \"Thanks\", \"Based on that\", \"By the way\", \"So\", \"That said\".\n"
     "Do not open two turns in a row with the same kind of phrasing.\n"
+    "Never repeat a question or a fact that is already in the recent conversation.\n"
     "\n"
     "Ask no more than one question.\n"
     "That question must be about the same topic as \"Question to ask\" —\n"
@@ -387,6 +389,7 @@ def build_context(
     question_slot: str = "",
     question_intent: str = "",
     recent_questions: Optional[List[str]] = None,
+    recent_dialogue: str = "",
     why: str = "",
     answer: str = "",
     recommendation: Optional[dict] = None,
@@ -418,6 +421,7 @@ def build_context(
         question_slot=question_slot,
         question_intent=question_intent,
         recent_questions=list(recent_questions or []),
+        recent_dialogue=str(recent_dialogue or ""),
         why=why,
         answer=answer,
         opening=opening,

@@ -1,6 +1,8 @@
 """requirement_mining node - progressive requirement mining."""
 import logging
 import re
+from typing import Any, Dict, Optional
+
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -333,6 +335,34 @@ def _is_product_or_business_question(message: str, *, last_asked_slot: str = "")
         return False
 
 
+def is_offtopic_message(
+    message: str,
+    *,
+    rule_slots: Optional[Dict[str, Any]] = None,
+    semantic_payload: Optional[Dict[str, Any]] = None,
+    usage: str = "",
+    last_asked_slot: str = "",
+) -> bool:
+    """客户这句话是不是**与需求无关**（闲聊 / 寒暄 / 题外话）。
+
+    客户口径（2026-09-22）：判定要看"这句话在语境里是不是在聊需求"，
+    **不是**关键词匹配、也不是"有没有回答上一问"：
+
+        · 语境里的语义理解（LLM 抽取出的需求字段 semantic_payload）+ 规则解析
+          （viewing distance / size / pitch / environment …）里有任何一项 → 有关；
+        · 客户问的是产品 / 规格 / 价格 / 交期 / 公司信息 → 有关（要正面回答）；
+        · 其它（"haha i am in nairobi" / "nice weather"）→ 无关，只承接。
+
+    返回 True 表示"这一句是闲聊" —— 收口层据此决定只承接还是接住 + 追问
+    （见 ``src/dialogue/continuation_budget.py``）。
+    """
+    if rule_slots or semantic_payload or usage:
+        return False
+    return not _is_product_or_business_question(
+        str(message or ""), last_asked_slot=last_asked_slot
+    )
+
+
 def _ack_temperature() -> float:
     from ....config import config as _config
 
@@ -476,20 +506,32 @@ def requirement_mining(state: SalesState) -> SalesState:
         base_url="https://api.deepseek.com"
     )
     
-    # Build conversation context (last 3 messages)
-    # 需求重置（客户换产品 / 换项目）时只看本轮这句话：
-    # 否则上一轮的"教堂 / 室内"会被 LLM 当成当前需求再提取回来，等于没清空。
+    # 对话上下文：客户口径（2026-09-21）—— 带上最近 50 条以内的会话记忆
+    # （之前只给 6 条，客户换个说法或前面说过的事实，模型都看不见）。
+    # 需求重置（客户换产品 / 换项目）时只看本轮这句话：否则上一轮的"教堂 / 室内"
+    # 会被 LLM 当成当前需求再提取回来，等于没清空。
     if state.get("requirements_reset"):
-        conversation = f"user: {state.get('current_message', '')}"
+        conversation = f"客户: {state.get('current_message', '')}"
     else:
-        parts = []
-        for msg in state["messages"][-6:]:
-            role, content = _message_role_content(msg)
-            if not content:
-                continue
-            label = "user" if role in ("user", "human") else "assistant"
-            parts.append(f"{label}: {content}")
-        conversation = "\n".join(parts[-6:])
+        conversation = ""
+        try:
+            from ....memory.history_window import dialogue_window_text
+
+            conversation = dialogue_window_text(str(state.get("session_id") or ""))
+        except Exception as _exc:  # pragma: no cover - 防御式
+            logger.warning("History window unavailable for requirement mining: %s", _exc)
+        if not conversation:
+            parts = []
+            for msg in state["messages"][-6:]:
+                role, content = _message_role_content(msg)
+                if not content:
+                    continue
+                label = "user" if role in ("user", "human") else "assistant"
+                parts.append(f"{label}: {content}")
+            conversation = "\n".join(parts[-6:])
+        current = str(state.get("current_message", "") or "").strip()
+        if current and current not in conversation:
+            conversation = f"{conversation}\n客户: {current}".strip()
     
     # 回应语言必须跟系统策略一致：默认策略是"永远英文"，但下面的提示词是中文写的，
     # 模型很容易顺手用中文回一句（实测出现过
@@ -518,7 +560,19 @@ def requirement_mining(state: SalesState) -> SalesState:
   "installation": "fixed / rental —— **只有客户明确说了安装方式才填**（permanent、fixed、rental、temporary、租赁），否则 null",
   "installation_evidence": "填 installation 时给出客户原话里的原样片段（例如 'rental'）；没填时给空字符串",
   "additional_requirements": ["用户明确提出的、无法归入场景的特殊要求，如'租赁'、'防水'、'高刷新率'"],
-  "ack": "一句话自然回应客户这句话本身；没有可回应的内容时返回空字符串"
+  "ack": "一句话自然回应客户这句话本身；没有可回应的内容时返回空字符串",
+  "size": "客户说过的屏体尺寸原话，如 '5m x 10m' / '3米x5米'；客户没说过则 null",
+  "size_evidence": "逐字引用客户说到尺寸的片段（例如 '5m x 10m wall'）；没填 size 时给空字符串",
+  "pixel_pitch": "客户说过的点间距，如 'P3' / '3mm'；没说过则 null",
+  "pixel_pitch_evidence": "逐字引用客户说到点间距的片段；没填时给空字符串",
+  "viewing_distance": "客户说过的观看距离，如 'about 5m' / '十步开外'；没说过则 null",
+  "viewing_distance_evidence": "逐字引用客户说到观看距离的片段；没填时给空字符串",
+  "price_preference": "price / quality / both —— 客户说'便宜点/别太贵/预算紧/keep the cost down'→price，'要最好效果/画质'→quality，'都行/无所谓'→both；没说过则 null",
+  "price_preference_evidence": "逐字引用客户表达价位取向的片段；没填时给空字符串",
+  "content_type": "video / image / mixed —— 客户说主要放什么内容；没说过则 null",
+  "content_type_evidence": "逐字引用客户说到内容的片段；没填时给空字符串",
+  "brightness": "客户说过的亮度要求原话；没说过则 null",
+  "brightness_evidence": "逐字引用客户说到亮度的片段；没填时给空字符串"
 }
 
 ack 的写法（很重要，销售不能只会追问）：
@@ -528,6 +582,18 @@ ack 的写法（很重要，销售不能只会追问）：
 2. 像真人销售顾问说话，一句话（最多两句），不要客套话堆砌，不要复述客户整句话。
 3. **禁止**编造任何技术参数、型号、价格、交期；不要说"根据资料/数据库/检索"。
 4. **禁止**在 ack 里提问（系统会另外接一个需求问题），也不要给推荐结论。
+
+【全字段理解（客户口径 2026-09-21）】
+5. 除了场景 / 室内外 / 安装方式，还要看**整段对话**里客户有没有说过：
+   尺寸 size、点间距 pixel_pitch、观看距离 viewing_distance、价位取向 price_preference、
+   内容类型 content_type、亮度 brightness。
+6. 这些字段**只有在客户明确说过时**才填（当前这句或前面聊过都算），并且**必须**
+   给出对应的 `_evidence`：**逐字**引用客户原话片段（不改写、不翻译、不自己造句）。
+   程序会校验该片段是否真的存在，编造的会被丢掉。
+7. 找不到客户原话证据 → 该字段写 null / 空字符串，**绝对不要猜测或推算**
+   （例如客户只说了教堂，不要补"尺寸大概是 3x5"）。
+8. 客户表达的是**偏好**（例如 "keep the cost down"、"别太贵"、"要最好的画质"）
+   → 记成 price_preference，不要理解成"客户在问价格"。
 5. 没有可回应内容（比如客户只回了一个词的数字）时，ack 返回 ""。
 6. 语言要求：""" + _ack_language_rule + """
 
@@ -594,6 +660,24 @@ ack 的写法（很重要，销售不能只会追问）：
         for key in ("purpose", "environment", "installation", "display_type"):
             if extracted.get(key) not in (None, "", []):
                 semantic_payload[key] = extracted[key]
+        # 2026-09-21：全字段理解（size / point pitch / viewing distance /
+        # price preference / content type / brightness）—— **必须带客户原话证据**，
+        # 证据由统一抽取器校验（必须是对话里真实存在的片段），数值再由确定性
+        # 解析器从那段原话里算出来；解析不出来就丢弃（绝不采用模型编的数）。
+        for key in (
+            "size",
+            "pixel_pitch",
+            "viewing_distance",
+            "price_preference",
+            "content_type",
+            "brightness",
+        ):
+            if extracted.get(key) in (None, "", []):
+                continue
+            semantic_payload[key] = extracted[key]
+            evidence = extracted.get(f"{key}_evidence")
+            if evidence:
+                semantic_payload[f"{key}_evidence"] = evidence
         for key in ("environment_evidence", "installation_evidence"):
             if extracted.get(key):
                 semantic_payload[key] = extracted[key]
@@ -621,23 +705,36 @@ ack 的写法（很重要，销售不能只会追问）：
             for k, v in (extract_slots(current_msg_text) or {}).items()
             if not str(k).startswith("_")
         }
-        # 客户这一轮是不是在"说需求"（哪怕是重复一遍）——用于区分
-        # "回答问题"（走自由问答）和"陈述需求"（重新按需求推荐）。
-        turn_states_requirement = bool(
-            any(_this_turn_slots.get(key) for key in _TURN_REQUIREMENT_KEYS)
-        ) or bool(semantic_payload) or bool((extracted or {}).get("usage"))
-        _provides_requirement = bool(_this_turn_slots) or bool(semantic_payload) or bool(
-            (extracted or {}).get("usage")
-        )
         # 只处理"与业务无关的话/闲聊"（哪怕它是问句，例如 "do u like watching TV series?"）。
         # 客户如果问的是产品/规格/价格/交期/公司信息，交给正常路径正面回答，
         # 不能当成无关话只回一句"接住"，也不能反过来倒一堆型号。
-        if not _provides_requirement and not _is_product_or_business_question(
+        # 判定放在 is_offtopic_message 里（纯函数，可离线回归）：
+        # 语境里的语义理解（semantic_payload）优先，其次才是规则解析。
+        if is_offtopic_message(
             current_msg_text,
-            last_asked_slot=str(getattr(profile, "last_asked_slot", "") or ""),
+            rule_slots=_this_turn_slots,
+            semantic_payload=semantic_payload,
+            usage=str((extracted or {}).get("usage") or ""),
+            # 这里在"需求抽取"之前执行，还没有局部变量 profile —— 用档案对象本身，
+            # 否则会抛 NameError 被吞掉（实测日志："Off-topic ack step failed:
+            # cannot access local variable 'profile'"）。
+            last_asked_slot=str(
+                getattr(state.get("requirement_profile"), "last_asked_slot", "") or ""
+            ),
         ):
             from ....rag.query_understanding import detect_language
 
+            # 客户口径（2026-09-22）：判定"这句话与需求无关"本身就是**意图判定**，
+            # 不能因为接话话术生成失败就丢掉这个结论 —— 收口层要用它决定
+            # "只承接" 还是 "接住 + 追问"（见 src/dialogue/continuation_budget.py）。
+            state["offtopic_turn"] = True
+            logger.info(
+                "Off-topic turn detected (no requirement info, not a business question)"
+            )
+            # 客户只是说了句无关的话：这一轮就是"接住这句话 + 继续问需求"，
+            # 不能绕到 Solution 的自由问答（否则会倒一堆型号和参数）。
+            state["intent"] = "need_query"
+            logger.info("Off-topic turn → keep requirement mining (intent=need_query)")
             _ack = _generate_offtopic_ack(
                 current_msg_text,
                 requirement=str(state.get("requirements") or ""),
@@ -646,11 +743,6 @@ ack 的写法（很重要，销售不能只会追问）：
             if _ack:
                 state["acknowledgement"] = _ack
                 logger.info("Off-topic ack (temp=%.1f): %s", _ack_temperature(), _ack)
-                # 客户只是说了句无关的话：这一轮就是"接住这句话 + 继续问需求"，
-                # 不能绕到 Solution 的自由问答（否则会倒一堆型号和参数）。
-                state["offtopic_turn"] = True
-                state["intent"] = "need_query"
-                logger.info("Off-topic turn → keep requirement mining (intent=need_query)")
     except Exception as exc:  # pragma: no cover - 防御式
         logger.warning("Off-topic ack step failed: %s", exc)
 
@@ -770,7 +862,39 @@ ack 的写法（很重要，销售不能只会追问）：
             semantic_override=semantic_payload or None,
             # 语义结果的缓存必须按会话隔离（否则会串到别的对话框）
             session_id=str(state.get("session_id") or ""),
+            # 证据校验用：LLM 抽的字段必须能在"当前消息或最近对话"里找到原话
+            context_text=conversation,
         )
+
+        # ── 理解留痕（客户口径 2026-09-21）────────────────────────────────
+        # 记录"这一轮理解到了什么、依据是客户哪句话"，便于事后查
+        # "为什么没记住这句话 / 为什么记住了"。
+        try:
+            _adopted = {
+                "size": bool(getattr(profile, "target_width_mm", None) or getattr(profile, "target_height_mm", None)),
+                "pixel_pitch": bool(getattr(profile, "pixel_pitch_mm", None)),
+                "viewing_distance": bool(getattr(profile, "viewing_distance_m", None)),
+                "price_preference": bool(getattr(profile, "price_preference", None)),
+                "content_type": bool(getattr(profile, "content_type", None)),
+                "brightness": bool(getattr(profile, "brightness_min", None)),
+            }
+            understanding = {}
+            for _key, _adopted_now in _adopted.items():
+                _value = semantic_payload.get(_key)
+                _evidence = semantic_payload.get(f"{_key}_evidence")
+                if _value in (None, "", [], {}) and not _evidence:
+                    continue
+                understanding[_key] = {
+                    "value": _value,
+                    "evidence": _evidence or "",
+                    "adopted": bool(_adopted_now),
+                    "source": "llm_evidence" if _adopted_now else "rejected",
+                }
+            if understanding:
+                state["understanding"] = understanding
+                logger.info("[Understanding] %s", understanding)
+        except Exception as _exc:  # pragma: no cover - 留痕失败不影响业务
+            logger.warning("understanding trace failed: %s", _exc)
 
         # ── 图片识别结果的确认（客户口径）───────────────────────────────────
         # 带图的那一轮我们已经把"图片里看到什么"说给客户听了；

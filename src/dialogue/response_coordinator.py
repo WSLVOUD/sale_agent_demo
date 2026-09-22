@@ -25,8 +25,15 @@ class ResponseCoordinator:
         self.last_guard: Any = None
 
     # ── 售后口径 ────────────────────────────────────────────────────────
-    def attach_service_faq(self, response: str, message: str) -> str:
-        """客户问到售后口径时**必须回答**（不主动提，尤其质保）。"""
+    def attach_service_faq(
+        self, response: str, message: str, *, already_answered: bool = False
+    ) -> str:
+        """客户问到售后口径时**必须回答**（不主动提，尤其质保）。
+
+        ``already_answered=True``：销售那一轮已经按标准口径答过了（由 LLM 自己组织
+        成一段话）→ 这里**不再前置**标准口径，只做"矛盾清洗"，避免同一段里说两遍、
+        甚至出现"我们不做现场安装 / 我们提供现场安装"这种自相矛盾。
+        """
         try:
             from src.rag.reply_composer import reply_language
             from src.rag.service_faq import (
@@ -40,6 +47,8 @@ class ResponseCoordinator:
             response = sanitize_service_reply(response, detect_service_faq(message))
         except Exception as exc:  # pragma: no cover - 防御式
             logger.warning("[ServiceFAQ] failed: %s", exc)
+            return response
+        if already_answered:
             return response
         if not answer or answer in str(response or ""):
             return response
@@ -79,13 +88,16 @@ class ResponseCoordinator:
         message: str = "",
         questions: Any = None,
         language: str = "en",
+        service_faq_answered: str = "",
     ) -> str:
         """固定顺序：售后口径 → 图片核对 → **FinalResponseGuard 收口**。
 
         v2.5+++（计划 §3）：Guard 是客户可见内容的**唯一最后一道**，
         保证一轮最多一个问题（多余的进下一轮）并把内部术语清掉。
         """
-        text = self.attach_service_faq(str(response or ""), message)
+        text = self.attach_service_faq(
+            str(response or ""), message, already_answered=bool(service_faq_answered)
+        )
         text = self.attach_vision_confirmation(text, session_id, message)
         guarded = self._guard().finalize(
             text, questions=questions, language=language

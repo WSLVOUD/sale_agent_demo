@@ -111,6 +111,15 @@ _INSTALLATION_CONTRADICTIONS = re.compile(
     r"\byes\b[^.!?]{0,40}\binstallation\b"
     r"(?!\s*(?:guide|manual|drawings?|instructions?|documents?))"
     r"[^.!?]{0,20}\b(?:included|provided|covered)\b|"
+    # 实测（2026-09-21）："Yes, we do provide installation." / "our team handles the
+    # on-site setup as part of the project." 都没被旧规则拦住 → 补上这些说法。
+    r"\bwe\s+(?:do\s+)?(?:provide|offer|arrange|handle|cover|include)\b"
+    r"[^.!?]{0,30}\binstallation\b"
+    r"(?!\s*(?:guide|manual|drawings?|instructions?|documents?))|"
+    r"\b(?:our team|we)\b[^.!?]{0,40}\b(?:handle|handles|take care of|takes care of|do|does)\b"
+    r"[^.!?]{0,30}\bon-?site\b|"
+    r"\bon-?site\s+(?:setup|install(?:ation)?)\b[^.!?]{0,30}"
+    r"\b(?:as part of|included|covered|provided)\b|"
     r"\binstallation\b(?!\s*(?:guide|manual|drawings?|instructions?|documents?))"
     r"[^.!?]{0,20}\b(?:is|will be|would be)\b[^.!?]{0,20}"
     r"\b(?:included|provided|covered|part of the (?:order|price|package))\b|"

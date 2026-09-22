@@ -67,9 +67,33 @@ def _answer_objection_like(state: SalesState, message: str) -> str:
         return "Got it, let me learn more about your needs."
     try:
         from ....rag.query_understanding import response_language_rule
+        from ....rag.model_guard import (
+            drop_conflicting_chunks,
+            requirement_lines,
+            retrieval_filters,
+            strip_environment_contradictions,
+            strip_model_mentions,
+        )
 
-        docs = sales_search.similarity_search(message, k=2)
+        # 客户口径（2026-09-21）：这条路径以前**既没有客户需求、也没有硬约束**，
+        # 于是客户是"室内教堂固装"，回答里却冒出 "outdoor … TW21-OD-P10"。
+        # 现在：① 按已确认需求过滤检索结果；② 把需求写进 prompt 且不许违背；
+        #       ③ 自由问答不给具体型号（型号只能由推荐链路给出）。
+        profile = state.get("requirement_profile")
+        filters = retrieval_filters(profile)
+        try:
+            docs = (
+                sales_search.similarity_search(message, k=4, filter=filters)
+                if filters
+                else sales_search.similarity_search(message, k=4)
+            )
+        except Exception:  # pragma: no cover - 老接口不支持 filter
+            docs = sales_search.similarity_search(message, k=4)
+        docs, dropped = drop_conflicting_chunks(list(docs or []), profile)
+        if dropped:
+            logger.info("[ModelGuard] 异议/自由问答检索丢掉 %d 条与需求相反的片段", dropped)
         reference_content = "\n\n".join([d.page_content for d in docs[:1]])
+        known = "\n".join(requirement_lines(profile))
         prompt = SystemMessage(content=f"""You are a sales advisor for LED and LCD display products, speaking with a customer face-to-face.
 
 Reference talking points (for reference only):
@@ -77,16 +101,30 @@ Reference talking points (for reference only):
 
 Customer says: {message}
 
+Confirmed customer requirements (must NOT be contradicted):
+{known or "- （还没有确认的需求）"}
+
 Requirements:
 1. Conversational and natural, like chatting with a friend
 2. Natural and conversational, 2-4 sentences (do not answer with one bare line)
 3. Plain text only, no markdown
 4. Never invent specifications, prices or model names
-5. {response_language_rule(reply_language(message))}
+5. Never mention any product model code in your reply — models are only given
+   in a formal recommendation step
+6. Never contradict the confirmed requirements above (for example: if the
+   customer is indoor, do not talk about outdoor cabinets)
+7. {response_language_rule(reply_language(message))}
 
 Reply directly:""")
         response = get_llm(temperature=0.3).invoke([prompt])
-        return response.content.strip()
+        text = response.content.strip()
+        text, removed_models = strip_model_mentions(text)
+        if removed_models:
+            logger.info("[ModelGuard] 自由问答里去掉型号：%s", removed_models)
+        text, removed_conflicts = strip_environment_contradictions(text, profile)
+        if removed_conflicts:
+            logger.info("[ModelGuard] 去掉与需求矛盾的说法：%s", removed_conflicts)
+        return text or "Let me keep this on track and answer that properly for you."
     except Exception as exc:  # pragma: no cover - 防御式
         logger.warning("Objection answer failed: %s", exc)
         return "Got it, let me learn more about your needs."
@@ -384,6 +422,94 @@ def _opening_for(state: SalesState, current_message: str, *, allow_ack: bool = T
         return str(state.get("acknowledgement") or "")
 
 
+# 客户已经聊过"交期 / 安装时间"的信号（聊过就不再追问）
+_DELIVERY_TIMING_RE = re.compile(
+    r"deliver|delivery|lead\s*time|timeline|schedule|when (?:do|would|will) you|"
+    r"install(?:ation)?\s*(?:date|time)|交期|货期|什么时候|多久(?:能|可以)?(?:到|发货|安装)|安装时间",
+    re.IGNORECASE,
+)
+
+
+# ── 报价请求（客户口径 2026-09-21）────────────────────────────────────────
+# 实测：客户已经拿到推荐（"TW11-3216-P3.0 … Shall I prepare the quotation?"），
+# 回了一句 "yes"，系统却又讲了一遍点间距、还端出另一批 COB 型号 ——
+# 客户要的是**报价表**，不是重新被推荐一遍。
+_QUOTATION_RE = re.compile(
+    r"报价|报价单|报价表|报个价|价格表|正式报价|quotation|quotation sheet|quote|"
+    r"price list|price sheet|send me (?:the )?(?:price|quote|quotation)|proposal",
+    re.IGNORECASE,
+)
+_AFFIRM_RE = re.compile(
+    r"^\s*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please do|go ahead|do it|please|"
+    r"好的|可以|行|要|是的|对|没问题|麻烦|请)\s*[.!。！]?\s*$",
+    re.IGNORECASE,
+)
+_QUOTATION_CONTEXT_RE = re.compile(
+    r"quotation|quote|price list|proposal|报价|价格表|明细",
+    re.IGNORECASE,
+)
+
+# 客户要报价时的确认话术（同一语义多种说法，按轮次轮换；LLM 会再自然化一遍）
+_QUOTATION_ACKS = (
+    "Sure — I'll put the quotation together and send it over right away.",
+    "Of course — give me a moment and I'll send the quotation over to you.",
+    "Happy to — I'm preparing the quotation now and will send it straight over.",
+    "Will do — the quotation is being put together and will follow shortly.",
+)
+
+
+def _last_assistant_text(state: SalesState) -> str:
+    """上一条 AI 说过的话（用于判断客户的 "yes" 是在同意什么）。"""
+    for item in reversed(state.get("messages") or []):
+        role = ""
+        content = ""
+        if isinstance(item, dict):
+            role = str(item.get("role") or item.get("type") or "")
+            content = str(item.get("content") or "")
+        else:  # pragma: no cover - LangChain 消息对象
+            role = str(getattr(item, "type", "") or "")
+            content = str(getattr(item, "content", "") or "")
+        if role in ("assistant", "ai") and content.strip():
+            return content.strip()
+    return ""
+
+
+def _wants_quotation(state: SalesState, message: str) -> bool:
+    """客户这一句是不是在"要报价 / 同意出报价"。
+
+    · 直接说报价（报价单 / quotation / send me the price list…）→ 是；
+    · 上一句 AI 刚问"要不要出报价"，客户回 "yes / 好的 / 可以" → 也是。
+    """
+    text = str(message or "").strip()
+    if not text:
+        return False
+    if _QUOTATION_RE.search(text):
+        return True
+    if _AFFIRM_RE.match(text):
+        previous = _last_assistant_text(state)
+        return bool(previous) and bool(_QUOTATION_CONTEXT_RE.search(previous))
+    return False
+
+
+def _delivery_timing_question(state: SalesState) -> str:
+    """服务类问题（安装 / 说明书 / 质保）答完后要接的那一句：期望交期。
+
+    客户口径（2026-09-21）：这一句由 **LLM 自己组织**（这里只给"要问什么"的锚点），
+    不硬拼、不追问无关内容；如果客户或前面的对话已经聊过交期，就不再问。
+    """
+    if _DELIVERY_TIMING_RE.search(str(state.get("current_message") or "")):
+        return ""
+    try:
+        from ....memory.history_window import dialogue_window_text
+
+        history = dialogue_window_text(str(state.get("session_id") or ""), max_items=50)
+    except Exception:  # pragma: no cover - 防御式
+        history = ""
+    if history and _DELIVERY_TIMING_RE.search(history):
+        return ""
+    return "When would you like the screen delivered and installed?"
+
+
 def _natural_reply(
     state: SalesState,
     *,
@@ -403,6 +529,7 @@ def _natural_reply(
     )
     from ....dialogue.grounded_facts import build_grounded_facts
     from ....rag.readiness import question_intent
+    from ....memory.history_window import dialogue_window_text
 
     current_message = str(state.get("current_message") or "")
     slot = slot or str(state.get("pending_slot") or "")
@@ -428,6 +555,10 @@ def _natural_reply(
         question_slot=slot,
         question_intent=question_intent(slot) if slot else "",
         recent_questions=_recent_question_list(state),
+        # 客户口径：话术也要带上会话记忆（最近 20 条够接上话题，避免过长的 prompt）
+        recent_dialogue=dialogue_window_text(
+            str(state.get("session_id") or ""), max_items=20
+        ),
         answer=answer,
         grounded_facts=grounded,
         pitch_resolution=state.get("pitch_resolution") or None,
@@ -494,6 +625,30 @@ def script_generator(state: SalesState) -> SalesState:
     
     # 检查是否需要抑制问候语（首次接待刚完成后）
     suppress_greeting = state.get("suppress_greeting", False)
+
+    # ── 报价请求（客户口径 2026-09-21）────────────────────────────────────
+    # 已经推荐过 + 客户要报价（或对"要不要出报价"回 yes）→ **只回一句
+    # "马上把报价发给你"**：不重新推荐、不换型号、不讲课、不追加需求问题。
+    # 必须放在"无关话/闲聊"分支之前 —— 否则 "yes" 会被当成闲聊先接住。
+    if state.get("already_recommended") and _wants_quotation(
+        state, str(state.get("current_message") or "")
+    ):
+        answer = _QUOTATION_ACKS[_turn_seed(state) % len(_QUOTATION_ACKS)]
+        state["response"] = _natural_reply(
+            state,
+            answer=answer,
+            question="",
+            slot="",
+            allow_ack=False,
+            business_goal=(
+                "confirm you are preparing the quotation and will send it over right "
+                "away; do not mention other models, do not re-explain specs, do not "
+                "ask any requirement questions"
+            ),
+        )
+        state["next_action"] = "ask"
+        logger.info("Quotation request after recommendation — reply: %s", state["response"])
+        return state
 
     # ── 客户说了与需求无关的话：只"接住这句" + 继续问需求 ─────────────────
     # （接话话术由较高温度单独生成；这里绝不去回答无关问题、也不倒产品）
@@ -569,6 +724,38 @@ def script_generator(state: SalesState) -> SalesState:
         )
         state["next_action"] = "ask"
         logger.info("Delivery / lead-time reply: %s", state["response"])
+        return state
+
+    # ── 售后 / 服务口径（安装 / 说明书 / 质保）（客户口径 2026-09-21）────────
+    # 实测 bug：标准口径（"不提供现场安装，但随货附安装说明书"）被**硬拼**在销售
+    # 自己写的那句话前面，而后者又说"我们提供现场安装" → 同一段里自相矛盾。
+    # 现在改成：把标准口径作为**必须遵守的事实**交给 LLM，由它自己组织一整段；
+    # 答完服务问题后，自然地接一句"期望交期/安装时间"（问法由 LLM 自己写）。
+    try:
+        from ....rag.service_faq import detect_service_faq, service_faq_fact
+
+        _faq_kind = detect_service_faq(current_message_text)
+        _faq_fact = service_faq_fact(current_message_text) if _faq_kind else None
+    except Exception as _exc:  # pragma: no cover - 防御式
+        logger.warning("Service FAQ detection failed: %s", _exc)
+        _faq_kind, _faq_fact = None, None
+    if _faq_fact:
+        follow_up = _delivery_timing_question(state)
+        state["response"] = _natural_reply(
+            state,
+            answer=_faq_fact,
+            question=follow_up,
+            slot="delivery_timing" if follow_up else "",
+            allow_ack=False,
+            business_goal=(
+                "answer this service question using ONLY the given policy facts "
+                "(never contradict them, never invent an installation service), "
+                "then naturally ask about the expected delivery / installation timing"
+            ),
+        )
+        state["service_faq_answered"] = _faq_kind
+        state["next_action"] = "ask"
+        logger.info("Service FAQ (%s) reply: %s", _faq_kind, state["response"])
         return state
 
     # ── Phase 7：需求采集 —— 一次只问一个高价值问题 ─────────────────────────

@@ -182,7 +182,14 @@ def _normalize_images(images: Optional[List[ImageInput]]) -> List[str]:
             else:
                 logger.warning("Image payload without url/data — ignored")
         except Exception as error:  # pragma: no cover - 防御式
-            logger.warning("Bad image payload ignored: %s", error)
+            # dict / 其它形态的负载（前端 messages[].images 就是这种）也尽量收下，
+            # 不能静默丢掉 —— 否则图片等于没发（实测：视觉模型根本没被调用）。
+            try:
+                from .input.message import normalize_image_payloads
+
+                normalized.extend(normalize_image_payloads([item]))
+            except Exception:  # pragma: no cover - 防御式
+                logger.warning("Bad image payload ignored: %s", error)
     if len(images) > limit:
         logger.warning("Too many images (%d), only first %d used", len(images), limit)
     return normalized

@@ -546,6 +546,11 @@ QUESTION_INTENTS: Dict[str, Dict[str, Any]] = {
         "intent": "确认亮度要求（或按环境推荐）",
         "keywords": ("brightness", "nits", "亮度"),
     },
+    # 客户口径（2026-09-21）：服务类问题答完后，自然地接一句"期望交期/安装时间"
+    "delivery_timing": {
+        "intent": "了解客户期望的交期 / 安装时间（用于排产与物流安排）",
+        "keywords": ("deliver", "delivery", "lead time", "when", "install", "交期", "货期", "什么时候", "安装时间"),
+    },
 }
 
 

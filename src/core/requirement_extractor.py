@@ -82,6 +82,7 @@ class RequirementExtractor:
         semantic_override: Optional[Dict[str, Any]] = None,
         use_llm: bool = True,
         session_id: str = "",
+        context_text: str = "",
     ) -> RequirementProfile:
         """
         从客户消息中提取需求。
@@ -92,6 +93,9 @@ class RequirementExtractor:
             semantic_override: 上游（Sales Agent 的同一次 LLM 调用）已经产出的
                 语义结果；给了它就不再单独调 LLM（Phase 13：同一轮只理解一次）
             use_llm: 是否允许调用 LLM 做语义补充
+            context_text: 最近若干轮对话原文（用于校验"客户原话证据"是否真实存在）。
+                LLM 抽出的 size / 点间距 / 视距 / 价位取向 / 内容类型 / 亮度
+                必须带客户原话证据，证据要能在 message 或 context_text 里找到。
             session_id: 当前会话 ID。语义结果是**结合本会话上下文**得出的，
                 缓存必须按会话隔离 —— 否则上一个对话框的内容会串到新对话里
                 （实测：新会话说 "5m" 却拿到旧会话的 purpose=church）。
@@ -153,7 +157,11 @@ class RequirementExtractor:
         if previous_profile is not None:
             expected_slot = str(getattr(previous_profile, "last_asked_slot", "") or "")
         merged_slots = self._merge_extractions(
-            rule_slots, llm_result, message, expected_slot=expected_slot
+            rule_slots,
+            llm_result,
+            message,
+            expected_slot=expected_slot,
+            context_text=context_text,
         )
         logger.debug(f"Merged slots: {merged_slots}")
 
@@ -435,6 +443,7 @@ class RequirementExtractor:
         llm_result: Dict[str, Any],
         message: str = "",
         expected_slot: str = "",
+        context_text: str = "",
     ) -> Dict[str, Any]:
         """
         合并规则提取和 LLM 提取的结果。
@@ -459,6 +468,12 @@ class RequirementExtractor:
 
         for key, value in llm_result.items():
             if key.endswith("_evidence"):
+                continue
+            # 2026-09-21：size / 点间距 / 视距 / 价位取向 / 内容类型 / 亮度
+            # 由下面的 _merge_evidence_fields 统一处理（必须先过证据校验 +
+            # 由确定性解析器归一化），这里不要直接并进来，避免未经校验的
+            # 模型值被当成事实入档。
+            if key in self._EVIDENCE_FIELDS:
                 continue
             if key in merged:
                 # 规则已提取 → 一般规则优先；但要看规则的来源：
@@ -504,7 +519,103 @@ class RequirementExtractor:
 
         if semantic_conflicts:
             merged.setdefault("_semantic_conflicts", []).extend(semantic_conflicts)
+        # 2026-09-21：全字段理解（带客户原话证据）
+        merged = self._merge_evidence_fields(
+            merged, llm_result, message=message, context_text=context_text
+        )
         return merged
+
+    # ── 全字段理解：LLM 只负责"指出客户说过哪一句"，数值由确定性解析器算 ────
+    _EVIDENCE_FIELDS = (
+        "size",
+        "pixel_pitch",
+        "viewing_distance",
+        "price_preference",
+        "content_type",
+        "brightness",
+    )
+    _SOFT_VALUES = {
+        "price_preference": {"price", "quality", "both"},
+        "content_type": {"video", "image", "mixed"},
+    }
+
+    def _merge_evidence_fields(
+        self,
+        merged: Dict[str, Any],
+        llm_result: Dict[str, Any],
+        *,
+        message: str,
+        context_text: str,
+    ) -> Dict[str, Any]:
+        """把 LLM 抽出的工程/偏好字段并进槽位，但**必须**有客户原话证据。
+
+        规则优先：规则已经抽到的字段不覆盖（`if key in merged: continue`）。
+        证据校验：证据片段必须真的出现在"当前消息或最近对话"里。
+        数值归一化：证据片段再交给 `extract_slots` 算一遍 —— 模型只负责
+        "客户说过这句话"，具体数字仍由确定性解析器给出，避免编造参数。
+        """
+        try:
+            from src.rag.query_understanding import extract_slots
+        except Exception:  # pragma: no cover - 防御式
+            return merged
+
+        haystack = f"{message}\n{context_text}".strip()
+        for key in self._EVIDENCE_FIELDS:
+            value = llm_result.get(key)
+            if value in (None, "", [], {}):
+                continue
+            evidence = llm_result.get(f"{key}_evidence")
+            if not self._evidence_ok(haystack, evidence):
+                logger.info(
+                    "Dropping LLM %s=%r — 证据不在客户原话里（evidence=%r）",
+                    key, value, str(evidence)[:60],
+                )
+                continue
+            parsed = extract_slots(str(evidence)) or {}
+            added = self._apply_parsed_field(merged, key, value, parsed)
+            logger.info(
+                "LLM 证据字段 %s=%r（evidence=%r）→ %s",
+                key, value, str(evidence)[:40], added or "未采用",
+            )
+        return merged
+
+    def _apply_parsed_field(
+        self, merged: Dict[str, Any], key: str, value: Any, parsed: Dict[str, Any]
+    ) -> str:
+        """把"证据解析出来的值"写进槽位；返回实际写入的字段名（没写返回空串）。"""
+        explicit = merged.get("_explicit_keys")
+        if not isinstance(explicit, set):
+            explicit = set(explicit or [])
+            merged["_explicit_keys"] = explicit
+
+        def _fill(name: str, candidate: Any) -> str:
+            if candidate in (None, "", [], {}):
+                return ""
+            if merged.get(name) not in (None, "", [], {}):
+                return ""  # 规则优先：已经有值就不覆盖
+            merged[name] = candidate
+            explicit.add(name)
+            return name
+
+        if key == "size":
+            written = ""
+            for name in ("target_width_mm", "target_height_mm", "screen_size_hint_mm"):
+                written = _fill(name, parsed.get(name)) or written
+            return written
+        if key == "pixel_pitch":
+            return _fill("pixel_pitch_mm", parsed.get("pixel_pitch_mm"))
+        if key == "viewing_distance":
+            return _fill("viewing_distance_m", parsed.get("viewing_distance_m"))
+        if key == "brightness":
+            return _fill("brightness_min", parsed.get("brightness_min"))
+        # 偏好/内容类型：先看证据原话里能不能解析出来，不行再用模型的枚举值
+        if key in self._SOFT_VALUES:
+            parsed_value = parsed.get(key)
+            candidate = parsed_value if parsed_value else str(value).strip().lower()
+            if candidate not in self._SOFT_VALUES[key]:
+                return ""
+            return _fill(key, candidate)
+        return ""
 
     @staticmethod
     def _evidence_ok(message: str, evidence: Any) -> bool:

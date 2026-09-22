@@ -124,6 +124,31 @@ class MemoryStore:
             return []
         return list(self._sessions[session_id].get("messages", []))
 
+    def replace_last_assistant(self, session_id: str, content: str) -> bool:
+        """把历史里最后一条 assistant 消息换成**真正发给客户的那条**。
+
+        客户口径（2026-09-22）：`others / product_question` 这一轮，Sales 只写了
+        占位符（"Sure."），真正的答复是 Solution Agent 产出的。如果不换掉，
+        下一轮喂给 LLM 的"最近 50 条"里，AI 自己说过什么就看不见了
+        （客户回 "yes" 时也就不知道上一句在问"要不要出报价"）。
+
+        返回 True 表示真的替换了内容。
+        """
+        text = str(content or "").strip()
+        if not text or session_id not in self._sessions:
+            return False
+        messages = self._sessions[session_id].get("messages") or []
+        for entry in reversed(messages):
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("role") or "") != "assistant":
+                continue
+            if str(entry.get("content") or "").strip() == text:
+                return False
+            entry["content"] = text
+            return True
+        return False
+
     def get_requirements(self, session_id: str) -> Dict[str, Any]:
         """取累计需求（M10：旧字段，是 RequirementProfile 的**只读投影**）。
 

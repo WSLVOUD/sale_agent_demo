@@ -53,11 +53,34 @@ class VisionError(RuntimeError):
 def _guess_mime(image: Any, mime_type: str = "") -> str:
     if mime_type:
         return mime_type.split(";")[0].strip().lower()
+    if isinstance(image, dict):
+        nested = str(image.get("mime_type") or image.get("mimeType") or "")
+        if nested:
+            return nested.split(";")[0].strip().lower()
+    elif not isinstance(image, (str, bytes)):
+        nested = str(getattr(image, "mime_type", "") or "")
+        if nested:
+            return nested.split(";")[0].strip().lower()
     if isinstance(image, str) and not image.startswith(("http://", "https://", "data:")):
         guessed, _ = mimetypes.guess_type(image)
         if guessed:
             return guessed.lower()
     return "image/jpeg"
+
+
+def _payload_parts(image: Any) -> Optional[tuple]:
+    """把 dict / 对象形式的图片负载拆成 ``(url, data, mime_type)``。"""
+    if isinstance(image, dict):
+        getter = image.get
+    elif hasattr(image, "url") or hasattr(image, "data"):
+        getter = lambda key, default=None: getattr(image, key, default)  # noqa: E731
+    else:
+        return None
+    return (
+        str(getter("url", "") or "").strip(),
+        str(getter("data", "") or "").strip(),
+        str(getter("mime_type", "") or getter("mimeType", "") or "").strip(),
+    )
 
 
 def _to_data_url(image: Any, mime_type: str = "") -> str:
@@ -66,12 +89,26 @@ def _to_data_url(image: Any, mime_type: str = "") -> str:
         mime = _guess_mime(image, mime_type)
         return f"data:{mime};base64," + base64.b64encode(image).decode("ascii")
 
+    # 前端/第三方把图片发成对象：{url} / {data, mime_type}（实测 bug：
+    # 这条链路只认字符串 → 视觉模型根本没被调用，日志 "unsupported image payload"）
+    parts = _payload_parts(image)
+    if parts is not None:
+        url, data, nested_mime = parts
+        if url:
+            return _to_data_url(url, nested_mime or mime_type)
+        if data:
+            return _to_data_url(data, nested_mime or mime_type)
+        raise VisionError("unsupported image payload (empty url/data)", kind="bad_request")
+
     if isinstance(image, str):
         text = image.strip()
         if text.startswith("data:"):
             return text
         if text.startswith(("http://", "https://")):
             return text
+        # 前端可能带 "data:image/png;base64," 前缀被截断的情况 → 容错补前缀
+        if text.startswith("image/") and ";base64," in text:
+            return "data:" + text
         if os.path.exists(text):
             with open(text, "rb") as handle:
                 raw = handle.read()
@@ -86,6 +123,14 @@ def _to_data_url(image: Any, mime_type: str = "") -> str:
 
 def check_image_payload(image: Any, *, mime_type: str = "", max_mb: float = 0) -> Dict[str, Any]:
     """计划第二十一阶段：进入模型前的格式 / 大小检查。"""
+    parts = _payload_parts(image)
+    if parts is not None:
+        url, data, nested_mime = parts
+        if url:
+            return check_image_payload(url, mime_type=nested_mime or mime_type, max_mb=max_mb)
+        if data:
+            return check_image_payload(data, mime_type=nested_mime or mime_type, max_mb=max_mb)
+        raise VisionError("unsupported image payload (empty url/data)", kind="bad_request")
     size_mb = 0.0
     if isinstance(image, bytes):
         size_mb = len(image) / (1024 * 1024)

@@ -68,6 +68,8 @@ class ResponseContext:
     question_slot: str = ""
     question_intent: str = ""
     recent_questions: List[str] = field(default_factory=list)
+    # 最近若干轮对话原文（客户口径 2026-09-21：AI 要带上会话记忆说话）
+    recent_dialogue: str = ""
     why: str = ""
     answer: str = ""
     # 系统已经准备好的"接话"（例如对客户自我介绍的回应）。
@@ -257,6 +259,12 @@ class ResponseContext:
                 "You already used these phrasings — do not repeat them, pick a "
                 "different natural wording: "
                 + " | ".join(str(item)[:120] for item in self.recent_questions[:3])
+            )
+        if self.recent_dialogue:
+            lines.append(
+                "Recent conversation (continue naturally from here; never repeat a "
+                "question or a fact you already said):\n"
+                + str(self.recent_dialogue)[:2000]
             )
         lines.append(
             "You may add ONE short, natural sentence in your own words to react to "

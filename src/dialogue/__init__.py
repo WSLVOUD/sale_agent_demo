@@ -37,6 +37,7 @@ from .answer_coverage import AnswerCoverage, compute_answer_coverage
 from .continuation_budget import (
     MAX_ACK_STREAK,
     ContinuationDecision,
+    configured_ack_streak_limit,
     decide_continuation,
 )
 from .duplicate_firewall import (
@@ -61,6 +62,7 @@ from .natural_response import (
     is_mechanical,
     strip_mechanical_phrases,
 )
+from .profile_slots import profile_slot_map
 from .response_density import (
     DETAILED,
     MINIMAL,
@@ -336,6 +338,7 @@ __all__ = [
     "MAX_ACK_STREAK",
     "ContinuationDecision",
     "build_natural_continuation",
+    "configured_ack_streak_limit",
     "compute_answer_coverage",
     "compute_momentum",
     "continuation_candidates",
@@ -346,6 +349,7 @@ __all__ = [
     "is_mechanical",
     "momentum_bonus",
     "next_candidate_slot",
+    "profile_slot_map",
     "render_minimal",
     "short_question_response",
     "strip_mechanical_phrases",

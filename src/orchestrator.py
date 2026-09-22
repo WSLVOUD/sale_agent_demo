@@ -420,6 +420,10 @@ class DualAgentOrchestrator:
         result.setdefault("pending_question", sales_result.get("pending_question") or "")
         result.setdefault("pending_slot", sales_result.get("pending_slot") or "")
         result.setdefault("acknowledgement", sales_result.get("acknowledgement") or "")
+        # 2026-09-22（客户口径）：这一轮客户是不是在说"与需求无关的话"（闲聊）。
+        # 判定由销售节点在语境里做（LLM 语义理解 + 规则，不靠关键词），
+        # 这里只透传 —— 收口层据此决定"只承接"还是"接住 + 追问"。
+        result.setdefault("offtopic_turn", bool(sales_result.get("offtopic_turn")))
         result.setdefault("action_candidates", self._action_candidates(sales_result))
         # v2.7 §18/§19：这一轮新填的槽位 + Turn 上下文（覆盖率与闸门的依据）
         result.setdefault("newly_filled_slots", result_newly_filled)
@@ -429,6 +433,12 @@ class DualAgentOrchestrator:
         result.setdefault("response_mode", "NATURAL")
         # v2.7 修订：LLM 写的句子 vs 模板拼的句子（只有模板才需要去机械话术）
         result.setdefault("response_source", sales_result.get("response_source") or "template")
+        # 2026-09-21：全字段理解留痕（哪个字段、依据客户哪句话、是否入档）
+        result.setdefault("understanding", sales_result.get("understanding") or {})
+        # 服务口径（安装/说明书/质保）已经由销售这一轮答过 → 收口层不再拼标准口径
+        result.setdefault(
+            "service_faq_answered", sales_result.get("service_faq_answered") or ""
+        )
         logger.info(
             "[%s] PERF route=%s solution_route=%s intent=%s "
             "total_ms=%.1f sales_ms=%.1f solution_ms=%.1f "
@@ -518,11 +528,11 @@ class DualAgentOrchestrator:
         # ── v2.7 Phase 7~14 的对话层依赖（延迟导入，避免模块级循环依赖）──
         from .dialogue import (
             DETAILED,
-            MAX_ACK_STREAK,
             MINIMAL,
             build_natural_continuation,
             compute_answer_coverage,
             compute_momentum,
+            configured_ack_streak_limit,
             decide_continuation,
             decide_turn_action,
             next_candidate_slot,
@@ -631,28 +641,31 @@ class DualAgentOrchestrator:
         result["response_density"] = continuation.density
         result["natural_continuation"] = continuation.to_dict()
 
-        # ── 客户口径（2026-09-21）：不要连续提问 ─────────────────────────
-        # 客户没回答上一问 → 这一轮只"承接/闲谈"，最多 3 条，
-        # 第 4 条必须拉回需求问题；客户回答了就跟着客户的话题走。
+        # ── 客户口径（2026-09-21 → 2026-09-22 最终版）：不要连续提问 ─────
+        # 判定依据**不是**"客户有没有回答上一问"，而是"这句话跟需求有没有关系"：
+        #   · 与需求有关（给参数 / 答别的一项 / 问业务问题）→ 直接"接住 + 追问缺项"，
+        #     绝不做"只承接"（实测 bug：客户答 "maybe 5m"，AI 只寒暄一句就停了）；
+        #   · 与需求无关（闲聊）→ 只承接 1 条；第 2 条闲聊必须"接住 + 提问"
+        #     写在同一条消息里（客户口径："第二条……在同一条消息询问需求"）。
+        # 判定由销售节点在语境里给出（offtopic_turn，LLM + 规则，不看关键词）；
+        # 同一轮里客户连发多条消息按**一次**算（一个 turn 只决策一次）。
         conversation_state = conversation
         ack_streak = int(getattr(conversation_state, "ack_streak", 0) or 0)
-        pending_previous = str(
-            conversation_state.last_question_slot
-            if conversation_state is not None and conversation_state.last_question_slot
-            else previous_slot
-        )
-        answered_pending = bool(pending_previous) and (
-            pending_previous in (coverage.answered_slots or [])
-            or pending_previous in newly_filled
-        )
+        ack_limit = configured_ack_streak_limit()
+        off_topic = bool(result.get("offtopic_turn"))
+        # 档案里有值 = 客户确实给过这一项 → 问题登记簿同步成 ANSWERED，
+        # 并把"档案里有值"也算成"客户答过"（实测：客户答"只在意质量"，
+        # 档案已记 price_preference=quality，但登记簿还是 ASKED → 误判成没回答）。
+        profile_slots = self._profile_slot_map(session_id)
+        if conversation_state is not None:
+            for _slot in profile_slots:
+                conversation_state.note_answered(str(_slot))
         has_question = bool(question_slot and result.get("pending_question"))
         decision = decide_continuation(
             has_question=has_question,
-            answered_pending=answered_pending,
-            had_pending_question=bool(pending_previous),
+            off_topic=off_topic,
             ack_streak=ack_streak,
-            customer_question=customer_question,
-            max_ack_streak=MAX_ACK_STREAK,
+            max_ack_streak=ack_limit,
         )
         result["continuation"] = decision.to_dict()
         result["ack_streak"] = decision.next_streak
@@ -660,8 +673,9 @@ class DualAgentOrchestrator:
             conversation_state.ack_streak = decision.next_streak
         if decision.suppress_question and has_question:
             logger.info(
-                "[Continuation] 客户没答上一问（%s）→ 本轮先承接、不问问题（承接 %d/%d）",
-                pending_previous or "-", decision.next_streak, MAX_ACK_STREAK,
+                "[Continuation] 客户说的是与需求无关的话 → 本轮先承接、不问问题"
+                "（承接 %d/%d，下一轮接住 + 提问）",
+                decision.next_streak, ack_limit,
             )
             result["suppressed_question"] = {
                 "slot": question_slot,
@@ -684,6 +698,7 @@ class DualAgentOrchestrator:
             session_id=session_id,
             message=message,
             questions=questions,
+            service_faq_answered=str(result.get("service_faq_answered") or ""),
         )
         # ② v2.7 §15 原先是"短回答模式：客户只给一个参数 → 直接甩一个问题"。
         # 客户口径（2026-09-21）：太短了，要 3~4 句 —— 所以这里**不再**把回复
@@ -728,9 +743,33 @@ class DualAgentOrchestrator:
         result.pop("extra_messages", None)
         # 计划 §8：把"这一轮 AI 问了什么 / 最终说了什么"记进 ConversationState
         self._note_ai_turn(result, session_id, final)
+        # 客户口径（2026-09-22）：others / product_question 这一轮，Sales 只写了占位符
+        # （"Sure."），真正发给客户的是 Solution 的答复 —— 把它写回历史，下一轮的
+        # "最近 50 条"才看得到 AI 自己说过什么（否则客户回 "yes" 时无从判断在问什么）。
+        self._replace_placeholder_history(result, session_id, final.text)
         result["conversation_state_before"] = conversation_before
         self._finish_llm_turn(result, session_id)
         return result
+
+    def _replace_placeholder_history(
+        self, result: Dict[str, Any], session_id: str, text: str
+    ) -> None:
+        """Solution 答复的路径：用真正发出去的那条替换历史里的 Sales 占位符。"""
+        if not str(result.get("agent") or "").startswith("solution"):
+            return
+        if not text or not self.memory_store:
+            return
+        replace = getattr(self.memory_store, "replace_last_assistant", None)
+        if not callable(replace):  # pragma: no cover - 防御式（别家 store 实现）
+            return
+        try:
+            if replace(session_id, text):
+                logger.info(
+                    "[History] 用最终答复替换占位符（session=%s，%d 字）",
+                    session_id, len(text),
+                )
+        except Exception as exc:  # pragma: no cover - 留痕失败不影响业务
+            logger.warning("[History] 替换占位符失败：%s", exc)
 
     # ── v2.6 §4：把本轮"想说的话"整理成候选 ──────────────────────────────
     @staticmethod
@@ -870,7 +909,7 @@ class DualAgentOrchestrator:
         """承接轮：把正文里的问句去掉，只留"接住客户那句话"的内容。
 
         客户口径：客户没回答时不要再抛问题；先顺着客户的消息聊一句，
-        最多三条之后（由 continuation_budget 控制）才拉回需求。
+        最多一条之后（由 continuation_budget 控制）必须拉回需求。
         """
         guarded = self._response_coordinator()._guard()
         stripped = guarded.strip_questions(str(text or "")).strip()
@@ -920,19 +959,21 @@ class DualAgentOrchestrator:
             return None
 
     def _profile_slot_map(self, session_id: str) -> Dict[str, Any]:
-        """当前需求档案里"已经有值"的槽位（用于 diff 出 newly_filled_slots）。"""
-        profile = self._stored_profile(session_id)
-        if profile is None:
-            return {}
-        try:
-            facts = profile.to_facts() if hasattr(profile, "to_facts") else {}
-            return {
-                str(key): value
-                for key, value in dict(facts or {}).items()
-                if value not in (None, "", [], {})
-            }
-        except Exception:  # pragma: no cover - 防御式
-            return {}
+        """当前需求档案里"已经有值"的槽位（用于 diff 出 newly_filled_slots）。
+
+        实测 bug（2026-09-22）：这里原来用 ``profile.to_facts()``，而它**不包含**
+        ``price_preference`` / ``content_type`` / ``budget_level`` → 客户答了
+        "只在意质量"，档案里其实已经有值，但 newly_filled_slots 里看不到 →
+        「承接上限」逻辑误判成"客户一直没回答那个问题" → 每轮都把问题压下去，
+        结果既不问缺的 `installation`、也不推荐，对话卡死。
+
+        v2.3.1 边界（``tests/test_v231_orchestrator_boundary.py``）：Orchestrator
+        不持有"档案字段 → 槽位名"的业务映射，映射表放在对话层
+        (:mod:`src.dialogue.profile_slots`)，这里只做委托。
+        """
+        from .dialogue.profile_slots import profile_slot_map
+
+        return profile_slot_map(self._stored_profile(session_id))
 
     def _newly_filled_slots(self, before: Dict[str, Any], session_id: str) -> List[str]:
         """v2.7 §18：这一轮新填进来的槽位（Answer Coverage 的核心输入）。"""
@@ -1056,6 +1097,8 @@ class DualAgentOrchestrator:
                 "speech_act": state.current_speech_act,
                 # §28：决定之前的输入（需求档案 + 对话状态）
                 "requirement_state_before": self._requirement_summary(session_id),
+                # 2026-09-21：这一轮"听懂了什么、依据客户哪句话"
+                "understanding": result.get("understanding") or {},
                 "conversation_state_before": (
                     result.get("conversation_state_before") or state.to_dict()
                 ),

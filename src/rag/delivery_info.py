@@ -28,6 +28,16 @@ _DELIVERY_QUESTION_RE = re.compile(
     r"交付(?:日期|时间|周期)?(?:是|要)?(?:多久|多长时间|多长)|"
     r"(?:多久|多长时间)能?(?:交货|发货|到货|送到|做好|生产完)|"
     r"下单(?:后)?(?:多久|多长时间)|"
+    # 实测（2026-09-21）："不能10天到吗" 这类"给一个具体天数 / 问最快多久"
+    # 的说法都没被识别成交期问题，于是掉进"异议/自由问答"分支，
+    # 最后还写出了与需求矛盾的型号。
+    r"(?:能|可以|能否|能不能|可不可以|可否)?(?:在)?\s*\d{1,3}\s*(?:天|日|周|个?星期|个月)(?:内|之内|以内)?"
+    r"(?:到|到货|发货|交付|交货|送到|做好|完成|安装)?|"
+    r"[一二三四五六七八九十]{1,3}\s*(?:天|日|周)(?:内|之内|以内)?(?:能|可以)?(?:到|发货|交付|交货)?|"
+    r"(?:最快|最早|最短)(?:多久|多长时间|几天|什么时候)|"
+    r"(?:来得及|赶得上|赶得及|能不能提前|可以提前|提前多久|能提前多久)|"
+    r"\b(?:in|within)\s+\d{1,3}\s*(?:days?|weeks?)\b|"
+    r"\b(?:how fast|how quickly|fastest|earliest|can you (?:do|make) it (?:in|within))\b|"
     r"\b(?:lead time|delivery time|delivery date|delivery lead|shipping time|time to deliver|"
     r"how long (?:is|are|for)\s+(?:the\s+)?(?:delivery|shipping|lead\s*time)|"
     r"when (?:can|will|do) you (?:ship|deliver)|how long (?:does|will|would|to)|how soon)\b",
@@ -102,7 +112,48 @@ def is_delivery_question(message: str) -> bool:
 
 
 def wants_faster_delivery(message: str) -> bool:
-    return bool(_FASTER_RE.search(str(message or "")))
+    text = str(message or "")
+    if _FASTER_RE.search(text):
+        return True
+    # "不能10天到吗 / 5天内能发货吗"：客户要的时间明显短于常规交期（15–30 天）
+    days = requested_window_days(text)
+    return days is not None and days <= 14
+
+
+_CN_DIGITS = {
+    "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+    "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+}
+
+_WINDOW_RE = re.compile(
+    r"(\d{1,3}|[一二三四五六七八九十]{1,3})\s*(天|日|周|个?星期|weeks?|days?)",
+    re.IGNORECASE,
+)
+
+
+def requested_window_days(message: str) -> Optional[int]:
+    """客户这句话里要求的到货窗口（天）；没提具体天数返回 None。"""
+    match = _WINDOW_RE.search(str(message or ""))
+    if not match:
+        return None
+    raw, unit = match.group(1), match.group(2).lower()
+    if raw.isdigit():
+        value = int(raw)
+    else:
+        # 只处理"十 / 三 / 十二"这类简单中文数字
+        if raw == "十":
+            value = 10
+        elif raw.startswith("十"):
+            value = 10 + _CN_DIGITS.get(raw[1:], 0)
+        elif len(raw) == 2 and raw[0] == "十":
+            value = 10
+        else:
+            value = _CN_DIGITS.get(raw[-1], 0)
+    if value <= 0:
+        return None
+    if unit.startswith(("周", "个星期", "星期", "week")):
+        return value * 7
+    return value
 
 
 def extract_timing_phrase(message: str) -> str:

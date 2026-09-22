@@ -255,8 +255,16 @@ def detect_requirement_reset(
     profile: Any = None,
     recommended: bool = False,
     display_type_change: Optional[Tuple[str, str]] = None,
+    session_id: str = "",
+    use_llm: bool = True,
 ) -> ResetDecision:
     """判断本轮是否需要清空已有需求、重新采集。
+
+    客户口径（2026-09-21）：**不要只看关键词** —— 规则只用来"提出候选"，
+    真正的判定交给理解最近 50 条对话的 LLM：
+
+        · 客户确实想换产品 / 换项目 / 重新来 → 才重置
+        · 客户是在纠正或否认（"我没说要租赁款"）→ 只更新需求，绝不重置
 
     Args:
         message: 客户本轮原话
@@ -264,6 +272,8 @@ def detect_requirement_reset(
         profile: 结构化需求档案（RequirementProfile 或 dict，可空）
         recommended: 本会话是否已经给过产品推荐
         display_type_change: 屏幕类型切换 (old, new)，由 runner 检测后传入
+        session_id: 会话 id（用于取最近 50 条对话给 LLM 判断）
+        use_llm: 是否允许用 LLM 结合上下文判定（默认允许）
     """
     text = str(message or "").strip()
     if not text:
@@ -281,37 +291,139 @@ def detect_requirement_reset(
     resolved_profile = _coerce_profile(profile, requirements)
     has_context = bool(requirements) or resolved_profile is not None
 
+    # ── 否定 / 纠正先排除：客户在否认，不是要换项目 ────────────────────────
+    if _NEGATION_RE.search(text):
+        return ResetDecision(
+            detail="客户在纠正或否认之前的需求（不是换产品/换项目）→ 不重置",
+            evidence=text[:60],
+        )
+
     matched = _match_explicit_reset(text)
     if matched:
         if not has_context and not recommended:
             return ResetDecision(detail="会话里还没有可清空的需求")
-        return ResetDecision(
-            should_reset=True,
-            reason="explicit_request",
-            evidence=text[:60],
-            detail="客户明确要求重新来 / 换一个",
+        return _confirm_with_llm(
+            text,
+            session_id=session_id,
+            use_llm=use_llm,
+            fallback=ResetDecision(
+                should_reset=True,
+                reason="explicit_request",
+                evidence=text[:60],
+                detail="客户明确要求重新来 / 换一个",
+            ),
         )
 
     conflicts = find_requirement_conflicts(text, resolved_profile)
     if conflicts and recommended:
-        return ResetDecision(
-            should_reset=True,
-            reason="requirement_conflict",
-            evidence=text[:60],
+        # 冲突**不等于**换项目：先让 LLM 结合上下文判断是"改需求"还是"换一个项目"
+        return _confirm_with_llm(
+            text,
+            session_id=session_id,
+            use_llm=use_llm,
+            fallback=ResetDecision(
+                detail="需求与已推荐时冲突，但 AI 判定不是换项目 → 只按新信息更新档案",
+                evidence=text[:60],
+                conflicts=conflicts,
+            ),
             conflicts=conflicts,
-            detail="客户给出的新需求与已推荐时的需求冲突："
-                   + ", ".join(conflicts),
         )
 
     if recommended and _match_weak_reset(text):
-        return ResetDecision(
-            should_reset=True,
-            reason="new_inquiry",
-            evidence=text[:60],
-            detail="客户提出另一个项目 / 另一块屏",
+        return _confirm_with_llm(
+            text,
+            session_id=session_id,
+            use_llm=use_llm,
+            fallback=ResetDecision(
+                should_reset=True,
+                reason="new_inquiry",
+                evidence=text[:60],
+                detail="客户提出另一个项目 / 另一块屏",
+            ),
         )
 
     return ResetDecision(detail="未检测到需求变更")
+
+
+# 客户在"否认 / 纠正"，不是要换项目（实测 bug：'我没说我用租赁款呀' 被当成改需求）
+_NEGATION_RE = re.compile(
+    r"我没说|我没有说|我没要|我没有要|我不是要|不是这个意思|我没有|我并没有|我没提|"
+    r"你误会|别误会|理解错|搞错|"
+    r"\bi (?:didn'?t|did not|never)\s+(?:say|ask|mean)\b|"
+    r"\bthat'?s not what i\b|\byou (?:got|misunderstood)\b|\bnot what i meant\b",
+    re.IGNORECASE,
+)
+
+
+# 让 LLM 结合最近 50 条对话确认"是不是真的要换产品 / 换项目"
+_RESET_JUDGE_PROMPT = """你是销售对话理解助手。判断"客户这一句"的真实意图（必须结合最近对话）：
+
+  RESET   —— 客户确实要换一个产品 / 换一个项目 / 推倒重来（之前的需求不再用）
+  CORRECT —— 客户是在纠正、否认或补充**当前这个需求**（例如"我没说要租赁款""是装在墙上"）
+  OTHER   —— 其它（闲聊 / 提问 / 继续给需求）
+
+判断要求：
+1. **结合最近对话看上下文**：同一句话在"刚被推荐过"和"还在采集需求"时含义不同。
+2. 客户否认某个说法（我没说 / 不是 / 并没有）→ 一定是 CORRECT，不是 RESET。
+3. 只有客户明确表达"换产品 / 换项目 / 重新来 / 换一个别的屏"才判 RESET。
+4. 只返回 JSON：{{"intent": "RESET|CORRECT|OTHER", "reason": "一句话理由", "evidence": "客户原话片段"}}
+
+最近对话（越靠下越新）：
+{conversation}
+
+客户这一句：{message}
+"""
+
+
+def _confirm_with_llm(
+    message: str,
+    *,
+    session_id: str = "",
+    use_llm: bool = True,
+    fallback: ResetDecision,
+    conflicts: Optional[List[str]] = None,
+) -> ResetDecision:
+    """规则提出的"候选重置"必须再让 LLM 结合对话确认一次。
+
+    LLM 不可用 → 用调用方给的兜底结论（保守：没有上下文时宁可不清空）。
+    """
+    if not use_llm:
+        return fallback
+    try:
+        import json
+
+        from src.core.llm import get_llm
+        from src.memory.history_window import dialogue_window_text
+
+        conversation = dialogue_window_text(str(session_id or ""), max_items=50) or "（暂无）"
+        prompt = _RESET_JUDGE_PROMPT.format(
+            conversation=conversation, message=str(message)[:300]
+        )
+        response = get_llm(temperature=0).invoke(prompt)
+        raw = str(getattr(response, "content", response) or "").strip()
+        raw = raw.strip("`").strip()
+        if raw.startswith("json"):
+            raw = raw[4:].strip()
+        data = json.loads(raw)
+        intent = str(data.get("intent") or "").upper()
+        reason = str(data.get("reason") or "")
+        evidence = str(data.get("evidence") or "")[:60]
+        if intent == "RESET":
+            return ResetDecision(
+                should_reset=True,
+                reason="llm_confirmed_reset",
+                evidence=evidence or str(message)[:60],
+                conflicts=list(conflicts or []),
+                detail=f"AI 结合上下文判定客户要换产品/项目：{reason}",
+            )
+        return ResetDecision(
+            detail=f"AI 结合上下文判定不是换项目（{intent or 'OTHER'}）：{reason}",
+            evidence=evidence or str(message)[:60],
+            conflicts=list(conflicts or []),
+        )
+    except Exception as exc:  # pragma: no cover - 网络/额度问题
+        logger.warning("Reset LLM judge unavailable (%s) → 用规则兜底", exc)
+        return fallback
 
 
 def reset_acknowledgement(language: str = "en", seed: int = 0) -> str:

@@ -67,6 +67,10 @@ class Config:
     
     # Retrieval Configuration
     TOP_K = int(os.getenv("TOP_K", "5"))
+    # ── 会话记忆窗口（客户口径 2026-09-21）：最近 50 条以内交给 LLM ──────────
+    HISTORY_LIMIT = int(os.getenv("LED_RAG_HISTORY_LIMIT", "50"))
+    HISTORY_PER_MESSAGE_CHARS = int(os.getenv("LED_RAG_HISTORY_PER_MESSAGE_CHARS", "300"))
+    HISTORY_TOTAL_CHARS = int(os.getenv("LED_RAG_HISTORY_TOTAL_CHARS", "6000"))
 
     # Tavily Search Configuration
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")

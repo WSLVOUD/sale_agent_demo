@@ -159,6 +159,8 @@ class SalesAgentRunner:
             profile=existing_profile,
             recommended=recommended_before,
             display_type_change=display_type_change,
+            # 客户口径（2026-09-21）：重置不能只看关键词 —— 让 AI 结合最近 50 条对话确认
+            session_id=session_id,
         )
         if reset.should_reset:
             logger.info(
@@ -350,9 +352,17 @@ class SalesAgentRunner:
             "pending_slot": result.get("pending_slot", ""),
             "requirements_reset": bool(reset.should_reset),
             "acknowledgement": result.get("acknowledgement", ""),
+            # 2026-09-22（客户口径）：这一轮客户说的是**与需求无关的话**（闲聊）——
+            # 收口层据此决定"只承接"还是"接住 + 追问"（不靠关键词）。
+            "offtopic_turn": bool(result.get("offtopic_turn")),
             # v2.6 §16/§17：Dialogue Policy 的判定结果（SpeechAct + 唯一 Action）
             # 透传给 orchestrator / 日志 / DecisionAudit，避免上层再猜一遍。
             "speech_act": result.get("speech_act", {}),
             "dialogue_action": result.get("dialogue_action", {}),
             "response_plan": result.get("response_plan", {}),
+            # 2026-09-21：全字段理解留痕（哪个字段、客户哪句话、是否入档）
+            "understanding": result.get("understanding", {}),
+            # 2026-09-21：服务口径（安装/说明书/质保）已经由销售这一轮答过了
+            # → 收口层不要再把标准口径拼一遍（否则同一段里说两遍、还会自相矛盾）
+            "service_faq_answered": result.get("service_faq_answered", ""),
         }
