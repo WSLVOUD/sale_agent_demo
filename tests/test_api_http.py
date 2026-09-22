@@ -191,9 +191,18 @@ class TestMemoryEndpoints:
         assert client.get(f"/memory/{session_id}", headers=AUTH).json()["count"] == 0
 
 
+@pytest.mark.slow
 class TestRebuildTask:
 
-    def test_rebuild_is_async_and_pollable(self, client):
+    def test_rebuild_is_async_and_pollable(self, client, tmp_path, monkeypatch):
+        # 客户口径（2026-09-22）：测试不允许往工作区里写向量库。
+        # /rebuild 会落盘（主库被占用时还会生成 <dir>_rebuilt 回退目录），
+        # 所以把这次重建重定向到临时目录 —— 跑完测试工作区里不留第二个向量库。
+        from src.config import config as runtime_config
+
+        monkeypatch.setattr(
+            runtime_config, "VECTORSTORE_DIR", str(tmp_path / "vectorstore")
+        )
         submitted = client.post("/rebuild", headers=AUTH)
         assert submitted.status_code == 200
         task_id = submitted.json()["task_id"]

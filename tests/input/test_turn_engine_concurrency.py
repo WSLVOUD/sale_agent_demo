@@ -22,7 +22,7 @@ from src.input.message_deduplicator import MessageDeduplicator  # noqa: E402
 from src.input.message_inbox import MessageInbox  # noqa: E402
 from src.input.turn_builder import TurnBuilder  # noqa: E402
 from src.input.turn_executor import TurnExecutor  # noqa: E402
-from src.input.turn_store import TurnStore  # noqa: E402
+from src.input.turn_store import RESPONDED, TurnStore  # noqa: E402
 
 
 class _RecordingRunner:
@@ -287,6 +287,10 @@ class TestFollowUpWhileGenerating:
         assert results["a"].turn_id == results["b"].turn_id, "两条消息属于同一个 Turn"
         assert results["a"].response == results["b"].response, "客户只看到一条回复"
         assert results["a"].response_count == 1
+        # 契约：并入进来的那一条请求带 joined=True（API 会映射成 duplicate=true），
+        # 前端据此**不再渲染第二个气泡**；只有领头那一条负责渲染。
+        assert results["a"].joined is False
+        assert results["b"].joined is True
         # 这一轮的最终输入必须包含两条消息（信息不丢）
         assert "3 * 5" in runner.calls[-1]["text"]
         assert "indoor" in runner.calls[-1]["text"]
@@ -320,3 +324,37 @@ class TestFollowUpWhileGenerating:
         assert committed, "至少有一次提交"
         assert len({item.turn_id for item in committed}) == 1
         assert len({item.response for item in committed}) == 1, "只有一个客户可见回复"
+
+    def test_follow_up_missing_the_merge_window_is_never_dropped(self):
+        """补发消息要是在"回复已经生成完、只差提交"的窗口到达 → 另起一轮回答它。
+
+        实测风险：前端现在会把客户补发的消息**立刻**送出去（不再等上一轮回复），
+        所以必须保证这一条不会被"并入失败"直接吞掉 —— 客户发了却没人回答。
+        """
+        from src.input.message import CustomerMessage
+
+        runner = _RecordingRunner()
+        executor = _executor(runner, grace_ms=60)
+        first = executor.submit(session_id="late-1", text="first", message_ids=["late-1"])
+        assert "first" in first.response
+
+        # 手工构造那个窗口：Turn 已经是"回复已生成"（非终态）且仍标记为运行中，
+        # 补发的消息进了 follow-ups，却没能被并进那一轮（真实链路的竞态）。
+        executor.store.mark(first.turn_id, RESPONDED)
+        executor._mark_running("late-1", first.turn_id)
+        executor._add_follow_ups(
+            first.turn_id,
+            [
+                CustomerMessage(
+                    message_id="late-2", session_id="late-1", text="second"
+                )
+            ],
+        )
+
+        second = executor.submit(
+            session_id="late-1", text="second", message_ids=["late-2"]
+        )
+        assert second.duplicate is False, "没并进去就不能拿旧回复糊弄客户"
+        assert second.turn_id != first.turn_id, "应该另起一轮"
+        assert "second" in second.response
+        assert len(runner.calls) == 2

@@ -15,11 +15,21 @@ from src.rag.reply_composer import (  # noqa: E402
     relaxation_answer,
 )
 from src.rag.rerank import sanitize_customer_response  # noqa: E402
+from tests._cases import assert_all_cases  # noqa: E402
+
+
+def _is_banned(text: str) -> None:
+    assert has_no_product_phrase(text), text
+
+
+def _is_allowed(text: str) -> None:
+    assert not has_no_product_phrase(text), text
 
 
 class TestBannedPhrasesDetected:
 
-    @pytest.mark.parametrize("text", [
+    # 用例表（2026-09-22 瘦身：一条测试跑整张表）
+    BANNED_TEXTS = [
         "No matching products found.",
         "No suitable model found. Try adding more details.",
         "I couldn't find a model in our catalog that matches those requirements.",
@@ -30,17 +40,18 @@ class TestBannedPhrasesDetected:
         "未找到合适型号",
         "无匹配产品",
         "抱歉，我找不到匹配的屏",
-    ])
-    def test_banned(self, text):
-        assert has_no_product_phrase(text), text
-
-    @pytest.mark.parametrize("text", [
+    ]
+    ALLOWED_TEXTS = [
         "The TW11-3216-P3.0 fits your conference room.",
         "这里有一款适合您的产品：TW11-3216-P3.0",
         "我们要不要放宽点间距？",
-    ])
-    def test_allowed(self, text):
-        assert not has_no_product_phrase(text), text
+    ]
+
+    def test_banned(self):
+        assert_all_cases(self.BANNED_TEXTS, _is_banned, label="text")
+
+    def test_allowed(self):
+        assert_all_cases(self.ALLOWED_TEXTS, _is_allowed, label="text")
 
 
 class TestRelaxationAnswer:

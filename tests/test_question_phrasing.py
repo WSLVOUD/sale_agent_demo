@@ -20,27 +20,38 @@ from src.rag.readiness import (  # noqa: E402
     question_for,
 )
 from src.agents.sales.question_planner import plan_next_question  # noqa: E402
+from tests._cases import assert_all_cases  # noqa: E402
+
+
+def _has_variants(slot: str) -> None:
+    texts = {question_for(slot, "en", seed) for seed in range(12)}
+    assert len(texts) >= 2, f"{slot} 只有一种问法"
+
+
+def _keeps_the_content(case) -> None:
+    slot, required = case
+    for seed in range(12):
+        text = (question_for(slot, "en", seed) or "").lower()
+        assert any(token in text for token in required), (slot, seed, text)
 
 
 class TestQuestionVariants:
 
-    @pytest.mark.parametrize("slot", sorted(QUESTION_VARIANTS))
-    def test_slot_has_multiple_phrasings(self, slot):
-        """每个槽位都要有 ≥2 种说法（不能只有一句固定话术）"""
-        texts = {question_for(slot, "en", seed) for seed in range(12)}
-        assert len(texts) >= 2, f"{slot} 只有一种问法"
-
-    @pytest.mark.parametrize("slot,required", [
+    # 用例表（2026-09-22 计数瘦身：一条测试跑整张表，断言一条不少）
+    CONTENT_CASES = [
         ("environment", ("indoor", "outdoor")),
         ("installation", ("fixed", "rental")),
         ("viewing_distance", ("how far", "distance", "away")),
         ("purpose", ("use", "application", "used")),
-    ])
-    def test_content_stays_the_same(self, slot, required):
+    ]
+
+    def test_slot_has_multiple_phrasings(self):
+        """每个槽位都要有 ≥2 种说法（不能只有一句固定话术）"""
+        assert_all_cases(sorted(QUESTION_VARIANTS), _has_variants, label="slot")
+
+    def test_content_stays_the_same(self):
         """同一槽位的所有说法都必须问到同一件事"""
-        for seed in range(12):
-            text = (question_for(slot, "en", seed) or "").lower()
-            assert any(token in text for token in required), (slot, seed, text)
+        assert_all_cases(self.CONTENT_CASES, _keeps_the_content, label="slot")
 
     def test_seed_rotates_phrasing(self):
         """同槽位不同 seed 得到不同措辞，且只在有限集合内轮换"""

@@ -10,6 +10,7 @@
 """
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,7 @@ from src.rag.session_switch import (  # noqa: E402
     find_requirement_conflicts,
     reset_acknowledgement,
 )
+from tests._cases import assert_all_cases  # noqa: E402
 
 
 def _profile(**slots) -> RequirementProfile:
@@ -44,7 +46,8 @@ CHURCH_REQUIREMENTS = {
 class TestExplicitResetDetection:
     """客户明确说"重新来 / 换产品" → 全量重置。"""
 
-    @pytest.mark.parametrize("message", [
+    # ── 用例表（2026-09-22 瘦身：一条测试跑整张表，断言一条不少）──
+    CHINESE_RESET_PHRASES = [
         "我想换个产品",
         "换一款看看",
         "换成别的型号",
@@ -55,34 +58,16 @@ class TestExplicitResetDetection:
         "我想要另外一款",
         "请重新帮我梳理需求",
         "我要别的产品",
-    ])
-    def test_chinese_reset_phrases(self, message):
-        decision = detect_requirement_reset(
-            message, requirements=CHURCH_REQUIREMENTS, recommended=True
-        )
-        assert decision.should_reset, message
-        assert decision.reason == "explicit_request"
-
-    @pytest.mark.parametrize("message", [
+    ]
+    ENGLISH_RESET_PHRASES = [
         "I want a different product",
         "can we start over",
         "please reset",
         "I changed my mind",
         "switch to another model",
         "show me another one",
-    ])
-    def test_english_reset_phrases(self, message):
-        decision = detect_requirement_reset(
-            message, requirements=CHURCH_REQUIREMENTS, recommended=True
-        )
-        assert decision.should_reset, message
-
-    def test_reset_without_context_does_nothing(self):
-        """"重新来"在空会话里没有东西可清空 → 不重置。"""
-        decision = detect_requirement_reset("重新来", requirements={}, recommended=False)
-        assert not decision.should_reset
-
-    @pytest.mark.parametrize("message", [
+    ]
+    NON_RESET_PHRASES = [
         "还有别的型号吗",
         "有没有其他推荐",
         "再推荐几款看看",
@@ -97,17 +82,51 @@ class TestExplicitResetDetection:
         "另外帮我推荐一款",
         "另外推荐一款",
         "再帮我推荐一个",
-    ])
-    def test_no_false_reset(self, message):
-        """想看更多选项 / 参数提问，不是换需求 → 不清空。"""
-        decision = detect_requirement_reset(
+    ]
+
+    @staticmethod
+    def _reset_decision(message: str):
+        return detect_requirement_reset(
             message, requirements=CHURCH_REQUIREMENTS, recommended=True
         )
-        assert not decision.should_reset, message
+
+    def test_chinese_reset_phrases(self):
+        def check(message: str) -> None:
+            decision = self._reset_decision(message)
+            assert decision.should_reset, message
+            assert decision.reason == "explicit_request"
+
+        assert_all_cases(self.CHINESE_RESET_PHRASES, check, label="message")
+
+    def test_english_reset_phrases(self):
+        def check(message: str) -> None:
+            assert self._reset_decision(message).should_reset, message
+
+        assert_all_cases(self.ENGLISH_RESET_PHRASES, check, label="message")
+
+    def test_reset_without_context_does_nothing(self):
+        """"重新来"在空会话里没有东西可清空 → 不重置。"""
+        decision = detect_requirement_reset("重新来", requirements={}, recommended=False)
+        assert not decision.should_reset
+
+    def test_no_false_reset(self):
+        """想看更多选项 / 参数提问，不是换需求 → 不清空。"""
+        def check(message: str) -> None:
+            assert not self._reset_decision(message).should_reset, message
+
+        assert_all_cases(self.NON_RESET_PHRASES, check, label="message")
 
 
 class TestConflictDetection:
-    """已有推荐后，客户给出冲突的环境或场景 → 需要重置。"""
+    """已有推荐后，客户给出冲突的环境或场景 → 交给 AI 结合上下文判断。
+
+    客户口径（2026-09-21）：重置**不能只看关键词**——
+
+        · 客户在纠正/否认当前需求（"我没说要租赁款"）→ 只更新档案，绝不清空重来
+        · 客户确实要换产品/换项目 → 才重置
+
+    没有 LLM 可判定时走保守兜底：**不清空**（宁可问一句，也不要丢掉已有需求）。
+    """
 
     def test_environment_conflict_after_recommendation(self):
         profile = _profile(environment="indoor", purpose="conference")
@@ -117,20 +136,37 @@ class TestConflictDetection:
             requirements={"location_type": "室内"},
             profile=profile,
             recommended=True,
+            use_llm=False,  # 没有 LLM 时保守兜底：不重置
         )
-        assert decision.should_reset
-        assert decision.reason == "requirement_conflict"
+        assert decision.should_reset is False
         assert "environment" in decision.conflicts
 
-    def test_purpose_conflict_after_recommendation(self):
+    def test_purpose_conflict_is_confirmed_by_ai_before_reset(self, monkeypatch):
+        """冲突只是"候选"：AI 结合上下文确认是换项目才重置。"""
+        import json
+
+        import src.core.llm as core_llm
+
+        class _FakeLLM:
+            def invoke(self, _prompt):
+                return SimpleNamespace(
+                    content=json.dumps(
+                        {"intent": "RESET", "reason": "客户换了项目", "evidence": "其实是给教堂用的"},
+                        ensure_ascii=False,
+                    )
+                )
+
+        monkeypatch.setattr(core_llm, "get_llm", lambda **_kwargs: _FakeLLM())
         profile = _profile(environment="indoor", purpose="conference")
         decision = detect_requirement_reset(
             "其实是给教堂用的",
             requirements={"usage": "会议室"},
             profile=profile,
             recommended=True,
+            session_id="reset-conflict-ai",
         )
         assert decision.should_reset
+        assert decision.reason == "llm_confirmed_reset"
         assert "purpose" in decision.conflicts
 
     def test_conflict_before_recommendation_just_updates_slot(self):

@@ -1,23 +1,18 @@
-"""
-Pytest 配置文件和测试基础设施
+"""项目级 pytest 基础设施（放在 rootdir，供整棵 tests/ 树共用）。
+
+测试只有一棵树（客户口径 2026-09-22：全量维持 500~600 条）：
+
+    tests/    全量回归，约 590 条、约 1.5 分钟
 
 运行方式：
-    pytest tests/ -v
-    pytest tests/ -v --cov=src
-    pytest tests/ -v -k "test_name"
 
-测试组织：
-    tests/
-    ├── conftest.py          # 共享 fixtures
-    ├── test_memory.py       # 记忆模块测试
-    ├── test_retrieval.py    # 检索模块测试
-    ├── test_query_understanding.py  # Query Understanding 测试
-    ├── test_orchestrator.py # 编排器测试
-    └── test_api.py          # API 测试
+    pytest -q                              # 全量
+    pytest tests/test_vision_pipeline.py -q   # 单跑某个文件
 """
-import pytest
-import sys
 import os
+import sys
+
+import pytest
 
 
 # Pytest-asyncio 配置：让所有 async test 自动运行
@@ -33,8 +28,9 @@ def pytest_configure(config):
     except ImportError:
         pass
 
+
 # 添加项目根目录到 Python 路径
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
 
 # 设置测试环境变量
@@ -42,6 +38,12 @@ os.environ.setdefault("LED_API_KEY", "test-api-key")
 os.environ.setdefault("DEEPSEEK_API_KEY", "test-key")
 os.environ.setdefault("LANGFUSE_PUBLIC_KEY", "")
 os.environ.setdefault("LANGFUSE_SECRET_KEY", "")
+# ── 测试里 LLM 一律"快速失败"（客户口径 2026-09-22：全量测试要瘦身提速）──
+# 测试环境没有外网：默认重试 2 次会 sleep 1s + 2s，每个用例白等 3 秒。
+# 关掉重试并把超时压到 3 秒 —— 失败路径的行为不变（仍然是"降级到结构化兜底"）。
+os.environ.setdefault("LLM_MAX_RETRIES", "0")
+os.environ.setdefault("LLM_TIMEOUT_SECS", "3")
+os.environ.setdefault("LED_RAG_HISTORY_TOTAL_CHARS", "3000")
 
 
 @pytest.fixture(scope="session")

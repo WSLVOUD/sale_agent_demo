@@ -113,3 +113,5 @@ class TestDeterministicValidation:
         report = validate_recommendation("Recommended configuration.", [], profile, result, calc)
         assert report["checks"]["cabinet_count_correct"] is False
         assert report["checks"]["module_count_correct"] is False
+
+

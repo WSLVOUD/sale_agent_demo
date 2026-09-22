@@ -23,6 +23,7 @@ from src.rag.service_faq import (  # noqa: E402
     service_faq_fact,
     service_faq_reply,
 )
+from tests._cases import assert_all_cases  # noqa: E402
 
 
 class _Resp:
@@ -47,40 +48,41 @@ def _patch_llm(monkeypatch, **kwargs):
     monkeypatch.setattr(llm_mod, "get_llm", lambda *a, **k: _FakeLLM(**kwargs))
 
 
+def _detect(case) -> None:
+    message, expected = case
+    got = detect_service_faq(message)
+    assert got == expected, f"{message!r} → {got!r}（期望 {expected!r}）"
+
+
 class TestDetection:
 
-    @pytest.mark.parametrize("message", [
-        "你们会给我提供说明书和图纸吗",
-        "有没有安装图纸",
-        "do you provide the user manual?",
-        "can you send the installation drawings?",
-        "有技术资料吗",
-    ])
-    def test_manual_question(self, message):
-        assert detect_service_faq(message) == FAQ_MANUAL
+    # 用例表（2026-09-22 计数瘦身：一条测试跑整张表，断言一条不少）
+    CASES = [
+        # 说明书 / 图纸
+        ("你们会给我提供说明书和图纸吗", FAQ_MANUAL),
+        ("有没有安装图纸", FAQ_MANUAL),
+        ("do you provide the user manual?", FAQ_MANUAL),
+        ("can you send the installation drawings?", FAQ_MANUAL),
+        ("有技术资料吗", FAQ_MANUAL),
+        # 现场安装
+        ("你们包安装吗？", FAQ_INSTALLATION),
+        ("包安装吗", FAQ_INSTALLATION),
+        ("上门安装吗", FAQ_INSTALLATION),
+        ("do you also install it?", FAQ_INSTALLATION),
+        ("is on-site installation included?", FAQ_INSTALLATION),
+        # 质保
+        ("质保多久", FAQ_WARRANTY),
+        ("保修几年", FAQ_WARRANTY),
+        ("what about the warranty?", FAQ_WARRANTY),
+        ("do you offer a guarantee?", FAQ_WARRANTY),
+        # 与售后口径无关的问题
+        ("多少钱", None),
+        ("how much is it", None),
+        ("教堂室内 P3 5米x3米", None),
+    ]
 
-    @pytest.mark.parametrize("message", [
-        "你们包安装吗？",
-        "包安装吗",
-        "上门安装吗",
-        "do you also install it?",
-        "is on-site installation included?",
-    ])
-    def test_installation_question(self, message):
-        assert detect_service_faq(message) == FAQ_INSTALLATION
-
-    @pytest.mark.parametrize("message", [
-        "质保多久",
-        "保修几年",
-        "what about the warranty?",
-        "do you offer a guarantee?",
-    ])
-    def test_warranty_question(self, message):
-        assert detect_service_faq(message) == FAQ_WARRANTY
-
-    @pytest.mark.parametrize("message", ["多少钱", "how much is it", "教堂室内 P3 5米x3米"])
-    def test_unrelated_question(self, message):
-        assert detect_service_faq(message) is None
+    def test_detection(self):
+        assert_all_cases(self.CASES, _detect, label="message")
 
 
 class TestFacts:

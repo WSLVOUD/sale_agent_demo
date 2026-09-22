@@ -84,8 +84,8 @@ class TestEnvironmentQuestion:
         """客户回 "3*5"（没答室内外）→ 可以不重复问室内外（每个问题都可以跳转）。
 
         客户口径（2026-09-21）：硬性条件也可以跳转，只在推荐/算方案时必须满足；
-        "不连续提问"由 continuation_budget 负责（客户没答 → 先承接，最多 3 条，
-        第 4 条拉回需求）。
+        "不连续提问"由 continuation_budget 负责（客户没答 → 先承接，最多 1 条，
+        第 2 条拉回需求）。
         """
         profile = _profile(display_type="LED", target_width_mm=3000, target_height_mm=5000)
         first = next_question_plan(profile, session_id="env-5")

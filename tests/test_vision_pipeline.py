@@ -565,3 +565,5 @@ class TestFrontendImageControls:
         assert "handlePaste" in js, "粘贴图片必须有全局处理"
         assert "addImageUrl" in js
         assert "dragenter" in js, "拖拽图片要支持"
+
+

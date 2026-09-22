@@ -80,8 +80,8 @@ class TestEnvironmentAfterWrongAnswer:
         """客户口径（2026-09-21）：每个问题没答出来**都可以跳转**（硬性条件也一样）；
         硬性条件只在"要推荐 / 要算方案"时才必须满足。
 
-        "不连续提问"由 continuation_budget 控制：客户没答时先承接（最多 3 条），
-        第 4 条才拉回需求问题 —— 见 tests/dialogue/test_ack_streak.py。
+        "不连续提问"由 continuation_budget 控制：客户没答时先承接（最多 1 条），
+        第 2 条必须拉回需求问题 —— 见 tests/dialogue/test_ack_streak.py。
         """
         profile = self._profile_asked_once()
         session_id = "env-after-wrong-1"

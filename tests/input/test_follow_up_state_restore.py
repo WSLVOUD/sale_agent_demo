@@ -122,8 +122,8 @@ class TestFollowUpStateRestore:
     def test_two_separate_turns_can_move_on(self):
         """客户没答出来 → 问题可以跳转（硬性条件也一样）。
 
-        "不连续提问"由 continuation_budget 控制：客户没答时先承接（最多 3 条），
-        第 4 条才拉回需求 —— 见 tests/dialogue/test_ack_streak.py。
+        "不连续提问"由 continuation_budget 控制：客户没答时先承接（最多 1 条），
+        第 2 条必须拉回需求 —— 见 tests/dialogue/test_ack_streak.py。
         """
         from src.dialogue import (
             get_conversation_state,

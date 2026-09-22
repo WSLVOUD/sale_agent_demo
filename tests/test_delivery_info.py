@@ -21,11 +21,21 @@ from src.rag.delivery_info import (  # noqa: E402
     is_delivery_question,
     wants_faster_delivery,
 )
+from tests._cases import assert_all_cases  # noqa: E402
+
+
+def _is_delivery_question(message: str) -> None:
+    assert is_delivery_question(message), message
+
+
+def _wants_faster(message: str) -> None:
+    assert wants_faster_delivery(message), message
 
 
 class TestDeliveryQuestionDetection:
 
-    @pytest.mark.parametrize("message", [
+    # 用例表（2026-09-22 瘦身：一条测试跑整张表）
+    DELIVERY_QUESTIONS = [
         "你们多久能发货？",
         "交期大概多久",
         "什么时候能交货",
@@ -33,18 +43,21 @@ class TestDeliveryQuestionDetection:
         "what is your lead time?",
         "how long does delivery take?",
         "when can you deliver?",
-    ])
-    def test_delivery_questions(self, message):
-        assert is_delivery_question(message), message
-
-    @pytest.mark.parametrize("message", [
+    ]
+    FASTER_REQUESTS = [
         "can you ship faster?",
         "我们比较急，能加快吗",
         "需要尽快到货",
         "we need it asap",
-    ])
-    def test_faster_requests(self, message):
-        assert wants_faster_delivery(message), message
+    ]
+
+    def test_delivery_questions(self):
+        assert_all_cases(
+            self.DELIVERY_QUESTIONS, _is_delivery_question, label="message"
+        )
+
+    def test_faster_requests(self):
+        assert_all_cases(self.FASTER_REQUESTS, _wants_faster, label="message")
 
     def test_non_delivery_messages(self):
         assert not is_delivery_question("我需要室内会议室的屏")

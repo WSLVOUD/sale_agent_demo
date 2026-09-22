@@ -2,7 +2,7 @@
 
 > 基于大模型（DeepSeek）的 LED/LCD/IFP 全品类显示产品智能销售助手，采用多 Agent 协作 + 混合检索（RAG）架构，为销售团队提供实时产品推荐和技术咨询能力。
 
-> **当前版本：v2.6（2026-09-21）** ｜ 全量测试：`python -m pytest tests/ -q` → **1597 passed, 4 skipped**
+> **当前版本：v2.6（2026-09-21）** ｜ 全量测试：`python -m pytest -q` → **591 条，约 1.5 分钟**
 >
 > 当前行为口径集中在下面「当前行为口径」一节；历史版本的逐条变更见文末「变更明细」。
 
@@ -50,6 +50,40 @@ uvicorn src.api:app --port 8000
 
 打开 `http://localhost:8000` 即可对话；接口与配置详见文末「API 端点」「核心配置项」。
 
+### 测试（一棵树：全量 591 条，约 1.5 分钟）
+
+```bash
+python -m pytest -q                          # 全量 591 条（约 1.5 分钟）
+python -m pytest tests/test_vision_pipeline.py -q   # 单跑某个文件
+```
+
+公共设施（环境变量 + fixtures）在仓库根目录的 `conftest.py`。
+
+覆盖：对话决策（Policy / 闲聊承接 / 重复提问 / 单一回复 / 一轮一条回复）、
+输入层 Turn 引擎（去重 / 聚合 / 会话锁 / 幂等 / 生成期间补发并轮）、API、
+话术与口径（报价、服务口径、交期、自然度）、会话重置、真实日志 Replay、
+对话决策 Golden Dataset、自由问答语境（others）、前端聚合（app.js）、
+工程计算（箱体 / 模组）与视觉链路 smoke。
+
+> 瘦身口径（客户 2026-09-22）：**客户平时跑的"全量"就是核心回归那 585 条**；
+> 同一张用例表里的多个说法（例如 10 条"重新来 / 换产品"的中文说法）已用
+> `tests/_cases.py::assert_all_cases` 压在一条测试里 —— 断言一条不少，收集条数下降，
+> 失败时一次性列出所有失败 case。
+>
+> **被精简掉的扩展语料**（需求抽取 Golden Cases、RAG 检索、推荐引擎 / Gate、
+> 分辨率 / 可行性、措辞大全等，约 1100 条）**代码还在 git 历史里**，需要时取回：
+>
+> ```bash
+> git log --oneline -- tests/test_retrieval.py          # 找最后一次有它的提交
+> git checkout <commit> -- tests/test_retrieval.py      # 取回单个文件
+> git checkout <commit> -- tests/requirement_extraction  # 取回整个目录
+> ```
+>
+> 历史章节里写的 `tests/xxx.py` 若不在当前目录树里，就是这一类。
+
+测试环境里 LLM 一律**快速失败**（`LLM_MAX_RETRIES=0`、`LLM_TIMEOUT_SECS=3`）：
+失败路径仍然降级到结构化兜底，但不再白等重试的 1s + 2s。
+
 ---
 
 ## 当前行为口径（v2.3.1）
@@ -81,6 +115,80 @@ uvicorn src.api:app --port 8000
 `src/dialogue/question_registry.py`（问题状态机）、
 `src/dialogue/action.py`（候选 → 唯一 Action）、
 `src/orchestrator.py`（`_finalize_turn_response` 收口 + `[Turn]` / `[DecisionAudit]` 日志）。
+
+### 0a+. 不要连续提问：是闲聊才承接，聊需求就追问（2026-09-22 最终口径）
+
+```text
+判定看"客户这句话跟需求有没有关系"（AI 在语境里判断，不看关键词）：
+    与需求有关（给了参数 / 答了别的一项 / 主动聊需求 / 问业务问题）
+        → 直接"接住 + 追问缺的那一项"，**不做只承接**
+    与需求无关（闲聊 / 寒暄 / 题外话）
+        → 第 1 条：只承接（正文里不许留问句）
+        → 第 2 条：**接住这句话 + 提问写在同一条消息里**
+          （承接上限 1 条，`LED_RAG_MAX_ACK_STREAK`）
+    客户回到需求话题 → 承接计数清零
+    同一轮里客户连发多条消息（前端聚合）只算一次
+```
+
+> 客户口径原文："客户再说的是需求有关的话题，AI 就不要再寒暄承接了……如果客户
+> 聊得是无关的才承接闲聊，然后再客户说第二条闲聊消息的时候，承接客户的这个句话，
+> 在同一条消息询问 AI 需求……不要设置什么关键词去触发，让 AI 在语境里面去感知"。
+> （上一版口径是"客户没回答上一问 → 先承接 1 条"；实测 bug：客户答 `maybe 5m`
+> 是**观看距离**这种需求信息，却只收到一句寒暄，既不追问也不推进。）
+> 判定：`src/agents/sales/nodes/requirement.py::is_offtopic_message`
+> （LLM 语义层 `semantic_payload` 优先，规则解析兜底）；
+> 决策：`src/dialogue/continuation_budget.py::decide_continuation`；
+> 收口：`src/orchestrator.py::_finalize_turn_response`（承接轮由
+> `_continuation_only_text` 去掉问句）。
+> 回归测试：`tests/dialogue/test_ack_streak.py`、`tests/dialogue/test_offtopic_intent.py`。
+
+### 0a++. 客户连发的消息 = 一个 Turn（只回一条）（2026-09-22）
+
+```text
+客户: i need a led display
+客户: 3*5                       ← 上一轮还在生成时补发
+🤖 An LED display gives us plenty to work with … indoors or outdoors?
+🤖 A 3 by 5 meter screen … fixed or rental?     ← ❌ 又回了一轮（客户看到两个问题）
+```
+
+规则：客户在"上一轮还在生成"期间补发的消息，必须并进**同一个 turn**，只回**一条**
+（AI 把两条消息当成一句话回答）。
+
+| 位置 | 做法 |
+|------|------|
+| 前端 `static/app.js` | 补发的消息**立刻送出去**（以前 `setTimeout(..., 800)` 一直等到上一轮回复才发 → 后端只能当成两个 turn）；并发请求用 `inflightCount` 计数，"正在输入"等全部结束再收起；被并入的那条响应带 `duplicate=true`，前端不渲染第二个气泡 |
+| 后端 `src/input/turn_executor.py` | 生成期间到达的消息并进正在跑的 turn，回滚"作废那一版"的状态后**重跑**（只提交一条回复）；万一补发消息错过并入窗口（那一轮已生成完回复），**另起一轮回答它**，绝不吞掉客户消息 |
+
+> 回归测试：`tests/input/test_turn_engine_concurrency.py`（生成期间补发 → 同一 turn、
+> 只一条回复、并入方 `joined=True`；错过窗口也不能丢消息）、
+> `tests/test_frontend_turn_merge.py`（前端不再等上一轮、并发计数、duplicate 不渲染、
+> `app.js?v=` 版本号）。
+
+### 0a+++. 自由问答也看得见语境（others / product_question，2026-09-22）
+
+```text
+🤖 … Shall I prepare the quotation?
+👤 yew
+🤖 Sorry, I'm not sure I caught that…
+👤 yes
+🤖 Sure, go ahead, what would you like to know?        ← 没绑到"要不要出报价"
+👤 give me quatatio
+🤖 … The exact installation type … The final dimensions …   ← 又问已经答过的
+```
+
+根因：销售那条链（classify / 需求理解 / 话术出口）都带最近 50 条记忆，但
+**自由问答这条路径一次都不带**；而且它的"已确认需求"来自 legacy 投影字典
+（indoor / is_rental / size），护栏只认 environment / installation /
+target_width_mm → 环境、安装方式、尺寸全丢。
+
+| 位置 | 改动 |
+|------|------|
+| `src/agents/solution/nodes/others.py` | 提示词加入 `Recent conversation`（最近 50 条、带 role，与 Sales 同一个窗口）；规则明确：客户短回复（yes / ok / 打错字）先当作"在回答你最后问的那句"，`Confirmed customer requirements` 里的信息不许再问；检索关键词也改成带最近几轮语境 |
+| `src/rag/model_guard.py` | `requirement_summary()` 同时认 legacy 键（indoor/outdoor → environment，is_rental → installation，size → 尺寸），于是"已确认需求"清单 / 检索过滤 / 矛盾片段过滤在这条路径重新生效 |
+| `src/memory/store.py` + `src/orchestrator.py` | 新增 `replace_last_assistant()`：自由问答这一轮 Sales 只写了占位符（"Sure."），收口时用**真正发给客户的答复**替换它 —— 否则下一轮那 50 条窗口里看不到 AI 自己说过什么 |
+
+> 回归测试：`tests/dialogue/test_others_context.py`（提示词带语境 / 已确认需求完整 /
+> legacy 字典被识别 / 占位符被替换）。
 
 ### 0. 提问顺序与节奏（v2.4）
 
@@ -792,7 +900,7 @@ Recommendation Ready Gate → Solution Agent → RAG / Calculator
 | `src/vision/extractor.py` | 图片 → 结构化需求（JSON 容错解析、单位换算、图片哈希缓存） |
 | `src/vision/integration.py` | 合并进 RequirementProfile（优先级 / 冲突 / 尺寸 hint / 指标） |
 | `src/vision/schema.py` / `prompts.py` | 数据结构与提示词 |
-| `tests/test_vision.py` / `tests/test_vision_pipeline.py` | 63 个测试（单元 + 端到端） |
+| `tests/test_vision_pipeline.py` / `tests/vision/` | 视觉链路 smoke + 图片载荷回归（原视觉语料已按客户口径精简，见文末「测试」） |
 | `tests/vision_golden/` | Golden Dataset（生成图片 + manifest + 评测脚本 + 报告） |
 
 ### 使用方式
@@ -1751,18 +1859,17 @@ led-rag-system/
 │   ├── reports/                   # 评测报告输出目录
 │   └── run_eval.py                # 评测脚本
 │
-└── tests/                         # 测试套件
-    ├── conftest.py                # Pytest fixtures
-    ├── test_router.py             # 路由模块测试（41 条）
-    ├── test_retrieval.py          # 检索模块测试
-    ├── test_solution.py           # Solution Agent 测试
-    ├── test_regression.py         # 回归测试
-    ├── test_filter.py             # 产品过滤测试
-    ├── test_memory.py             # Memory 模块测试
-    ├── test_query_understanding.py  # Query Understanding 测试
-    ├── test_observability.py     # 可观测性测试
-    ├── test_tasks.py              # 异步任务测试
-    └── test_first_contact.py      # 首次接待模块测试
+├── conftest.py                    # 测试环境变量 + fixtures（放在 rootdir）
+│
+└── tests/                         # 全量测试（约 591 条，约 1.5 分钟）
+    ├── dialogue/                  # 对话决策（承接 / 重复提问 / 单一回复 / Turn Action / others 语境）
+    ├── input/                     # 输入层 Turn 引擎（去重 / 聚合 / 会话锁 / 幂等 / 生成期间补发）
+    ├── memory/ replay/ vision/    # 会话记忆窗口 / 真实日志 Replay / 图片载荷
+    ├── test_session_reset.py      # 会话内需求重置
+    ├── test_service_faq*.py       # 服务口径（安装 / 说明书 / 质保 / 交期）
+    ├── test_vision_pipeline.py    # 视觉链路 smoke（图片确认 / Gate / 前端入口）
+    ├── test_screen_calculator.py  # 工程计算（箱体 / 模组）
+    └── test_api_http.py           # HTTP 端到端
 ```
 
 ---
