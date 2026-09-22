@@ -93,6 +93,8 @@ data/business_card/*.jpeg
 eval/report.json
 eval/report_*.json
 eval/*.json.bak
+# 评测脚本的输出目录（跑完一次评测就会生成，不入库）
+eval/reports/
 
 # ── 构建产物 ──
 build/

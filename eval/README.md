@@ -12,8 +12,12 @@ Phase 0 建立的统一评估基线。在改动任何检索/推荐逻辑之前�
 | `retrieval_eval.py` | 检索评估：Recall@5/10、MRR、硬约束违规率、延迟（Series 级 + Model 级） |
 | `recommendation_eval.py` | 需求理解与推荐评估：Requirement Slot Accuracy、路由准确率、Top-1/Top-3 |
 | `calculator_eval.py` | 箱体/模组计算评估：14 条计算用例，Phase 9 落地后自动生效 |
-| `run_eval.py`、`dataset.json` | Phase 0 之前的历史评估脚本（保留兼容，已被上面的脚本取代） |
-| `reports/` | 各次评估的输出报告（JSON）+ 基线汇总 |
+| `dialogue/run_dialogue_eval.py`、`dialogue/golden_dialogue.json` | 对话链路行为约束评测（12 个场景，独立入口） |
+| `dialogue_chain_golden.json`、`naturalness_golden.json` | 同时是核心测试的数据集（`tests/test_dialogue_chain_golden.py` / `tests/test_naturalness_golden.py` 直接读） |
+| `reports/` | 评测输出目录（跑一次评测才会生成，已在 `.gitignore`，不入库） |
+
+> 2026-09-22：Phase 0 时代的 `run_eval.py` / `dataset.json` 已删除（被上面的脚本取代），
+> 对应的历史报告（`baseline_v0.md` / `final_report.md` / `_smoke.json`）一并清掉。
 
 ## 运行方式
 

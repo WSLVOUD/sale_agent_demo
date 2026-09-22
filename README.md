@@ -1854,10 +1854,13 @@ led-rag-system/
 │   └── chroma.sqlite3
 │
 ├── eval/                          # 评估体系
-│   ├── golden_dataset.json        # Golden Dataset（72 条标注用例）
-│   ├── dataset.json               # 路由/评测数据集
-│   ├── reports/                   # 评测报告输出目录
-│   └── run_eval.py                # 评测脚本
+│   ├── golden_dataset.json        # Golden Dataset（82 条标注用例）
+│   ├── metrics.py                 # 公共指标（Recall@K / MRR / Slot Accuracy …）
+│   ├── retrieval_eval.py          # 检索评测（Recall@K / MRR / 硬约束违规）
+│   ├── recommendation_eval.py     # 需求理解 / 路由 / 推荐引擎评测
+│   ├── calculator_eval.py         # 箱体 / 模组计算评测
+│   ├── dialogue/                  # 对话链路行为约束评测（12 场景）
+│   └── reports/                   # 评测输出目录（跑一次才生成，已 gitignore）
 │
 ├── conftest.py                    # 测试环境变量 + fixtures（放在 rootdir）
 │
@@ -1973,7 +1976,8 @@ RESPONSE_LANGUAGE_POLICY=en          # en=始终英语（默认）；auto=跟随
 
 ## 评测结果
 
-基于 **72 条 Golden Dataset**（`eval/golden_dataset.json`）的最新评测结果：
+在 **82 条 Golden Dataset**（`eval/golden_dataset.json`）上的一次实测快照
+（报告文件不再入库，随时可用下面的命令重跑）：
 
 | 指标 | 结果 |
 |------|------|
@@ -1987,7 +1991,8 @@ RESPONSE_LANGUAGE_POLICY=en          # en=始终英语（默认）；auto=跟随
 | 检索 Model Recall@10 | 91.9% |
 
 > 检索指标为候选集质量；最终推荐由确定性引擎收敛（Top-1/Top-3）。
-> 复现命令见 [eval/README.md](eval/README.md)。
+> 复现：`python -m eval.recommendation_eval` / `python -m eval.retrieval_eval` /
+> `python -m eval.calculator_eval`，详见 [eval/README.md](eval/README.md)。
 
 ---
 
