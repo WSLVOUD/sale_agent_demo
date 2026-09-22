@@ -355,6 +355,12 @@ class LCDProduct(BaseModel):
     features: list[str] = Field(default_factory=list, description="特性标签")
     # LCD 拼接屏特有字段
     is_splicing: bool = Field(False, description="是否为拼接屏（有可见拼缝）")
+    splicing_supported: bool = Field(
+        True, description="是否支持拼接（客户口径：LCD 可以拼接成视频墙）"
+    )
+    splicing_note: Optional[str] = Field(
+        None, description="拼接口径说明，如「可拼接，但拼缝可见（bezel 3.5mm）」"
+    )
     maintenance: Optional[str] = Field(None, description="维护方式")
     lifespan_hours: Optional[int] = Field(None, description="光源寿命（小时）")
 
@@ -395,6 +401,12 @@ class IFPProduct(BaseModel):
     has_ai_camera: bool = Field(False, description="是否含 AI 跟踪摄像头")
     has_hdmi_out: bool = Field(False, description="是否有 HDMI 输出")
     has_high_color_gamut: bool = Field(False, description="是否高色域屏")
+    splicing_supported: bool = Field(
+        False, description="是否支持拼接（客户口径：IFP 交互平板不能拼接）"
+    )
+    splicing_note: Optional[str] = Field(
+        None, description="拼接口径说明，如「不能拼接」"
+    )
 
     @field_validator("environment", mode="before")
     @classmethod

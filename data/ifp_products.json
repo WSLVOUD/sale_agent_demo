@@ -8,7 +8,11 @@
       "product_id": "Omni-G4-G4C",
       "series": "Omni G4/G4C series (Interactive Flat Panel Display)",
       "display_type": "IFP",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
+      "splicing_supported": false,
+      "splicing_note": "not supported - IFP cannot be spliced into a video wall",
       "system": "Android 14 (Quad-core ARM Cortex-A73)",
       "touch_points": 20,
       "resolution": "3840x2160 UHD@60Hz",
@@ -18,7 +22,12 @@
       "has_nfc": false,
       "has_hdmi_out": false,
       "has_high_color_gamut": true,
-      "application_scenarios": ["conference", "meeting room", "classroom", "training room"],
+      "application_scenarios": [
+        "conference",
+        "meeting room",
+        "classroom",
+        "training room"
+      ],
       "features": [
         "conference-interactive-touch-screen",
         "4mm-7H-explosion-proof-tempered-glass",
@@ -49,18 +58,42 @@
         "OPS-consumption-under-110W"
       ],
       "sub_models": [
-        {"model": "Omni T65-G4/G4C", "size_inch": "65\"", "has_camera_mic": false},
-        {"model": "Omni T75-G4/G4C", "size_inch": "75\"", "has_camera_mic": false},
-        {"model": "Omni T85-G4/G4C", "size_inch": "85\"", "has_camera_mic": false},
-        {"model": "Omni T86-G4/G4C", "size_inch": "86\"", "has_camera_mic": false},
-        {"model": "Omni T98-G4/G4C", "size_inch": "98\"", "has_camera_mic": false}
+        {
+          "model": "Omni T65-G4/G4C",
+          "size_inch": "65\"",
+          "has_camera_mic": false
+        },
+        {
+          "model": "Omni T75-G4/G4C",
+          "size_inch": "75\"",
+          "has_camera_mic": false
+        },
+        {
+          "model": "Omni T85-G4/G4C",
+          "size_inch": "85\"",
+          "has_camera_mic": false
+        },
+        {
+          "model": "Omni T86-G4/G4C",
+          "size_inch": "86\"",
+          "has_camera_mic": false
+        },
+        {
+          "model": "Omni T98-G4/G4C",
+          "size_inch": "98\"",
+          "has_camera_mic": false
+        }
       ]
     },
     {
       "product_id": "Omni-K4-K4C",
       "series": "Omni K4/K4C series (Interactive Flat Panel Display)",
       "display_type": "IFP",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
+      "splicing_supported": false,
+      "splicing_note": "not supported - IFP cannot be spliced into a video wall",
       "system": "Android 15 (4xA76+4xA55 2.4GHz, Mali-G610 MC4)",
       "touch_points": 20,
       "resolution": "3840x2160 UHD@60Hz",
@@ -70,7 +103,12 @@
       "has_nfc": false,
       "has_hdmi_out": true,
       "has_high_color_gamut": true,
-      "application_scenarios": ["conference", "meeting room", "classroom", "training room"],
+      "application_scenarios": [
+        "conference",
+        "meeting room",
+        "classroom",
+        "training room"
+      ],
       "features": [
         "conference-interactive-touch-screen",
         "4mm-7H-explosion-proof-tempered-glass",
@@ -95,11 +133,31 @@
         "OPS-consumption-under-110W"
       ],
       "sub_models": [
-        {"model": "Omni T65-K4/K4C", "size_inch": "65\"", "has_camera_mic": false},
-        {"model": "Omni T75-K4/K4C", "size_inch": "75\"", "has_camera_mic": false},
-        {"model": "Omni T85-K4/K4C", "size_inch": "85\"", "has_camera_mic": false},
-        {"model": "Omni T86-K4/K4C", "size_inch": "86\"", "has_camera_mic": false},
-        {"model": "Omni T98-K4/K4C", "size_inch": "98\"", "has_camera_mic": false}
+        {
+          "model": "Omni T65-K4/K4C",
+          "size_inch": "65\"",
+          "has_camera_mic": false
+        },
+        {
+          "model": "Omni T75-K4/K4C",
+          "size_inch": "75\"",
+          "has_camera_mic": false
+        },
+        {
+          "model": "Omni T85-K4/K4C",
+          "size_inch": "85\"",
+          "has_camera_mic": false
+        },
+        {
+          "model": "Omni T86-K4/K4C",
+          "size_inch": "86\"",
+          "has_camera_mic": false
+        },
+        {
+          "model": "Omni T98-K4/K4C",
+          "size_inch": "98\"",
+          "has_camera_mic": false
+        }
       ]
     }
   ]

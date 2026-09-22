@@ -8,7 +8,9 @@
       "product_id": "P43",
       "series": "P Series (Professional LCD Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 350,
       "contrast_ratio": "1500:1",
       "display_size_inch": "43\"",
@@ -17,8 +19,12 @@
       "service_life_hours": 50000,
       "lifespan_hours": 50000,
       "power_consumption_w": 90,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "industrial-grade",
         "continuous-7x24h",
@@ -38,7 +44,9 @@
       "product_id": "P49",
       "series": "P Series (Professional LCD Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 350,
       "contrast_ratio": "1500:1",
       "display_size_inch": "49\"",
@@ -47,8 +55,12 @@
       "service_life_hours": 50000,
       "lifespan_hours": 50000,
       "power_consumption_w": 100,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "industrial-grade",
         "continuous-7x24h",
@@ -63,7 +75,9 @@
       "product_id": "P55",
       "series": "P Series (Professional LCD Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 350,
       "contrast_ratio": "1500:1",
       "display_size_inch": "55\"",
@@ -72,8 +86,12 @@
       "service_life_hours": 50000,
       "lifespan_hours": 50000,
       "power_consumption_w": 130,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "industrial-grade",
         "continuous-7x24h",
@@ -88,7 +106,9 @@
       "product_id": "P65",
       "series": "P Series (Professional LCD Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 350,
       "contrast_ratio": "1500:1",
       "display_size_inch": "65\"",
@@ -97,8 +117,12 @@
       "service_life_hours": 50000,
       "lifespan_hours": 50000,
       "power_consumption_w": 150,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "industrial-grade",
         "continuous-7x24h",
@@ -113,7 +137,9 @@
       "product_id": "P75",
       "series": "P Series (Professional LCD Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 400,
       "contrast_ratio": "1500:1",
       "display_size_inch": "75\"",
@@ -122,8 +148,12 @@
       "service_life_hours": 50000,
       "lifespan_hours": 50000,
       "power_consumption_w": 180,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "industrial-grade",
         "continuous-7x24h",
@@ -138,7 +168,9 @@
       "product_id": "P85",
       "series": "P Series (Professional LCD Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 400,
       "contrast_ratio": "1500:1",
       "display_size_inch": "85\"",
@@ -147,8 +179,12 @@
       "service_life_hours": 50000,
       "lifespan_hours": 50000,
       "power_consumption_w": 200,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "industrial-grade",
         "continuous-7x24h",
@@ -163,7 +199,9 @@
       "product_id": "P98",
       "series": "P Series (Professional LCD Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 500,
       "contrast_ratio": "1500:1",
       "display_size_inch": "98\"",
@@ -172,8 +210,12 @@
       "service_life_hours": 50000,
       "lifespan_hours": 50000,
       "power_consumption_w": 300,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "industrial-grade",
         "continuous-7x24h",
@@ -188,7 +230,9 @@
       "product_id": "P110",
       "series": "P Series (Professional LCD Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 500,
       "contrast_ratio": "1500:1",
       "display_size_inch": "110\"",
@@ -197,8 +241,12 @@
       "service_life_hours": 50000,
       "lifespan_hours": 50000,
       "power_consumption_w": 400,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "industrial-grade",
         "continuous-7x24h",
@@ -209,12 +257,13 @@
         "VESA-600x400"
       ]
     },
-
     {
       "product_id": "H4630LN-B",
       "series": "B Series (LCD Video Wall)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 500,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "46\"",
@@ -223,8 +272,12 @@
       "operation_hours": "7x24h",
       "service_life_hours": 50000,
       "power_consumption_w": 200,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": true,
+      "splicing_supported": true,
+      "splicing_note": "can be spliced into a video wall, but the seam is visible (bezel 3.5mm)",
       "maintenance": "sheet metal housing, wall-mount",
       "panel_brand": "Grade A panel",
       "features": [
@@ -246,7 +299,9 @@
       "product_id": "H4930LN-B",
       "series": "B Series (LCD Video Wall)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 500,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "49\"",
@@ -255,8 +310,12 @@
       "operation_hours": "7x24h",
       "service_life_hours": 50000,
       "power_consumption_w": 200,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": true,
+      "splicing_supported": true,
+      "splicing_note": "can be spliced into a video wall, but the seam is visible (bezel 3.5mm)",
       "maintenance": "sheet metal housing, wall-mount",
       "panel_brand": "Grade A panel",
       "features": [
@@ -277,7 +336,9 @@
       "product_id": "H5530LN-B",
       "series": "B Series (LCD Video Wall)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 500,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "55\"",
@@ -286,8 +347,12 @@
       "operation_hours": "7x24h",
       "service_life_hours": 50000,
       "power_consumption_w": 200,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": true,
+      "splicing_supported": true,
+      "splicing_note": "can be spliced into a video wall, but the seam is visible (bezel 3.5mm)",
       "maintenance": "sheet metal housing, wall-mount",
       "panel_brand": "Grade A panel",
       "features": [
@@ -306,7 +371,9 @@
       "product_id": "H5518LN/HN-B",
       "series": "B Series (LCD Video Wall)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 700,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "55\"",
@@ -315,8 +382,12 @@
       "operation_hours": "7x24h",
       "service_life_hours": 50000,
       "power_consumption_w": 200,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": true,
+      "splicing_supported": true,
+      "splicing_note": "can be spliced into a video wall, but the seam is visible (bezel 1.7mm)",
       "maintenance": "sheet metal housing, wall-mount",
       "panel_brand": "Grade A panel",
       "features": [
@@ -336,7 +407,9 @@
       "product_id": "H5510LN/HN-B",
       "series": "B Series (LCD Video Wall)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 700,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "55\"",
@@ -345,8 +418,12 @@
       "operation_hours": "7x24h",
       "service_life_hours": 50000,
       "power_consumption_w": 200,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": true,
+      "splicing_supported": true,
+      "splicing_note": "can be spliced into a video wall, but the seam is visible (bezel 0.88mm)",
       "maintenance": "sheet metal housing, wall-mount",
       "panel_brand": "Grade A panel",
       "features": [
@@ -365,7 +442,9 @@
       "product_id": "H6530LN-B",
       "series": "B Series (LCD Video Wall)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 500,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "65\"",
@@ -374,8 +453,12 @@
       "operation_hours": "7x24h",
       "service_life_hours": 50000,
       "power_consumption_w": 200,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": true,
+      "splicing_supported": true,
+      "splicing_note": "can be spliced into a video wall, but the seam is visible (bezel 3.5mm)",
       "maintenance": "sheet metal housing, wall-mount",
       "panel_brand": "Grade A panel",
       "features": [
@@ -394,7 +477,9 @@
       "product_id": "H7530LN-B",
       "series": "B Series (LCD Video Wall)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 500,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "75\"",
@@ -403,8 +488,12 @@
       "operation_hours": "7x24h",
       "service_life_hours": 50000,
       "power_consumption_w": 230,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": true,
+      "splicing_supported": true,
+      "splicing_note": "can be spliced into a video wall, but the seam is visible (bezel 3.5mm)",
       "maintenance": "sheet metal housing, wall-mount",
       "panel_brand": "Grade A panel",
       "features": [
@@ -419,12 +508,13 @@
         "net-weight-28kg"
       ]
     },
-
     {
       "product_id": "P55TM",
       "series": "P Series TM (LCD Touch Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 450,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "55\"",
@@ -434,8 +524,12 @@
       "service_life_hours": 100000,
       "lifespan_hours": 100000,
       "power_consumption_w": 100,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "touch-monitor",
         "interactive-touch",
@@ -454,7 +548,9 @@
       "product_id": "P65TM",
       "series": "P Series TM (LCD Touch Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 350,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "65\"",
@@ -464,8 +560,12 @@
       "service_life_hours": 100000,
       "lifespan_hours": 100000,
       "power_consumption_w": 200,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "touch-monitor",
         "interactive-touch",
@@ -479,7 +579,9 @@
       "product_id": "P75TM",
       "series": "P Series TM (LCD Touch Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 350,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "75\"",
@@ -489,8 +591,12 @@
       "service_life_hours": 100000,
       "lifespan_hours": 100000,
       "power_consumption_w": 265,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "touch-monitor",
         "interactive-touch",
@@ -503,7 +609,9 @@
       "product_id": "P86TM",
       "series": "P Series TM (LCD Touch Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 400,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "86\"",
@@ -513,8 +621,12 @@
       "service_life_hours": 100000,
       "lifespan_hours": 100000,
       "power_consumption_w": 380,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "touch-monitor",
         "interactive-touch",
@@ -527,7 +639,9 @@
       "product_id": "P98TM",
       "series": "P Series TM (LCD Touch Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 400,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "98\"",
@@ -537,8 +651,12 @@
       "service_life_hours": 100000,
       "lifespan_hours": 100000,
       "power_consumption_w": 503,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "touch-monitor",
         "interactive-touch",
@@ -551,7 +669,9 @@
       "product_id": "P110TM",
       "series": "P Series TM (LCD Touch Monitor)",
       "display_type": "LCD",
-      "environment": ["indoor"],
+      "environment": [
+        "indoor"
+      ],
       "brightness_nit": 450,
       "contrast_ratio": "1200:1(Typ.)",
       "display_size_inch": "110\"",
@@ -561,8 +681,12 @@
       "service_life_hours": 100000,
       "lifespan_hours": 100000,
       "power_consumption_w": 720,
-      "installation": ["wall_mount"],
+      "installation": [
+        "wall_mount"
+      ],
       "is_splicing": false,
+      "splicing_supported": true,
+      "splicing_note": "can be tiled, but the frame/seam is visible (not seamless)",
       "features": [
         "touch-monitor",
         "interactive-touch",

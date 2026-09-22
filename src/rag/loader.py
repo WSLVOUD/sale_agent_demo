@@ -12,7 +12,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-ENVIRONMENT_METADATA_VERSION = 6  # v6：新增室外租赁系列（TW11-OR / TW31-ORHD / TW21-ORHD）
+ENVIRONMENT_METADATA_VERSION = 7  # v7：LCD/IFP 进 Model 级语料 + 拼接口径（与 json_loader 一致）
 
 KNOWLEDGE_SOURCES_FILENAME_RE = re.compile(r"\.txt$|\.md$|\.yaml$|\.yml$", re.IGNORECASE)
 

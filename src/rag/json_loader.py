@@ -184,7 +184,9 @@ def load_structured_documents(data_dir: str) -> list[Document]:
 
 
 # ── Phase 2：Model 级 RAG Document ──────────────────────────────────────────
-ENVIRONMENT_METADATA_VERSION = 6  # 与 loader.py 保持一致（v6：新增室外租赁系列）
+ENVIRONMENT_METADATA_VERSION = 7  # 与 loader.py 保持一致
+# v7（2026-09-22）：LCD / IFP 产品进 Model 级语料 + 补拼接口径
+# （LCD 可拼接但拼缝可见 / IFP 不能拼接）→ 老向量库会被启动自检判为过期并自动重建
 
 
 def _clean_metadata_value(value: Any) -> Any:
@@ -285,6 +287,8 @@ def _display_metadata(
     environment: str = "indoor",
     brightness_nit: Optional[int] = None,
     features: Optional[list[str]] = None,
+    splicing_supported: Optional[bool] = None,
+    splicing_note: str = "",
 ) -> dict[str, Any]:
     """非 LED 产品共用的 metadata（键与 LED 的 Model 级语料保持一致）。
 
@@ -317,6 +321,9 @@ def _display_metadata(
         "flexible": False,
         "warranty_years": 1,
         "features": _clean_metadata_value(features or []),
+        # 拼接口径（客户口径 2026-09-22）：LCD 可拼接但拼缝可见；IFP 不能拼接
+        "splicing_supported": bool(splicing_supported),
+        "splicing_note": str(splicing_note or ""),
         # 系统字段
         "environment_metadata_version": ENVIRONMENT_METADATA_VERSION,
         "product_category": "display",
@@ -336,6 +343,11 @@ def _lcd_text(product: "LCDProduct", model: str) -> str:
         f"operation={product.operation_hours}",
         f"lifespan={product.service_life_hours}h",
         "splicing-video-wall" if product.is_splicing else "single-display",
+        (
+            f"splicing={product.splicing_note}"
+            if product.splicing_note
+            else ("splicing=supported-with-visible-seam" if product.splicing_supported else "splicing=not-supported")
+        ),
     ]
     if product.bazel_mm:
         parts.append(f"bezel={product.bazel_mm}")
@@ -357,6 +369,8 @@ def _lcd_model_document(product: "Product", lcd: "LCDProduct") -> Document:
         environment="indoor" if "indoor" in product.environment else "outdoor",
         brightness_nit=lcd.brightness_nit,
         features=list(product.features or []) + list(lcd.features or []),
+        splicing_supported=lcd.splicing_supported,
+        splicing_note=lcd.splicing_note or "",
     )
     metadata.update({
         "display_size_inch": lcd.display_size_inch,
@@ -379,6 +393,7 @@ def _ifp_text(product: "IFPProduct", model: str, size_inch: str) -> str:
         f"touch={product.touch_points}-point",
         f"memory={product.memory}",
         f"wifi={product.wifi}",
+        f"splicing={product.splicing_note}" if product.splicing_note else "splicing=not-supported",
     ]
     if product.features:
         parts.append("features: " + ", ".join(product.features))
@@ -396,6 +411,8 @@ def _ifp_model_documents(product: "Product", ifp: "IFPProduct") -> list[Document
             display_type="IFP",
             environment="indoor" if "indoor" in product.environment else "outdoor",
             features=list(product.features or []),
+            splicing_supported=ifp.splicing_supported,
+            splicing_note=ifp.splicing_note or "",
         )
         metadata.update({
             "system": ifp.system,
@@ -419,6 +436,8 @@ def _ifp_model_documents(product: "Product", ifp: "IFPProduct") -> list[Document
             display_type="IFP",
             environment="indoor" if "indoor" in product.environment else "outdoor",
             features=list(product.features or []),
+            splicing_supported=ifp.splicing_supported,
+            splicing_note=ifp.splicing_note or "",
         )
         metadata.update({
             "system": ifp.system,

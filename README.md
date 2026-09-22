@@ -200,9 +200,14 @@ data/LCD display.txt（客户资料，IFP 混在 LCD 里）
 ```
 
 - 资料里没有的字段一律留空（IFP 的价格 / 适用面积、单体显示器的拼缝），**不编数据**
+- **拼接口径**（客户口径 2026-09-22）：**LCD 可以拼接，但拼缝可见**（B 系列拼接屏
+  bezel 0.88mm / 1.7mm / 3.5mm；P 系列与 P TM 拼起来也有可见边框）；**IFP 不能拼接**。
+  这条写进了 `data/LCD display.txt`、两份 JSON（`splicing_supported` / `splicing_note`）
+  以及检索文本与 metadata，模型回答"能不能拼"时以它为准
 - `src/rag/json_loader.py` 新增非 LED 的 Model 级文档构建：与 LED 共用同一套 metadata
   （`level=model` / `indoor,outdoor` / `display_type` / `environment_metadata_version` …），
   但**不写**点间距 / 模组 / 箱体这些 LED 专有字段
+- 语料 schema 升到 **v7**（新增 LCD/IFP + 拼接口径）→ 旧向量库会被启动自检判为过期并自动重建
 - 推荐引擎目前仍然只吃 LED 的 `CanonicalModel`（LCD/IFP 先供检索问答用）；
   要让 LCD/IFP 也能被"推荐"，是下一步的事
 - 重建：`python init_vectorstore.py`（或直接启动服务，启动自检发现条数不符会自动重建）
