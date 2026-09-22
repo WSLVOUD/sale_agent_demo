@@ -76,13 +76,13 @@ def message_from_part(
         return part
     if isinstance(part, dict):
         text = str(part.get("text") or part.get("question") or "").strip()
-        images = list(part.get("images") or [])
+        images = normalize_image_payloads(part.get("images"))
         message_id = str(part.get("message_id") or part.get("id") or "")
         timestamp = part.get("timestamp") or part.get("received_at") or 0
         metadata = dict(part.get("metadata") or {})
     else:  # pragma: no cover - 防御式
         text = str(getattr(part, "text", "") or "").strip()
-        images = list(getattr(part, "images", None) or [])
+        images = normalize_image_payloads(getattr(part, "images", None))
         message_id = str(getattr(part, "message_id", "") or "")
         timestamp = float(getattr(part, "timestamp", 0) or 0)
         metadata = dict(getattr(part, "metadata", {}) or {})
@@ -99,6 +99,48 @@ def message_from_part(
     if timestamp:
         message.timestamp = float(timestamp)
     return message
+
+
+def normalize_image_payloads(images: Any) -> List[str]:
+    """把图片统一成"URL 或 data URL"字符串。
+
+    实测 bug（2026-09-21）：前端把图片发成对象 —— ``{data, mime_type}`` 或 ``{url}``，
+    而这条链路只认字符串 → 视觉模型**根本没被调用**（日志："unsupported image
+    payload"，latency 1ms），于是图片里的室内外 / 固定安装 / 租赁全都识别不出来。
+    """
+    out: List[str] = []
+    for item in images or []:
+        if item is None:
+            continue
+        if isinstance(item, str):
+            text = item.strip()
+            if not text:
+                continue
+            if text.startswith("image/") and ";base64," in text:
+                text = "data:" + text
+            if text not in out:
+                out.append(text)
+            continue
+        if isinstance(item, dict):
+            url = str(item.get("url") or "").strip()
+            data = str(item.get("data") or item.get("base64") or "").strip()
+            mime = str(item.get("mime_type") or item.get("mimeType") or "").strip()
+        else:
+            url = str(getattr(item, "url", "") or "").strip()
+            data = str(getattr(item, "data", "") or "").strip()
+            mime = str(getattr(item, "mime_type", "") or "").strip()
+        if url:
+            value = url
+        elif data:
+            if data.startswith("data:"):
+                value = data
+            else:
+                value = f"data:{mime or 'image/jpeg'};base64,{data}"
+        else:
+            continue
+        if value not in out:
+            out.append(value)
+    return out
 
 
 def collect_messages(
@@ -187,4 +229,5 @@ __all__ = [
     "join_text",
     "message_from_part",
     "new_message_id",
+    "normalize_image_payloads",
 ]

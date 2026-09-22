@@ -240,7 +240,16 @@ class TurnExecutor:
             )
             joined = self._wait_for_turn(running_id, started=started, joined=True)
             if joined is not None:
-                return joined
+                covered = set(joined.message_ids or [])
+                if all(message_id in covered for message_id in ids):
+                    return joined
+                # 那一轮在我们到达之前**已经把回复生成完了**（只差提交）：这一条
+                # 没有机会被并进去。绝不能把客户的消息丢掉（发出去却没人回答），
+                # 所以不要返回那版回复，继续往下自己开新的一轮。
+                logger.info(
+                    "[TurnExecutor] session=%s 补发消息没赶上 %s（该轮已生成完）→ 另起一轮",
+                    session, running_id,
+                )
 
         turn, created = self.builder.push_message(items[0], turn_id=turn_id)
         if decision.fingerprint:

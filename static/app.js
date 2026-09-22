@@ -16,6 +16,8 @@ class LEDChatApp {
         this.turnDebounceMs = Number(localStorage.getItem('led_turn_debounce_ms')) || 600;  // v2.5++++ 计划 §4.2：600ms 静默期（可 localStorage 覆盖）
         this.turnMaxWindowMs = Number(localStorage.getItem('led_turn_max_window_ms')) || 1800;  // v2.5++++ 计划 §4.2：1800ms 上限
         this.pendingTurn = null;
+        // 同时在飞 /chat 请求数（客户在生成期间补发消息时会有两条）
+        this.inflightCount = 0;
         this.statusIndicator = document.getElementById('status-indicator');
         this.newChatBtn = document.getElementById('new-chat-btn');
         this.welcomeScreen = document.getElementById('welcome-screen');
@@ -347,11 +349,6 @@ class LEDChatApp {
     async flushTurn() {
         const turn = this.pendingTurn;
         if (!turn || !turn.parts.length) return;
-        if (this.isLoading) {
-            // 上一条还在处理：稍后再发（同一会话不并发跑两次，和后端的会话锁一致）
-            turn.timer = setTimeout(() => this.flushTurn(), 800);
-            return;
-        }
         this.pendingTurn = null;
         if (turn.timer) clearTimeout(turn.timer);
 
@@ -359,6 +356,13 @@ class LEDChatApp {
         const mergedText = parts.map(part => part.text).filter(Boolean).join('\n');
         const mergedImages = parts.flatMap(part => part.images || []);
 
+        // ── 客户口径（2026-09-22）：上一条还在生成时**不要再等它回复完再发** ──
+        // 以前这里会 `setTimeout(..., 800)` 一直等到上一轮回复结束，于是客户连发
+        // 的两条消息变成两个 Turn、两条回复（真实日志："i need a led display" +
+        // "3*5" → 两条不同的追问）。
+        // 现在立刻送出去：后端会发现"这一轮还在生成" → 把这条消息并进同一轮并
+        // 重跑，只回一条（并入的那一条响应带 duplicate=true，前端不再渲染气泡）。
+        this.inflightCount = (this.inflightCount || 0) + 1;
         this.showTyping();
         try {
             const response = await fetch(`${this.apiBase}/chat`, {
@@ -382,7 +386,6 @@ class LEDChatApp {
             if (!response.ok) throw new Error('API错误');
 
             const data = await response.json();
-            this.hideTyping();
 
             // 处理首次接触消息（介绍 + 视频等）
             if (data.first_contact_messages && data.first_contact_messages.length > 0) {
@@ -410,9 +413,13 @@ class LEDChatApp {
                 }
             }
         } catch (error) {
-            this.hideTyping();
             this.addMessage('ai', '抱歉，发生了错误。请检查API服务是否正常运行。');
             console.error('聊天错误:', error);
+        } finally {
+            // 可能同时有两条请求在飞（后发的那条会被并进前一轮）：等**全部**结束
+            // 再收起"正在输入"，否则会提前把打字指示器收掉。
+            this.inflightCount = Math.max(0, (this.inflightCount || 1) - 1);
+            if (!this.inflightCount) this.hideTyping();
         }
     }
 
@@ -527,7 +534,10 @@ class LEDChatApp {
     showTyping() {
         this.isLoading = true;
         this.sendBtn.disabled = true;
-        
+
+        // 同时可能有两条请求在飞（后发的那条会被并进前一轮）→ 只显示一个指示器
+        if (document.getElementById('typing-indicator')) return;
+
         const typingEl = document.createElement('div');
         typingEl.className = 'message ai';
         typingEl.id = 'typing-indicator';
