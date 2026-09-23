@@ -185,13 +185,29 @@ def strip_model_mentions(text: str, *, allow: Iterable[str] = ()) -> Tuple[str, 
     所以**整句删掉**，而不是只抠掉型号名（否则会剩半句病句）。
     """
     allowed = {str(item).lower() for item in (allow or []) if item}
+
+    def _is_allowed(model: str) -> bool:
+        """客户点名的型号要放行。
+
+        实测坑：正则抽出来的型号可能比客户说的短（"TW11-3216-P3" vs
+        "TW11-3216-P3.0"），精确匹配会把客户自己点的型号删掉 →
+        这里改成"互为前缀即放行"。
+        """
+        token = str(model or "").lower()
+        if not token:
+            return False
+        for item in allowed:
+            if token == item or token.startswith(item) or item.startswith(token):
+                return True
+        return False
     removed: List[str] = []
     kept_sentences: List[str] = []
-    for sentence in re.split(r"(?<=[.!?。！？])\s*", str(text or "")):
+    # 注意：分隔必须要求"标点后有空白"，否则型号里的点（TW11-3216-P3.0）会被拆断
+    for sentence in re.split(r"(?<=[.!?。！？])\s+", str(text or "")):
         piece = sentence.strip()
         if not piece:
             continue
-        models = [m for m in MODEL_CODE_RE.findall(piece) if m.lower() not in allowed]
+        models = [m for m in MODEL_CODE_RE.findall(piece) if not _is_allowed(m)]
         if models:
             removed.extend(models)
             continue

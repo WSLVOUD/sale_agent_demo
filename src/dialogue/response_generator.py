@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from typing import Any, List, Optional
 
@@ -188,6 +189,21 @@ def _fallback_language_rule(context: ResponseContext) -> str:
     return _language_rule(context)
 
 
+_DASH_RE = re.compile(r"\s*[\u2014\u2013]\s*")
+
+
+def normalize_customer_punctuation(text: str) -> str:
+    """客户口径：不要破折号 —— 一律改逗号（2026-09-22 实测反馈）。
+
+    只处理 em dash（—）与 en dash（–）；型号里的连字符（TW11-3216-P3.0）不受影响。
+    """
+    cleaned = _DASH_RE.sub(", ", str(text or ""))
+    cleaned = re.sub(r"\s*,\s*,+", ", ", cleaned)
+    cleaned = re.sub(r"\s+,", ",", cleaned)
+    cleaned = re.sub(r",\s*([.!?])", r"\1", cleaned)
+    return cleaned.strip()
+
+
 def generate_response(
     context: ResponseContext,
     *,
@@ -199,7 +215,22 @@ def generate_response(
 
     Strategy B（默认）：LLM 直接从结构化上下文原生生成 → 校验 → 不合格退回结构化拼装；
     Strategy A（回退/对比）：结构化拼装草稿 → LLM 润色 → 校验 → 不合格退回草稿。
+
+    所有出口都会过一遍 :func:`normalize_customer_punctuation`（破折号 → 逗号）。
     """
+    return normalize_customer_punctuation(
+        _generate_response_raw(context, llm=llm, seed=seed, strategy=strategy)
+    )
+
+
+def _generate_response_raw(
+    context: ResponseContext,
+    *,
+    llm: Optional[Any] = None,
+    seed: int = 0,
+    strategy: Optional[str] = None,
+) -> str:
+    """实际生成逻辑（统一出口由 generate_response 包一层）。"""
     fallback = compose_from_context(context, seed=seed)
     if llm is not None and not llm_available():
         llm = None
@@ -439,6 +470,7 @@ def build_context(
     grounded_facts: Optional[List[Any]] = None,
     pitch_resolution: Optional[Dict[str, Any]] = None,
     opening: str = "",
+    greeting_required: bool = False,
     business_goal: str = "",
     required_question: str = "",
     engineering_constraints: Optional[List[str]] = None,
@@ -463,6 +495,7 @@ def build_context(
         why=why,
         answer=answer,
         opening=opening,
+        greeting_required=bool(greeting_required),
         known_facts=list(known_facts or []),
         grounded_facts=list(grounded_facts or []),
         pitch_resolution=pitch_resolution,

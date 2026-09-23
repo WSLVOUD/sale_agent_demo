@@ -367,4 +367,11 @@ class SalesAgentRunner:
             "service_faq_answered": result.get("service_faq_answered", ""),
             # 计划 Phase 7：旧模板兜底链路的可观测标记（正常路径应为 False/缺失）
             "legacy_reply_path": bool(result.get("legacy_reply_path")),
+            # 计划 v2.9.1 §八/§九：产品域与轮次类型（Others / 未来 LCD-IFP 策略共用）
+            "product_domain": str(result.get("product_domain") or ""),
+            "turn_kind": str(result.get("turn_kind") or ""),
+            # 计划 v2.9.3：首层产品类型判断必须传出去，否则收口层的类型闸门拿不到依据
+            "display_type_decision": dict(result.get("display_type_decision") or {}),
+            "product_subtype": str(result.get("product_subtype") or ""),
+            "product_entry": str(result.get("product_entry") or ""),
         }

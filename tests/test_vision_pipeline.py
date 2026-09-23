@@ -294,7 +294,9 @@ class TestVisionConfirmation:
         assert "indoor" in reply, reply          # 图片看到的环境
         assert "conference" in reply, reply      # 图片看到的场景
         assert "?" in reply, reply               # 请客户确认
-        assert "installation" in reply or "rental" in reply, reply  # 仍然继续问缺失项
+        # 计划 v2.9.3 §六：图片给出的**产品类型**必须先跟客户确认，类型没定之前
+        # 不追问需求细节（一轮只问一个问题 —— installation 留到类型确认之后）。
+        assert ("led" in reply or "lcd" in reply), reply
 
     def test_no_image_turn_has_no_confirmation(self):
         from src.agents.sales.nodes.script_generator import script_generator

@@ -644,7 +644,9 @@ class TestMultiTurnSwitchProductEndToEnd:
             result = runner.run(session_id, "outdoor")
 
             requirements = memory.get_requirements(session_id)
-            assert requirements.get("display_type") == "LED"
+            # 计划 v2.9.3 §五：重置后**不再默认 LED** —— 客户只说 "outdoor" 时
+            # 类型是未定的（由 Product Type Router 推断/询问），其他需求照常采集。
+            assert requirements.get("display_type") in (None, "", "LED")
             assert requirements.get("outdoor") is True
             assert "church" not in str(requirements.get("usage") or "")
             assert result["products"] == []

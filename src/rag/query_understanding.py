@@ -143,7 +143,10 @@ _DISPLAY_TYPE_KEYWORDS: Dict[str, tuple[str, ...]] = {
         "interactive flat panel", "interactive display", "whiteboard",
     ),
     "LCD": ("lcd", "拼接屏", "拼接墙", "拼接", "液晶", "video wall", "splicing"),
-    "LED": ("led", "显示屏", "屏幕", "屏", "display", "screen", "pantalla", "écran", "экран"),
+    # 计划 v2.9.3 §五：**去掉"泛指屏就是 LED"的默认**。
+    # "显示屏 / 屏幕 / 屏 / display / screen" 这些词只说明客户要一块屏，
+    # 不代表是 LED —— 它们交给 Product Type Router 判断（推断→确认 / 询问）。
+    "LED": ("led", "led屏", "点间距屏", "箱体屏"),
 }
 
 # 场景 → 规范 purpose（同时给出英文检索词）
@@ -1147,18 +1150,9 @@ def extract_slots(message: str) -> Dict[str, Any]:
         if _any(lowered, [k.lower() for k in _DISPLAY_TYPE_KEYWORDS[display_type]]):
             slots["display_type"] = display_type
             break
-    if "display_type" not in slots:
-        # 没有显式产品类型词时，只要有"型号 / 点间距 / 场景"这类销售上下文，
-        # 且未指明 LCD/IFP，就按目录主力品类 LED 处理（后续 Phase 8 的硬约束仍会校验）
-        sales_context = (
-            _extract_pixel_pitch(text) is not None
-            or _extract_model_mention(text)[0] is not None
-            or _detect_purpose(lowered) is not None
-            or _any(lowered, _INDOOR_KEYWORDS)
-            or _any(lowered, _OUTDOOR_KEYWORDS)
-        )
-        if sales_context:
-            slots["display_type"] = "LED"
+    # 计划 v2.9.3 §五：**不做"没点名就默认 LED"**。
+    # 客户没说 LED / LCD / IFP 时 display_type 就是未知，交给 Product Type Router
+    # 去推断（要客户确认）或者直接问客户；LED 只在"所有办法都拿不到信息"时兜底。
 
     # 2) 室内 / 室外 / 半户外（显式关键词优先，其次场景推断）
     if _any(lowered, _SEMI_OUTDOOR_KEYWORDS):
@@ -1360,8 +1354,9 @@ def build_retrieval_query(slots: Dict[str, Any], fallback: str = "") -> str:
     elif installation == "fixed":
         parts.append("fixed installation")
 
-    display_type = slots.get("display_type") or "LED"
-    parts.append(f"{display_type} display")
+    # 计划 v2.9.3 §五：检索式里也不要默认 LED —— 类型未定时只写 "display"
+    display_type = slots.get("display_type")
+    parts.append(f"{display_type} display" if display_type else "display")
 
     english_purpose = purpose_english(slots.get("purpose"))
     if english_purpose:

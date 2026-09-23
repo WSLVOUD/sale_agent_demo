@@ -389,6 +389,31 @@ def _known_facts(state: SalesState) -> list:
 #   · 泛客套（"Got it" / "Thanks"）→ 不再作为固定开场（LLM 自己决定要不要客套）
 #   · 机械复述客户刚说的话        → 不再带上（客户口径：不要每轮复述）
 # 只有"事实回答"（既不是客套、也不是复述）才作为可选开场交给 LLM / 兜底拼装。
+def _greeting_required(state: SalesState, current_message: str) -> bool:
+    """客户这句话里有没有需要我们回应的招呼（计划 v2.9.2 §五）。
+
+    实测反馈（2026-09-23）：客户发 "hello，i need a led diplay"，回复里完全没有招呼。
+    原因有两个：
+
+      1. `suppress_greeting`（首次接待刚结束，别重复问候）把它一起挡掉了 ——
+         但那条口径是"别再念一遍自我介绍"，不是"客户打招呼也不理"；
+      2. 招呼只作为 `opening`（可选提示）交给 LLM，模型经常直接忽略。
+
+    所以这里独立判断，并在 ResponseContext 上用 `greeting_required` 显式要求。
+    """
+    try:
+        from ....dialogue.turn_kind import has_greeting_opener
+
+        if not has_greeting_opener(current_message):
+            return False
+    except Exception:  # pragma: no cover - 防御式
+        return False
+    # 同一轮里系统刚发过招呼（首次接待 / 上一轮 AI 已经打过招呼）→ 不重复
+    if state.get("greeting_sent_this_turn"):
+        return False
+    return True
+
+
 def _opening_for(state: SalesState, current_message: str, *, allow_ack: bool = True) -> str:
     if not allow_ack:
         return ""
@@ -396,6 +421,19 @@ def _opening_for(state: SalesState, current_message: str, *, allow_ack: bool = T
         from ....dialogue import echo_ratio
         from ....dialogue.response_validator import GENERIC_ACK_RE
         from ....rag.reply_composer import acknowledge, reply_language
+        from ....dialogue.turn_kind import has_greeting_opener
+
+        # ── 计划 v2.9.2 §五/§六：客户以打招呼开场时，招呼必须并进最终回复 ──
+        # 实测 bug：客户发 "hi" + "i need a display"（聚合成一个回合）→ intent 被判成
+        # need_query → 只有"需求追问"分支在跑，Greeting 节点那句招呼**永远不会出现**。
+        # 这里把招呼作为"接话的一部分"交给唯一话术出口（LLM 自己组织；无 LLM 时结构化拼装也会带上）。
+        greeting = ""
+        if _greeting_required(state, current_message):
+            greeting = (
+                "Hi!"
+                if reply_language(current_message) != "zh"
+                else "你好！"
+            )
 
         acknowledgement = str(state.get("acknowledgement") or "").strip()
         if not acknowledgement:
@@ -411,12 +449,12 @@ def _opening_for(state: SalesState, current_message: str, *, allow_ack: bool = T
                 or ""
             ).strip()
         if not acknowledgement:
-            return ""
+            return greeting
         if GENERIC_ACK_RE.search(acknowledgement):
-            return ""
+            return greeting
         if echo_ratio(acknowledgement, current_message) >= 0.5:
-            return ""
-        return acknowledgement
+            return greeting
+        return f"{greeting} {acknowledgement}".strip() if greeting else acknowledgement
     except Exception as exc:  # pragma: no cover - 防御式
         logger.warning("[Dialogue] opening line failed: %s", exc)
         return str(state.get("acknowledgement") or "")
@@ -566,6 +604,8 @@ def _natural_reply(
         # 系统已经生成的"接话"（例如对自我介绍的回应）：LLM 可自行决定要不要用，
         # 无 LLM 时结构化拼装会带上它（不丢内容，也不再强制每轮都接话）
         opening=_opening_for(state, current_message, allow_ack=allow_ack),
+        # 实测修复：客户打了招呼就必须在回复里回应（独立于 opening 的可选提示）
+        greeting_required=_greeting_required(state, current_message),
         newly_confirmed={},
         missing_fields=[slot] if slot else [],
         known_facts=_known_facts(state),
@@ -583,6 +623,8 @@ def _natural_reply(
     )
     context.allow_ack = allow_ack
     context.allow_connector = allow_ack
+    # 兜底链路也要用同一份"接话"（含 v2.9.2 的招呼合并），否则两条路径话术不一致
+    opening_text = str(getattr(context, "opening", "") or "")
     text = ""
     try:
         text = generate_response(context, llm=_dialogue_llm(), seed=_turn_seed(state))
@@ -614,7 +656,7 @@ def _natural_reply(
             seed=_turn_seed(state),
             requirement=state.get("requirements") or {},
             include_ack=allow_ack,
-            llm_ack=str(state.get("acknowledgement") or ""),
+            llm_ack=opening_text or str(state.get("acknowledgement") or ""),
             vision_confirmation="",
         )
     )
@@ -775,6 +817,91 @@ def script_generator(state: SalesState) -> SalesState:
     # 避免销售只会重复问问题（不调用 LLM，措辞按轮次轮换）。
     # 注意：product_question / others 不在这一支 —— 它们要先让 Solution Agent
     # 用 RAG 回答客户的问题，再由 orchestrator 把追问接在答复后面。
+    # ── 计划 v2.9.3 §五/§六：产品类型没确认前，先解决"LED 还是 LCD" ────────────
+    # 以前这里直接问 LED 的需求问题（"indoors or outdoors?"），等于默认客户要 LED。
+    # 现在：类型未 CONFIRMED（UNKNOWN / 推断中）→ 这一轮只问类型（推断→确认 或 直接问），
+    # 客户确认后才进入对应链路；LED 只在最终 fallback 时才用。
+    # 边界：只在"需求采集"意图里生效（greeting 由下面的 Greeting 分支处理；
+    # 客户问价格/交期/产品由各自分支先回答 —— 计划 v2.9.2 §八 客户问题优先）。
+    detail_decision = state.get("display_type_decision") or {}
+    # 类型已确认 → 按链路分流：LED 走现有成熟链路；LCD 目前只有入口（计划 §十五 需求链留白）
+    if (
+        str(detail_decision.get("status") or "") == "CONFIRMED"
+        and str(detail_decision.get("display_type") or "") == "LCD"
+        and intent in ("need_query", "industry")
+    ):
+        try:
+            from ....dialogue.product_type_router import load_decision
+            from ....rag.reply_composer import reply_language as _reply_language2
+
+            lcd_decision = load_decision(detail_decision)
+            label = "LCD video wall" if not lcd_decision.is_ifp else "interactive flat panel (LCD)"
+            language_zh = str(_reply_language2(str(state.get("current_message") or ""))).startswith("zh")
+            ack = (
+                f"好的，按 {label} 来做。"
+                if language_zh
+                else f"Understood, let's go with {label} for this project."
+            )
+            state["response"] = ack
+            state["lcd_entry"] = {
+                "product_domain": "LCD",
+                "subtype": lcd_decision.subtype,
+                "status": "REQUIREMENT_CHAIN_PENDING",
+            }
+            logger.info(
+                "[ProductType] LCD 类型已确认（subtype=%s）→ 进入 LCD_ENTRY"
+                "（需求链按计划留白，未套用 LED 需求问题）",
+                lcd_decision.subtype or "-",
+            )
+            return state
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[ProductType] LCD 入口失败：%s", exc)
+
+    if (
+        str(detail_decision.get("status") or "") != "CONFIRMED"
+        and intent in ("need_query", "industry")
+    ):
+        try:
+            from ....dialogue.product_type_router import (
+                load_decision,
+                product_type_question,
+            )
+            from ....rag.reply_composer import reply_language as _reply_language
+
+            decision = load_decision(detail_decision)
+            type_question = product_type_question(
+                decision,
+                language=_reply_language(str(state.get("current_message") or "")),
+                seed=_turn_seed(state),
+            )
+            # 带图那一轮：先把"图片里看到什么"跟客户核一遍（计划 v2.9.3 §六），
+            # 再问类型 —— 同一条消息，由统一话术出口组织。
+            vision_line = _vision_confirmation(state)
+            state["response"] = _natural_reply(
+                state,
+                answer=vision_line,
+                question=type_question,
+                slot="display_type",
+                business_goal=(
+                    # 计划 §六：推断出的类型要客户**确认**（是/否），
+                    # 不能再把"选哪个"的菜单丢回给客户
+                    "confirm our product-type suggestion with a yes/no question "
+                    "(do not present a menu of options, do not assume LED, "
+                    "do not ask requirement details yet)"
+                    if decision.status == "INFERRED" and decision.display_type
+                    else "confirm whether the customer wants LED or LCD "
+                    "(do not assume LED, do not ask requirement details yet)"
+                ),
+            )
+            state["product_type_gate"] = decision.to_dict()
+            logger.info(
+                "[ProductType] 类型未确认（status=%s type=%s）→ 本轮只问类型：%s",
+                decision.status, decision.display_type, state["response"],
+            )
+            return state
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[ProductType] 类型确认轮失败，继续原链路：%s", exc)
+
     pending_question = state.get("pending_question")
     if (
         pending_question
@@ -822,6 +949,63 @@ def script_generator(state: SalesState) -> SalesState:
     
     # Greeting - 如果首次接待刚完成则跳过
     if intent == "greeting":
+        # ── 计划 v2.9.2 §五/§六/§十八：Greeting = 自然业务入口，不做产品判断 ──
+        # 产品域判断由 Unified Understanding / Product Domain Router 负责；
+        # Greeting 只决定"接住招呼 + 要不要问客户找哪种屏"，或者直接把已有需求
+        # 交给下游（LED 走现有链路；LCD/IFP 走占位入口）。
+        try:
+            from ....dialogue.product_router import (
+                LED_ENTRY,
+                PRODUCT_SELECTION,
+                PRODUCT_SELECTION_QUESTION,
+            )
+
+            entry = str(state.get("product_entry") or "")
+            understanding = state.get("turn_understanding") or {}
+            has_signal = bool(understanding.get("business_signal"))
+            if entry == PRODUCT_SELECTION and not has_signal:
+                # 纯招呼：欢迎 + 问客户要找哪种显示产品（不猜 LED/LCD/IFP）
+                decision = state.get("display_type_decision") or {}
+                if decision.get("needs_explanation"):
+                    # 计划 v2.9.3 §九：客户问"LED/LCD 是什么 / 有什么区别" → 先简单解释再问
+                    try:
+                        from ....dialogue.product_type_router import explanation_lines
+                        # 注意：不能在本函数里 import 成 reply_language —— 那会把它变成
+                        # 整个函数的局部变量，函数里其它地方的 reply_language 就 UnboundLocalError
+                        from ....rag.reply_composer import reply_language as _reply_language
+
+                        led_line, lcd_line = explanation_lines(
+                            _reply_language(str(state.get("current_message") or ""))
+                        )
+                        state["response"] = (
+                            f"Hi! {led_line} {lcd_line} {PRODUCT_SELECTION_QUESTION}"
+                        )
+                    except Exception:  # pragma: no cover - 防御式
+                        state["response"] = (
+                            "Hi! How can I help you today? " + PRODUCT_SELECTION_QUESTION
+                        )
+                else:
+                    state["response"] = (
+                        "Hi! How can I help you today? " + PRODUCT_SELECTION_QUESTION
+                    )
+                # next_action 由 classify 已经定为 ask（greeting 分支），
+                # 这里不再新增决策点（架构收敛测试把 script_generator 的
+                # next_action 写入数钉死，禁止继续堆决策）
+                state["greeting_entry"] = "product_selection"
+                logger.info("Greeting → product selection question（未提供产品类型）")
+                return state
+            if has_signal and entry:
+                # 招呼里已经带业务信息 → 别只回招呼；交给产品入口继续采集
+                state["greeting_entry"] = entry
+                logger.info(
+                    "Greeting with business signal → entry=%s domain=%s",
+                    entry, state.get("product_domain"),
+                )
+                # LED：不在这里改任何逻辑，继续走下面既有链路（需求采集 / 追问）
+                if entry == LED_ENTRY and not state.get("response"):
+                    state["response"] = ""
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("Greeting entry routing failed: %s", exc)
         if suppress_greeting:
             # 首次接待已完成，不需要再次问候，也不要再问姓名（首次接待已问过）
             # 直接询问场景用途，进入需求挖掘流程（客户口径：不举例，直接问）

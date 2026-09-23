@@ -78,3 +78,20 @@ def clean_enhanced_memory():
         enhanced_memory.clear_all()
     except ImportError:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _reset_response_llm_breaker():
+    """每个用例后复位 ResponseGenerator 的"LLM 熔断"状态。
+
+    否则"离线失败"的用例会把熔断器打开，后面的用例（用假 LLM 的那种）就再也
+    调不到 LLM 了 —— 表现为测试顺序一变就红（实测：同一个测试单跑通过、
+    跟在别的用例后面失败）。
+    """
+    yield
+    try:
+        from src.dialogue.response_generator import reset_llm_breaker
+
+        reset_llm_breaker()
+    except Exception:  # pragma: no cover - 防御式
+        pass

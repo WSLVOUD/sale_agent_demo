@@ -62,25 +62,22 @@ DIALOGUE = [
 
 
 class _Captured:
+    """捕获 Others 交给统一 ResponseGenerator 的 ResponseContext（计划 v2.9.1 §十一）。
+
+    改造后 Others 不再自己拼 Prompt / 调 LLM，所以这里拦的是 generate_response。
+    """
+
     def __init__(self):
-        self.prompts = []
+        self.contexts = []
+        self.llm_factory_calls = 0
 
-    def __call__(self, temperature: float = 0.7):  # pragma: no cover - 简单工厂
-        captured = self
+    def llm(self, temperature: float = 0.7):  # pragma: no cover - 简单工厂
+        self.llm_factory_calls += 1
+        return object()
 
-        class _LLM:
-            def invoke(self, prompt):
-                content = getattr(prompt, "content", None)
-                if content is None:
-                    content = str(prompt)
-                captured.prompts.append(str(content))
-
-                class _Response:
-                    content = "Sure — I'll put the quotation together right away."
-
-                return _Response()
-
-        return _LLM()
+    def generate(self, context, *, llm=None, seed=0):
+        self.contexts.append(context)
+        return "Sure - I'll put the quotation together right away."
 
 
 def _profile() -> RequirementProfile:
@@ -89,44 +86,53 @@ def _profile() -> RequirementProfile:
 
 def _run_node(monkeypatch, session_id: str, message: str, *, profile=None):
     captured = _Captured()
-    monkeypatch.setattr(others_module, "get_llm", captured)
+    monkeypatch.setattr(others_module, "get_llm", captured.llm)
+    import src.dialogue.response_generator as rg
+
+    monkeypatch.setattr(rg, "generate_response", captured.generate)
     state = {
         "session_id": session_id,
         "messages": [{"role": "user", "content": message}],
         "requirement": profile_to_solution_requirement(profile) if profile else {},
         "requirement_profile": profile,
         "hybrid_search": None,
+        "product_domain": "LED",
+        "current_message": message,
     }
     others_module.others_node(state)
-    assert captured.prompts, "others_node 必须真的调用 LLM"
-    return captured.prompts[-1]
+    assert captured.contexts, "others_node 必须把上下文交给统一 ResponseGenerator"
+    return captured.contexts[-1]
 
 
 class TestOthersNodeCarriesContext:
 
-    def test_prompt_includes_the_recent_dialogue(self, monkeypatch):
+    def test_context_includes_the_recent_dialogue(self, monkeypatch):
         session_id = "others-ctx-1"
         memory.clear(session_id)
         memory.extend(session_id, DIALOGUE)
         try:
-            prompt = _run_node(monkeypatch, session_id, "yes", profile=_profile())
-            assert "Recent conversation" in prompt
+            context = _run_node(monkeypatch, session_id, "yes", profile=_profile())
+            assert context.action == "FREE_QUESTION"
+            assert context.product_domain == "LED"
+            dialogue = context.recent_dialogue
             # 上一句 AI 的问话（客户的 "yes" 是在回答它）必须看得见
-            assert "Shall I prepare the quotation?" in prompt
+            assert "Shall I prepare the quotation?" in dialogue
             # 更早的上下文（尺寸 / 室内 / 固装）也要在
-            assert "indoor, 3*5, permanent" in prompt
-            assert "i need a led display" in prompt
+            assert "indoor, 3*5, permanent" in dialogue
+            assert "i need a led display" in dialogue
             # 顺序：旧的在前、新的在后（模型据此判断"最后一句在问什么"）
-            assert prompt.index("i need a led display") < prompt.index("Shall I prepare the quotation?")
+            assert dialogue.index("i need a led display") < dialogue.index(
+                "Shall I prepare the quotation?"
+            )
         finally:
             memory.clear(session_id)
 
-    def test_prompt_has_confirmed_requirements_from_profile(self, monkeypatch):
+    def test_context_has_confirmed_requirements_from_profile(self, monkeypatch):
         session_id = "others-ctx-2"
         memory.clear(session_id)
         try:
-            prompt = _run_node(monkeypatch, session_id, "give me quatatio", profile=_profile())
-            confirmed = prompt.split("Confirmed customer requirements")[1]
+            context = _run_node(monkeypatch, session_id, "give me quatatio", profile=_profile())
+            confirmed = "\n".join(context.known_facts)
             assert "indoor" in confirmed
             assert "fixed" in confirmed, "安装方式必须可见（否则又会问 fixed 还是 rental）"
             assert "3000" in confirmed and "5000" in confirmed, "尺寸必须可见"
@@ -134,13 +140,20 @@ class TestOthersNodeCarriesContext:
         finally:
             memory.clear(session_id)
 
-    def test_prompt_tells_the_model_not_to_reask_known_facts(self, monkeypatch):
+    def test_context_restrictions_forbid_reasking_and_recommending(self, monkeypatch):
         session_id = "others-ctx-3"
         memory.clear(session_id)
         try:
-            prompt = _run_node(monkeypatch, session_id, "yes", profile=_profile())
-            assert "never re-ask" in prompt.lower() or "Never re-ask" in prompt
-            assert "do not ask the\n  customer for it again" in prompt
+            context = _run_node(monkeypatch, session_id, "yes", profile=_profile())
+            for rule in (
+                "do_not_repeat_known_facts",
+                "do_not_recommend_models",
+                "do_not_ask_requirement_questions",
+                "do_not_invent_facts",
+            ):
+                assert rule in context.restrictions, rule
+            # Free Question 这一轮不该追问需求
+            assert context.response_shape.allow_question is False
         finally:
             memory.clear(session_id)
 

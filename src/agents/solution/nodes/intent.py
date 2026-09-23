@@ -60,3 +60,22 @@ def route_by_intent(state: SolutionState) -> str:
         "conversation": "conversation",
         "others": "others",
     }.get(state.get("intent"), "others")
+
+
+def route_by_turn_kind(state: SolutionState) -> str:
+    """计划 v2.9.1 §五：普通闲聊不进 Others（free_question）分支。
+
+        PURE_CONVERSATION                  → conversation
+        其它（含 CONVERSATION_WITH_BUSINESS_SIGNAL / FREE_QUESTION）→ 按 intent 的老路由
+
+    也就是说：只有"确实归不进闲聊、也不是产品问题"的才落到 Others（Free Question）。
+    """
+    from ....dialogue.turn_kind import CONVERSATION_WITH_BUSINESS_SIGNAL, PURE_CONVERSATION
+
+    kind = str(state.get("turn_kind") or "")
+    if kind == PURE_CONVERSATION:
+        return "conversation"
+    if kind == CONVERSATION_WITH_BUSINESS_SIGNAL:
+        # 闲聊 + 业务信号：先接住，业务信息已经在需求抽取层入档；仍走老路由
+        return route_by_intent(state)
+    return route_by_intent(state)

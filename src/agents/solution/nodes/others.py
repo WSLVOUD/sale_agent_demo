@@ -195,20 +195,47 @@ def others_node(state: SolutionState) -> SolutionState:
         from ....rag.query_understanding import response_language_rule
         from ....rag.reply_composer import reply_language
 
-        response = get_llm(temperature=0.7).invoke(
-            OTHERS_PROMPT.format(
-                recent_dialogue=recent_dialogue,
-                question=question,
-                user_model=user_asked_model or "（未提及具体型号）",
-                requirement=requirements,
-                confirmed="\n".join(requirement_lines(guard_source))
-                or "- （还没有确认的需求）",
-                products=products_text,
-                # 默认策略下必须是纯英文（客户口径：不能出现任何一句中文）
-                language_rule=response_language_rule(reply_language(question)),
-            )
+        # ── 计划 v2.9.1 §十一~§十三（Step 8/9/10）─────────────────────────
+        # Others 不再自己拼 Prompt + 自己调 LLM + 自己格式化，而是把"问答所需
+        # 的业务上下文"交给统一的 ResponseGenerator（内部还会过 Semantic Validator）：
+        #
+        #     Free Question → ResponseContext → ResponseGenerator → Validator
+        #
+        # RAG / ModelGuard / 需求约束（Step 7）保持不变，仍然在这一层完成。
+        from ....dialogue import ResponseContext
+        from ....dialogue.response_generator import generate_response
+        from ....dialogue.turn_kind import UNKNOWN as _UNKNOWN_DOMAIN
+
+        free_context = ResponseContext(
+            action="FREE_QUESTION",
+            customer_message=question,
+            business_goal=(
+                "answer the customer's question using ONLY the provided product data; "
+                "do not recommend a model, do not mention models unless the customer "
+                "named one, do not ask requirement questions"
+            ),
+            known_facts=list(requirement_lines(guard_source)),
+            recent_dialogue=recent_dialogue,
+            product_domain=str(state.get("product_domain") or _UNKNOWN_DOMAIN),
+            language=reply_language(question),
+            restrictions=[
+                "do_not_invent_facts",
+                "do_not_recommend_models",
+                "do_not_ask_requirement_questions",
+                "do_not_contradict_confirmed_requirements",
+            ],
         )
-        answer = response.content if hasattr(response, "content") else str(response)
+        # 检索到的产品资料 = 这一轮要传达的事实（facts only，措辞交给 LLM）
+        free_context.answer = products_text
+        answer = generate_response(free_context, llm=get_llm(temperature=0.7))
+        if not answer:
+            # 兜底不能把内部标记（"（未检索到相关产品资料）"）发给客户
+            answer = (
+                products_text
+                if product_chunks
+                else "I don't have the specifics on that right now - let me check with "
+                "our team and come back to you."
+            )
         # 客户没点名型号 → 自由问答里不给型号（型号只由推荐链路给出）
         answer, removed_models = strip_model_mentions(
             answer, allow=[user_asked_model] if user_asked_model else ()

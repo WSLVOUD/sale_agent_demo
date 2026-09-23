@@ -149,6 +149,27 @@ class MemoryStore:
             return True
         return False
 
+    # ── 多产品需求簿（计划 v2.9.2 §十三~§十七）────────────────────────────
+    def get_requirement_book(self, session_id: str) -> Dict[str, Any]:
+        """取这个会话的多产品需求簿（RequirementBook 的 JSON 形态）。"""
+        if session_id not in self._sessions:
+            return {}
+        return dict(self._sessions[session_id].get("requirement_book") or {})
+
+    def set_requirement_book(self, session_id: str, payload: Any) -> None:
+        self._ensure(session_id)
+        self._sessions[session_id]["requirement_book"] = dict(payload or {})
+
+    # ── 第一层产品类型判断（计划 v2.9.3 §十二/§十三：状态 + 锁定跨轮保留）──
+    def get_display_type_decision(self, session_id: str) -> Dict[str, Any]:
+        if session_id not in self._sessions:
+            return {}
+        return dict(self._sessions[session_id].get("display_type_decision") or {})
+
+    def set_display_type_decision(self, session_id: str, payload: Any) -> None:
+        self._ensure(session_id)
+        self._sessions[session_id]["display_type_decision"] = dict(payload or {})
+
     def get_requirements(self, session_id: str) -> Dict[str, Any]:
         """取累计需求（M10：旧字段，是 RequirementProfile 的**只读投影**）。
 

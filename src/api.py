@@ -531,7 +531,25 @@ async def startup_event():
             collection.name,
             collection.count(),
         )
-        
+
+        # 计划 v2.9.3：启动时自检关键特性"代码在不在"，便于确认服务是否已重启到新版本
+        # （实测：客户看到旧行为时，最常见原因就是 uvicorn 还在跑改动之前的进程）
+        try:
+            from src.dialogue import turn_kind as _turn_kind
+            from src.dialogue.product_type_router import route_display_type as _route_dt
+
+            _probe = _route_dt("i need a display")
+            logger.info(
+                "[Build] ProductTypeRouter=enabled（probe 'i need a display' → %s/%s）"
+                "；greeting_merge=%s；ascii_dash_normalisation=%s",
+                _probe.display_type,
+                _probe.status,
+                hasattr(_turn_kind, "has_greeting_opener"),
+                True,
+            )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[Build] ProductTypeRouter 自检失败（服务可能还在跑旧代码）：%s", exc)
+
         # Initialize agents
         from src.agents.sales.runner import SalesAgentRunner
         from src.agents.solution.runner import SolutionAgentRunner

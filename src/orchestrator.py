@@ -424,6 +424,15 @@ class DualAgentOrchestrator:
         # 判定由销售节点在语境里做（LLM 语义理解 + 规则，不靠关键词），
         # 这里只透传 —— 收口层据此决定"只承接"还是"接住 + 追问"。
         result.setdefault("offtopic_turn", bool(sales_result.get("offtopic_turn")))
+        # 计划 v2.9.1 §八/§九：产品域 + 轮次类型（Others / 未来 LCD-IFP 策略共用）
+        result.setdefault("product_domain", str(sales_result.get("product_domain") or ""))
+        result.setdefault("turn_kind", str(sales_result.get("turn_kind") or ""))
+        # 计划 v2.9.3：类型判断 + 入口名（收口层的类型闸门要用）
+        result.setdefault(
+            "display_type_decision", dict(sales_result.get("display_type_decision") or {})
+        )
+        result.setdefault("product_subtype", str(sales_result.get("product_subtype") or ""))
+        result.setdefault("product_entry", str(sales_result.get("product_entry") or ""))
         result.setdefault("action_candidates", self._action_candidates(sales_result))
         # v2.7 §18/§19：这一轮新填的槽位 + Turn 上下文（覆盖率与闸门的依据）
         result.setdefault("newly_filled_slots", result_newly_filled)
@@ -620,6 +629,49 @@ class DualAgentOrchestrator:
                 "question_realigned": bool(aligned),
             }
             questions = self._question_candidates(result)
+
+        # ── 计划 v2.9.3 §五/§六：类型未确认前，**任何路径**都不许直接问需求细节 ──
+        # 这一条放在收口层（而不是某个分支里），所以 conversation / free question /
+        # product question / need_query 哪条路径进来，都不可能绕过"先定 LED 还是 LCD"。
+        type_decision = result.get("display_type_decision") or {}
+        if (
+            # 只有"销售层确实给出过类型判断"（或入口是 PRODUCT_SELECTION）时才拦截；
+            # 旧测试/旧调用没有这个字段时保持原行为（生产链路 classify 每次都会写）
+            (bool(type_decision) or str(result.get("product_entry") or "") == "PRODUCT_SELECTION")
+            and str(type_decision.get("status") or "") != "CONFIRMED"
+            and question_slot
+            and question_slot != "display_type"
+        ):
+            try:
+                from .dialogue.product_type_router import (
+                    load_decision,
+                    product_type_question,
+                )
+
+                gate_question = product_type_question(
+                    load_decision(type_decision),
+                    # 换说法：用轮次/消息做种子，避免每次都同一句（客户口径：别像问卷）
+                    seed=len(str(result.get("customer_input") or "")) + len(
+                        str(result.get("turn_id") or "")
+                    ),
+                )
+                if gate_question:
+                    logger.info(
+                        "[ProductType] 收口层拦截：类型未确认（status=%s）→ 把需求问题(%s)"
+                        "换成类型确认问题",
+                        type_decision.get("status"), question_slot,
+                    )
+                    question_slot = "display_type"
+                    result["pending_slot"] = "display_type"
+                    result["pending_question"] = gate_question
+                    result["product_type_gate"] = type_decision
+                    # 正文里那句"需求细节"的问句必须换掉：去掉旧问句 → 换类型确认问句
+                    guard = self._response_coordinator()._guard()
+                    kept = guard.strip_questions(str(result.get("response") or "")).strip()
+                    result["response"] = f"{kept} {gate_question}".strip() if kept else gate_question
+                    questions = self._question_candidates(result)
+            except Exception as exc:  # pragma: no cover - 防御式
+                logger.warning("[ProductType] 收口层类型闸门失败：%s", exc)
 
         conversation = self._conversation_state(session_id)
         momentum = compute_momentum(

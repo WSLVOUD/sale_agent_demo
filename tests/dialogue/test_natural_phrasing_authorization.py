@@ -143,7 +143,8 @@ class TestLLMIsAuthorizedToPhraseItItself:
             "Indoors or outdoors — which one is it?",  # 重写后合格
         ])
         text = generate_response(_context(), llm=llm)
-        assert text == "Indoors or outdoors — which one is it?"
+        # 客户口径（2026-09-23）：破折号一律换逗号
+        assert text == "Indoors or outdoors, which one is it?"
         assert len(llm.prompts) == 2, "应触发一次重写"
         assert "Problems to fix" in llm.prompts[1]
 

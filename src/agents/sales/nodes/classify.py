@@ -187,6 +187,87 @@ def classify(state: SalesState) -> SalesState:
 
     state["intent"] = intent
 
+    # 计划 v2.9.2 §四/§七：统一回合理解 → 产品域路由（纯接口，不做 LCD/IFP 策略）
+    try:
+        from ....dialogue.product_type_router import (
+            UNKNOWN as _DT_UNKNOWN,
+            load_decision as _load_dt_decision,
+            route_display_type as _route_display_type,
+        )
+        from ....dialogue.product_router import route_product_domain
+        from ....dialogue.turn_understanding import (
+            RequirementBook,
+            understand_turn,
+        )
+        from ....memory.store import memory as _memory
+
+        session_id = str(state.get("session_id") or "")
+        # ── 计划 v2.9.3 §四/§五：第一层产品类型判断（LED / LCD / UNKNOWN）──
+        # 优先级：客户明确 LED/LCD → IFP 特征(归 LCD) → 图片 → 用途推断 → 解释 → 询问；
+        # 客户明确确认过就锁定（locked=True），只有客户明确改口才重新路由。
+        previous_decision = (
+            _load_dt_decision(_memory.get_display_type_decision(session_id))
+            if session_id
+            else None
+        )
+        vision_type = ""
+        vision = state.get("vision")
+        if isinstance(vision, dict):
+            vision_type = str(vision.get("display_type") or "")
+        decision = _route_display_type(
+            message,
+            profile=state.get("requirement_profile"),
+            vision_display_type=vision_type,
+            vision_reason=str(
+                (vision or {}).get("reason") if isinstance(vision, dict) else ""
+            ),
+            current=previous_decision,
+        )
+        state["display_type_decision"] = decision.to_dict()
+
+        book = (
+            RequirementBook.from_payload(_memory.get_requirement_book(session_id))
+            if session_id
+            else RequirementBook()
+        )
+        understanding = understand_turn(
+            message,
+            intent=intent,
+            profile=state.get("requirement_profile"),
+            book=book,
+        )
+        # IFP 属于 LCD（计划 §四/§十四）：第一层只记 LED / LCD；子类型单独留痕
+        if decision.display_type in ("LED", "LCD"):
+            understanding.product_domain = decision.display_type
+            understanding.product_domains = [decision.display_type]
+        elif decision.display_type == _DT_UNKNOWN:
+            understanding.product_domain = _DT_UNKNOWN
+            understanding.product_domains = []
+        changes = book.apply(understanding)
+        understanding.active_requirement = (
+            str(changes.get("active_after") or "") or understanding.active_requirement
+        )
+        state["turn_understanding"] = understanding.to_dict()
+        state["product_domain"] = understanding.product_domain
+        state["product_subtype"] = decision.subtype
+        state["turn_kind"] = understanding.conversation_type
+        state["product_entry"] = route_product_domain(
+            understanding.product_domain, comparison=understanding.comparison
+        )
+        state["product_switch"] = changes
+        if session_id:
+            _memory.set_requirement_book(session_id, {"requirements": book.snapshot()})
+            _memory.set_display_type_decision(session_id, decision.to_dict())
+        logger.info(
+            "Turn understanding: intent=%s domain=%s subtype=%s status=%s locked=%s "
+            "kind=%s entry=%s active=%s",
+            intent, state["product_domain"], state["product_subtype"],
+            decision.status, decision.locked, state["turn_kind"],
+            state["product_entry"], understanding.active_requirement,
+        )
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("turn understanding failed: %s", exc)
+
     # Set next_action so orchestrator can route appropriately
     if intent == "product_question":
         state["next_action"] = "product_question"

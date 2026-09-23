@@ -117,7 +117,14 @@ class ResponseShape:
     def for_action(cls, action: str, *, has_question: bool = False) -> "ResponseShape":
         """按 Action 给出默认形状（ASK / ANSWER_AND_ASK / DIRECT_ANSWER / RECOMMEND…）。"""
         name = str(action or "").strip().upper()
-        allow_answer = name in ("DIRECT_ANSWER", "ANSWER_AND_ASK", "ANSWER", "RECOMMEND")
+        allow_answer = name in (
+            "DIRECT_ANSWER",
+            "ANSWER_AND_ASK",
+            "ANSWER",
+            "RECOMMEND",
+            # 计划 v2.9.1 §十一：Others 降级为 Free Question —— 只回答、不追问
+            "FREE_QUESTION",
+        )
         allow_question = bool(has_question) or name in ("ASK", "ANSWER_AND_ASK")
         return cls(
             action=name,
@@ -160,6 +167,9 @@ class ResponseContext:
     # 客户口径：LLM 可以自己决定**要不要用它**（不强制每轮都接话）；
     # 没有 LLM 时结构化拼装会带上它，保证这份内容不丢。
     opening: str = ""
+    # 计划 v2.9.2 §五（实测修复）：客户这句话里有招呼 → 回复必须先把招呼接住。
+    # 与 opening（接话锚点）分开：opening 可以不带招呼，但 greeting_required 必须被满足。
+    greeting_required: bool = False
     notes: List[str] = field(default_factory=list)
     # ── v2.5++：结构化业务上下文（不再只是"该说的那句话"）────────────────
     known_facts: List[str] = field(default_factory=list)
@@ -181,6 +191,8 @@ class ResponseContext:
     question_spec: QuestionSpec = field(default_factory=QuestionSpec)
     # 计划 v2.8 §十二：这一轮允许表达什么（语义任务范围，不是 token 限制）
     response_shape: ResponseShape = field(default_factory=ResponseShape)
+    # 计划 v2.9.1 §八：产品域（LED / LCD / IFP / UNKNOWN / MULTI）—— 只描述，不做判断
+    product_domain: str = ""
 
     def __post_init__(self) -> None:
         """旧字段 → QuestionSpec 的一次性归一（保证只有一份"要问什么"）。"""
@@ -310,6 +322,8 @@ class ResponseContext:
     def prompt_block(self) -> str:
         """给 LLM 的**结构化**业务上下文（不含任何"该不该推荐"的判断权）。"""
         lines = [f"Dialogue action: {self.action}"]
+        if self.product_domain:
+            lines.append(f"Product domain: {self.product_domain}")
         shape = self.response_shape.to_dict()
         lines.append(
             "Response shape (what this turn allows): "
@@ -344,6 +358,14 @@ class ResponseContext:
             lines.append(
                 "Optional context hint (facts only, not a sentence to copy; "
                 f"use only if it fits naturally): {self.opening}"
+            )
+        if self.greeting_required:
+            # 实测 bug：客户说 "hello, i need a led display"，回复里完全没有招呼。
+            # 这条是**必须满足**的要求，不是可选提示。
+            lines.append(
+                "The customer greeted you in their message. You MUST open your reply "
+                "by greeting them back in your own words (e.g. \"Hi!\" / \"Hello!\"), "
+                "then continue with the business content in the same message."
             )
         if self.recommendation:
             model = self.recommendation.get("model")
