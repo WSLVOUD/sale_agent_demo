@@ -594,6 +594,10 @@ def _natural_reply(
         return _strip_markdown(text)
     # 兜底：旧模板链路（保证一定有话可说）
     state["response_source"] = "template"
+    # 计划 Phase 7：旧模板链路退出前要先有"日志验证"数据 ——
+    # 正常路径不该出现这个标记；出现了说明 LLM 原生生成没成功（可观测、可统计）。
+    state["legacy_reply_path"] = True
+    logger.info("[Legacy] 本轮走了旧模板兜底链路（response_source=template）")
     return _strip_markdown(
         compose_requirement_reply(
             answer=answer,

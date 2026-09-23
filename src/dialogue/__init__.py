@@ -168,7 +168,7 @@ from .speech_act import (
     SpeechActResult,
     detect_speech_act,
 )
-from .response_context import ResponseContext
+from .response_context import QuestionSpec, ResponseContext
 from .response_generator import (
     DEFAULT_STRATEGY,
     NATIVE_SYSTEM_PROMPT,
@@ -350,6 +350,7 @@ __all__ = [
     "momentum_bonus",
     "next_candidate_slot",
     "profile_slot_map",
+    "QuestionSpec",
     "render_minimal",
     "short_question_response",
     "strip_mechanical_phrases",

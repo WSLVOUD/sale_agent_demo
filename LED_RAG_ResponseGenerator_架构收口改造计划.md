@@ -11,12 +11,12 @@
 | Phase | 内容 | 状态 | 完成日期 | 证据 |
 |---|---|---|---|---|
 | 1 | 建立唯一决策对象（审计 + 映射 + 一致性测试） | ✅ 已完成 | 2026-09-23 | `tests/dialogue/test_action_consistency.py`（5 条）；全量 596 passed |
-| 2 | QuestionPlanner 降级为候选生成 | ⏳ 待做 | | |
-| 3 | QuestionFlow 收口为状态管理 | ⏳ 待做 | | |
-| 4 | ResponseContext 重构（QuestionSpec） | ⏳ 待做 | | |
-| 5 | ResponseGenerator 唯一出口 | ⏳ 待做 | | |
-| 6 | script_generator 瘦身 | ⏳ 待做 | | |
-| 7 | 旧回复链退出（先替换 → 测试 → 日志 → 再删除） | ⏳ 待做 | | |
+| 2 | QuestionPlanner 降级为候选生成 | ✅ 已完成 | 2026-09-23 | `candidate_questions()` + `plan_next_question()==候选[0]`；本文件 §Phase 2 详情 |
+| 3 | QuestionFlow 收口为状态管理 | ✅ 已完成 | 2026-09-23 | 源码不变量测试（无 state 写入 / 不生成话术） |
+| 4 | ResponseContext 重构（QuestionSpec） | ✅ 已完成 | 2026-09-23 | `QuestionSpec` + 旧字段自动归一；`build_context` 无需改调用方 |
+| 5 | ResponseGenerator 唯一出口 | ✅ 已完成 | 2026-09-23 | 校验只读 `QuestionSpec.slot`；离线生成不改 action/slot |
+| 6 | script_generator 瘦身 | 🚧 收敛机制已落地（搬运进行中） | 2026-09-23 | 决策点数量钉死（21）+ 禁止写 pending_*；余下 21 处 next_action 逐条搬 |
+| 7 | 旧回复链退出（先替换 → 测试 → 日志 → 再删除） | 🚧 替换/日志已就绪，删除待验证 | 2026-09-23 | 模板链路只允许出现在 fallback + `legacy_reply_path` 可观测标记 |
 
 ### ✅ Phase 1：建立唯一决策对象（2026-09-23 完成）
 
@@ -72,6 +72,73 @@ python -m pytest -q                                             # 596 passed（�
 - `DialogueAction.question_slot` == `FinalResponse` 实际问的 slot（Policy 优先）
 - `RECOMMEND` 动作本轮问 0 个需求问题
 - 闸门改问不被对齐覆盖
+
+---
+
+### ✅ Phase 2：QuestionPlanner 降级为候选生成（2026-09-23 完成）
+
+- 新增 `candidate_questions(profile, language, seed) -> list[dict]`：按 `QUESTION_PLAN` 顺序
+  给出**全部候选**，每个候选带 `slot / question / priority / blocking / state / easier / reason`
+- `plan_next_question()` 改为 `candidate_questions(...)[0]` —— 保留兼容，但定位已降级
+- 不变量（`tests/dialogue/test_architecture_convergence.py`）：
+  `plan_next_question() == candidate_questions()[0]`；planner 源码不得写 `state[...]`
+- 验收：QuestionPlanner 只产生 Candidate，最终 slot 由 DialoguePolicy 选（Phase 1 已锁）
+
+### ✅ Phase 3：QuestionFlow 收口为状态管理（2026-09-23 完成）
+
+- 复核结论：`src/dialogue/question_flow.py` 已经是"状态 + 计划"（`pass1_pending` /
+  `hard_recap_pending` / `environment_should_ask_now` / `previous_slot_blocked` /
+  `next_question_plan`），**没有**生成客户话术、也没有写 `state`。
+- 不变量测试把这条边界钉住：源码不得出现 `state[`、`generate_response`、`context.response`；
+  `next_question_plan()` 只返回带 `slot + question` 的计划对象供 Policy 用。
+
+### ✅ Phase 4：ResponseContext 重构 —— QuestionSpec（2026-09-23 完成）
+
+- 新增 `QuestionSpec(slot / intent / text)`：**slot = Python 决策、intent = Python 决策、
+  wording = LLM**（计划 §6 原则）
+- `ResponseContext.__post_init__`：旧的 `question / question_slot / question_intent`
+  自动归一进 `question_spec`；显式传 spec 时以 spec 为准（旧字段保留兼容，不破坏调用方）
+- 导出 `QuestionSpec`（`src/dialogue/__init__.py`）
+
+### ✅ Phase 5：ResponseGenerator 唯一出口（2026-09-23 完成）
+
+- `_validate()` 一律用 `context.question_spec.slot` / `.text` 做校验
+  → 生成侧无法"顺手换一个问题"
+- 不变量测试：
+  · 离线（无 LLM）生成时必须问 spec 的那个槽位，且**不得修改** `context.action / slot / spec`
+  · 源码不得出现 `context.action =` / `context.question_slot =` / `context.recommendation =`
+    / `context.engineering_result =` 这类赋值
+
+### 🚧 Phase 6：script_generator 瘦身（收敛机制已落地，搬运进行中）
+
+已落地（可验证）：
+
+- **决策点数量钉死**：`tests/dialogue/test_architecture_convergence.py` 记录当前
+  `state["next_action"] =` 写入 21 处，**再增加就会测试失败**（计划 §18：禁止继续堆 if/else）
+- script_generator **不得**写 `pending_slot` / `pending_question`（问题选择权已不在它手里）
+- 结构上已确认：问什么 → `question_planner`（候选）+ `question_flow`（状态）+
+  DialoguePolicy（决定）；script_generator 只按 `intent` 组织表达与调用 ResponseGenerator
+
+仍待搬运（21 处 `next_action` 的语义映射，逐条搬进 DialoguePolicy 后再删）：
+
+```text
+ask / ask_only      → DialogueAction.ASK（或 ANSWER_AND_ASK）
+trigger_solution    → DialogueAction.RECOMMEND
+product_question    → DialogueAction.DIRECT_ANSWER（+ 按需 ASK）
+others              → DialogueAction.DIRECT_ANSWER
+end / closing       → DialogueAction.ACK_ONLY
+```
+
+> 不一次性重写的原因就是计划 §7/§10 自己的要求：**先替换 → 测试 → 日志验证 → 再删除**。
+
+### 🚧 Phase 7：旧回复链退出（替换与日志已就绪，删除待验证）
+
+- 正常路径 = `ResponseGenerator`（LLM 原生生成，`response_source="llm"`）
+- 旧模板链路只允许出现在**兜底**：不变量测试检查 `compose_requirement_reply(` 的调用点
+  必须全部落在 `state["response_source"] = "template"` 之后
+- 新增可观测标记 `legacy_reply_path`（脚本生成 + runner 透传），日志打 `[Legacy]`
+  → 有了"生产里还有多少轮走旧链路"的数据，才能按计划安全删除
+- 删除顺序（照计划）：`compose_requirement_reply` → `reply_composer` 模板 → template polish
 
 ---
 

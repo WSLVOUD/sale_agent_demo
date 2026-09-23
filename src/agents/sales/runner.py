@@ -365,4 +365,6 @@ class SalesAgentRunner:
             # 2026-09-21：服务口径（安装/说明书/质保）已经由销售这一轮答过了
             # → 收口层不要再把标准口径拼一遍（否则同一段里说两遍、还会自相矛盾）
             "service_faq_answered": result.get("service_faq_answered", ""),
+            # 计划 Phase 7：旧模板兜底链路的可观测标记（正常路径应为 False/缺失）
+            "legacy_reply_path": bool(result.get("legacy_reply_path")),
         }

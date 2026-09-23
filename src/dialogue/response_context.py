@@ -54,6 +54,30 @@ DEFAULT_RESTRICTIONS = (
 
 
 @dataclass
+class QuestionSpec:
+    """这一轮"要问的那一项"（计划 §6）。
+
+        slot    = Python 决策（DialoguePolicy 定的槽位）
+        intent  = Python 决策（问这一项的目的）
+        text    = 意思锚点（模板问句），**措辞由 LLM 重写**
+
+    以前 question / question_slot / question_intent / required_question 四个字段
+    各说各话；现在它们都归到这一个对象上（旧字段保留兼容）。
+    """
+
+    slot: str = ""
+    intent: str = ""
+    text: str = ""
+
+    @property
+    def is_ask(self) -> bool:
+        return bool(self.slot or self.intent or self.text)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"slot": self.slot, "intent": self.intent, "text": self.text}
+
+
+@dataclass
 class ResponseContext:
     action: str = ""
     customer_message: str = ""
@@ -93,6 +117,19 @@ class ResponseContext:
     allow_ack: bool = True
     allow_connector: bool = True
     one_question: bool = True
+    # 计划 §6：要问的那一项（slot / intent / 意思锚点）
+    question_spec: QuestionSpec = field(default_factory=QuestionSpec)
+
+    def __post_init__(self) -> None:
+        """旧字段 → QuestionSpec 的一次性归一（保证只有一份"要问什么"）。"""
+        if not self.question_spec.is_ask and (
+            self.question_slot or self.question or self.question_intent
+        ):
+            self.question_spec = QuestionSpec(
+                slot=str(self.question_slot or ""),
+                intent=str(self.question_intent or ""),
+                text=str(self.question or ""),
+            )
 
     def effective_restrictions(self) -> List[str]:
         items = list(self.restrictions or DEFAULT_RESTRICTIONS)

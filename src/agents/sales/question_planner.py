@@ -118,13 +118,34 @@ def plan_next_question(
 ) -> Optional[Dict[str, Any]]:
     """返回下一个应该问的问题（没有缺失则返回 None）。
 
+    ⚠️ 架构收口（Phase 2）：QuestionPlanner 只是**候选生成器**。
+    这个函数现在等价于 ``candidate_questions(...)[0]``，保留只为兼容旧调用；
+    最终问哪一项由 DialoguePolicy（``dialogue_action``）决定，
+    Planner **不得**覆盖 Policy，也不得直接写 ``state["response"]``。
+
     问法来自 ``src/rag/readiness.py`` 的 ``QUESTION_VARIANTS``：
     同一槽位有多种自然说法，按 ``seed`` 轮换，问到的内容始终一致。
     """
+    candidates = candidate_questions(profile, language=language, seed=seed)
+    return candidates[0] if candidates else None
+
+
+def candidate_questions(
+    profile: RequirementProfile,
+    language: str = "en",
+    seed: int = 0,
+) -> List[Dict[str, Any]]:
+    """本轮**候选**问题（按该问的先后排序；Planner 只提供候选，不做最终决定）。
+
+    每个候选都带齐决策层需要的信息：slot / question / priority / blocking /
+    state / easier / reason。DialoguePolicy 从中挑一个（并允许换成别的槽位）。
+    """
     if profile is None:
-        return None
+        return []
     from src.rag.readiness import question_for
     from src.models.requirement import SLOT_PRIORITY
+
+    candidates: List[Dict[str, Any]] = []
 
     # ── v2.5+++（计划 §8）：Environment Hard Priority ────────────────────
     # 室内外还没定（也没被明显场景推断出来）→ 第一项问题必须是 Indoor / Outdoor；
@@ -136,7 +157,7 @@ def plan_next_question(
         easier = state == "UNKNOWN" and profile.ask_count("environment") >= 1
         question = question_for("environment", language, seed, easier=easier)
         if question:
-            return {
+            candidates.append({
                 "slot": "environment",
                 "question": question,
                 "blocking": True,
@@ -145,7 +166,7 @@ def plan_next_question(
                 "priority": SLOT_PRIORITY.get("environment", "HIGH"),
                 "missing": profile.missing_slots(),
                 "reason": "environment_hard_gate",
-            }
+            })
 
     for slot, question_en, question_zh in QUESTION_PLAN:
         if _slot_filled(profile, slot):
@@ -156,7 +177,7 @@ def plan_next_question(
         question = question_for(slot, language, seed, easier=easier) or (
             question_zh if language == "zh" else question_en
         )
-        return {
+        candidates.append({
             "slot": slot,
             "question": question,
             "blocking": slot in BLOCKING_SLOTS,
@@ -165,8 +186,9 @@ def plan_next_question(
             # Phase 17：字段优先级（HIGH → MEDIUM → LOW）
             "priority": SLOT_PRIORITY.get(_SLOT_ALIAS.get(slot, slot), "MEDIUM"),
             "missing": profile.missing_slots(),
-        }
-    return None
+            "reason": "question_plan",
+        })
+    return candidates
 
 
 def should_ask_before_recommend(profile: RequirementProfile) -> bool:
@@ -194,6 +216,7 @@ def missing_slots(profile: RequirementProfile) -> List[str]:
 __all__ = [
     "BLOCKING_SLOTS",
     "QUESTION_PLAN",
+    "candidate_questions",
     "missing_slots",
     "plan_next_question",
     "should_ask_before_recommend",

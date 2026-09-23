@@ -231,6 +231,10 @@ SOFT_ISSUES = frozenset({"generic_ack", "repeated_connector", "repeated_question
 
 def _validate(context: ResponseContext, text: str):
     """按当前上下文校验一段回复。"""
+    # 计划 §7/§16.4：ResponseGenerator 只能改表达方式 ——
+    # 校验用的问句槽位一律取自 QuestionSpec（唯一一份"要问什么"），
+    # 生成侧不得自行换槽位。
+    spec_slot = str(getattr(context.question_spec, "slot", "") or "")
     return validate_response(
         text,
         allow_ack=context.allow_ack,
@@ -240,11 +244,15 @@ def _validate(context: ResponseContext, text: str):
         answer=context.answer,
         customer_message=context.customer_message,
         supported_parameters=_supported_parameters(context),
-        required_question=context.question or context.required_question,
+        required_question=(
+            str(getattr(context.question_spec, "text", "") or "")
+            or context.question
+            or context.required_question
+        ),
         engineering_result=context.engineering_result,
         grounded_facts=context.grounded_facts,
         pitch_resolution=context.pitch_resolution,
-        question_slot=context.question_slot,
+        question_slot=spec_slot or context.question_slot,
         recent_questions=context.recent_questions,
     )
 
