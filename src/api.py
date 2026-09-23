@@ -608,6 +608,12 @@ async def root():
 async def health_check():
     """Health check endpoint."""
     collection = vectorstore._collection if vectorstore else None
+    try:
+        from src.dialogue.response_metrics import snapshot as _response_metrics
+
+        response_metrics = _response_metrics()
+    except Exception:  # pragma: no cover - 防御式
+        response_metrics = {}
     return {
         "status": "healthy",
         "orchestrator_ready": orchestrator is not None,
@@ -615,6 +621,8 @@ async def health_check():
         "vectorstore_path": config.VECTORSTORE_DIR,
         "collection": collection.name if collection else None,
         "record_count": collection.count() if collection else 0,
+        # 计划 v2.9 §二十一：回复链路计数（正常路径 / 重写 / 兜底 / 旧模板）
+        "response_metrics": response_metrics,
     }
 
 

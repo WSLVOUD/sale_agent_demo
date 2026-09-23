@@ -203,7 +203,12 @@ def generate_response(
     fallback = compose_from_context(context, seed=seed)
     if llm is not None and not llm_available():
         llm = None
+    # 计划 v2.9 §二十一：回复链路的可观测计数（删旧链路前先拿数据）
+    from .response_metrics import record as _record
+
+    _record("total_turns")
     if llm is None:
+        _record("structured_fallback_turns")
         return fallback
     active = str(strategy or get_response_strategy()).strip().upper()
     text = (
@@ -212,13 +217,17 @@ def generate_response(
         else _polish_draft(context, fallback, llm)
     )
     if not text:
+        _record("structured_fallback_turns")
         return fallback
     check = _validate(context, text)
     if check.ok:
+        _record("llm_native_turns")
         return text
     # 只是"口味"问题（通用客套 / 连接词 / 问法重复）→ 不整段回退，直接采用
     hard_issues = [item for item in check.issues if item not in SOFT_ISSUES]
     if not hard_issues:
+        _record("validator_failures")
+        _record("llm_native_turns")
         logger.info(
             "[ResponseGenerator] %s 仅有措辞提示 %s → 采用 LLM 说法",
             active, check.issues,
@@ -229,10 +238,14 @@ def generate_response(
     if repaired:
         recheck = _validate(context, repaired)
         if not [item for item in recheck.issues if item not in SOFT_ISSUES]:
+            _record("validator_failures")
+            _record("repair_turns")
             logger.info(
                 "[ResponseGenerator] 重写一次后通过（原问题：%s）", check.issues
             )
             return repaired
+    _record("validator_failures")
+    _record("structured_fallback_turns")
     logger.info("[ResponseGenerator] %s 生成结果不合格 %s → 结构化拼装", active, check.issues)
     return fallback
 
@@ -390,10 +403,15 @@ def compose_from_context(context: ResponseContext, *, seed: int = 0) -> str:
     elif context.action == CLARIFY and context.conflicts:
         parts.append("Before I pick a model, one thing to clear up: " + context.conflicts[0] + ".")
 
-    if context.question:
+    # 计划 v2.9 §四/§九：问句以 QuestionSpec 为准（legacy question 只是兼容别名）
+    asked = (
+        str(getattr(context.question_spec, "expression_anchor", "") or "")
+        or context.question
+    )
+    if asked:
         if context.why and not parts:
             parts.append(f"{context.why.rstrip('.')}.")
-        parts.append(context.question.strip())
+        parts.append(asked.strip())
     elif context.action == ACK_ONLY and not parts:
         parts.append("Noted.")
     elif context.action == CONFIRM and not parts and context.notes:

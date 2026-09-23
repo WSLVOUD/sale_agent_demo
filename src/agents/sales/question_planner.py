@@ -159,6 +159,7 @@ def candidate_questions(
         if question:
             candidates.append({
                 "slot": "environment",
+                "dialogue_slot": "environment",
                 "question": question,
                 "blocking": True,
                 "state": state,
@@ -179,6 +180,9 @@ def candidate_questions(
         )
         candidates.append({
             "slot": slot,
+            # 计划 v2.9 §四：Policy / QuestionSpec 用的是对话层槽位名
+            # （viewing_distance / pixel_pitch / size …），planner 内部仍用档案字段名
+            "dialogue_slot": _SLOT_ALIAS.get(slot, slot),
             "question": question,
             "blocking": slot in BLOCKING_SLOTS,
             "state": state,

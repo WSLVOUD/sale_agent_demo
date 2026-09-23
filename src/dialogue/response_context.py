@@ -196,6 +196,34 @@ class ResponseContext:
             self.response_shape = ResponseShape.for_action(
                 self.action, has_question=self.question_spec.is_ask
             )
+        # 计划 v2.9 §八：默认业务限制（LLM 只能表达，不能越界）
+        defaults = (
+            "ask_only_one_question",
+            "do_not_invent_facts",
+            "do_not_repeat_known_facts",
+        )
+        existing = [str(item) for item in (self.restrictions or [])]
+        for rule in defaults:
+            if rule not in existing:
+                existing.append(rule)
+        self.restrictions = existing
+
+    def legacy_prose_fields(self) -> Dict[str, str]:
+        """哪些字段仍然是"成句话术"（计划 §五/§六 要逐步退出的那批）。
+
+        这些字段只允许承载**事实 / 意图的锚点**，不允许是完整销售段落；
+        调用方用它做观测与逐步迁移。
+        """
+        candidates = {
+            "answer": self.answer,
+            "opening": self.opening,
+            "why": self.why,
+        }
+        return {
+            name: str(value)
+            for name, value in candidates.items()
+            if str(value or "").strip()
+        }
 
     def effective_restrictions(self) -> List[str]:
         items = list(self.restrictions or DEFAULT_RESTRICTIONS)
@@ -308,11 +336,14 @@ class ResponseContext:
         if missing:
             lines.append("Still missing: " + ", ".join(missing))
         if self.answer:
-            lines.append(f"Answer to give first (keep these facts): {self.answer}")
+            lines.append(
+                "Answer facts to convey (facts only — NOT final wording, "
+                f"express it in your own words): {self.answer}"
+            )
         if self.opening:
             lines.append(
-                "Optional opening line from the system (use only if it fits naturally, "
-                f"otherwise skip it): {self.opening}"
+                "Optional context hint (facts only, not a sentence to copy; "
+                f"use only if it fits naturally): {self.opening}"
             )
         if self.recommendation:
             model = self.recommendation.get("model")

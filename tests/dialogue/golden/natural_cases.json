@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "notes": "计划 v2.9 §二十二（Phase 14）：自然话术 Golden Dataset。检查的不只是'问对了 slot'，还包括：只问一个问题、不重复已知信息、不编造参数/型号、不出现多个独立话术块。",
+  "cases": [
+    {
+      "id": "case-001-indoor-3x5",
+      "customer": "3m x 5m indoor LED",
+      "action": "ANSWER_AND_ASK",
+      "slot": "viewing_distance",
+      "known_facts": ["LED", "indoor", "3m x 5m"],
+      "must_not_ask": ["environment", "size", "pixel_pitch"],
+      "must_not_mention": ["P2.5", "P3", "TW11"]
+    },
+    {
+      "id": "case-002-indoor-church",
+      "customer": "indoor church, about 6 by 3 metres",
+      "action": "ASK",
+      "slot": "installation",
+      "known_facts": ["indoor", "church", "6m x 3m"],
+      "must_not_ask": ["environment", "size"],
+      "must_not_mention": ["P5", "outdoor"]
+    },
+    {
+      "id": "case-003-outdoor-stage",
+      "customer": "outdoor stage screen for concerts",
+      "action": "ASK",
+      "slot": "viewing_distance",
+      "known_facts": ["outdoor", "stage", "concert"],
+      "must_not_ask": ["environment", "purpose"],
+      "must_not_mention": ["indoor"]
+    },
+    {
+      "id": "case-004-fixed-install",
+      "customer": "permanent wall installation in our lobby",
+      "action": "ASK",
+      "slot": "size",
+      "known_facts": ["fixed installation", "lobby"],
+      "must_not_ask": ["installation"],
+      "must_not_mention": ["rental"]
+    },
+    {
+      "id": "case-005-price-preference",
+      "customer": "we care more about price than quality",
+      "action": "ASK",
+      "slot": "size",
+      "known_facts": ["price preference: price"],
+      "must_not_ask": ["price_preference"],
+      "must_not_mention": ["P1.2"]
+    }
+  ]
+}

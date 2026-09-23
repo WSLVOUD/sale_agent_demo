@@ -533,12 +533,13 @@ def _natural_reply(
 
     current_message = str(state.get("current_message") or "")
     slot = slot or str(state.get("pending_slot") or "")
-    if answer and question:
-        action = ANSWER_AND_ASK
-    elif answer:
-        action = DIRECT_ANSWER
-    else:
-        action = ASK
+    # 计划 v2.9 §十六（Phase 8）：动作由 DialoguePolicy 定，这里只做映射。
+    # 以前这里按 answer/question 重新推断 ANSWER_AND_ASK / DIRECT_ANSWER / ASK，
+    # 等于第二个决策中心。
+    from ....dialogue.action_bridge import expression_action
+
+    action = expression_action(state, answer=answer, question=question)
+    state["response_action"] = action
     # v2.5+++（计划 §5）：把"有来源的事实"整理好交给 LLM —— 它只能用这些
     profile = state.get("requirement_profile")
     grounded = build_grounded_facts(
@@ -597,6 +598,12 @@ def _natural_reply(
     # 计划 Phase 7：旧模板链路退出前要先有"日志验证"数据 ——
     # 正常路径不该出现这个标记；出现了说明 LLM 原生生成没成功（可观测、可统计）。
     state["legacy_reply_path"] = True
+    try:  # 计划 v2.9 §二十一：legacy 轮次计数
+        from ....dialogue.response_metrics import record as _record
+
+        _record("legacy_reply_turns")
+    except Exception:  # pragma: no cover - 防御式
+        pass
     logger.info("[Legacy] 本轮走了旧模板兜底链路（response_source=template）")
     return _strip_markdown(
         compose_requirement_reply(
