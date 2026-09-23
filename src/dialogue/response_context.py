@@ -59,7 +59,9 @@ class QuestionSpec:
 
         slot    = Python 决策（DialoguePolicy 定的槽位）
         intent  = Python 决策（问这一项的目的）
-        text    = 意思锚点（模板问句），**措辞由 LLM 重写**
+        anchor  = **语义表达锚点**（例如 "ask roughly how far viewers will be"），
+                  **不是最终客户问句** —— 最终表达由 ResponseGenerator 的 LLM 生成。
+        text    = 旧字段，保留兼容（等价于 anchor）
 
     以前 question / question_slot / question_intent / required_question 四个字段
     各说各话；现在它们都归到这一个对象上（旧字段保留兼容）。
@@ -67,14 +69,72 @@ class QuestionSpec:
 
     slot: str = ""
     intent: str = ""
-    text: str = ""
+    anchor: str = ""
+    text: str = ""  # 兼容别名：没有 anchor 时读它
+
+    def __post_init__(self) -> None:
+        # 计划 v2.8 §四：text → anchor（明确"这不是最终话术"）
+        if not self.anchor and self.text:
+            self.anchor = self.text
+        elif not self.text and self.anchor:
+            self.text = self.anchor
+
+    @property
+    def expression_anchor(self) -> str:
+        return self.anchor or self.text
 
     @property
     def is_ask(self) -> bool:
-        return bool(self.slot or self.intent or self.text)
+        return bool(self.slot or self.intent or self.expression_anchor)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"slot": self.slot, "intent": self.intent, "text": self.text}
+        return {
+            "slot": self.slot,
+            "intent": self.intent,
+            "anchor": self.expression_anchor,
+        }
+
+
+@dataclass
+class ResponseShape:
+    """这一轮**允许表达什么**（计划 v2.8 §十二）。
+
+    不是 token 限制，而是告诉 LLM："这轮只需要完成一个动作"：
+
+        ResponseShape(action="ASK", allow_answer=False, allow_context=True,
+                      allow_question=True, max_questions=1)
+
+    用"语义任务范围"控制长度，而不是用 max_output_tokens 截断（计划 §十/§十一）。
+    """
+
+    action: str = ""
+    allow_answer: bool = False
+    allow_context: bool = True
+    allow_question: bool = False
+    max_questions: int = 1
+
+    @classmethod
+    def for_action(cls, action: str, *, has_question: bool = False) -> "ResponseShape":
+        """按 Action 给出默认形状（ASK / ANSWER_AND_ASK / DIRECT_ANSWER / RECOMMEND…）。"""
+        name = str(action or "").strip().upper()
+        allow_answer = name in ("DIRECT_ANSWER", "ANSWER_AND_ASK", "ANSWER", "RECOMMEND")
+        allow_question = bool(has_question) or name in ("ASK", "ANSWER_AND_ASK")
+        return cls(
+            action=name,
+            allow_answer=allow_answer,
+            allow_context=True,
+            allow_question=allow_question,
+            max_questions=1 if allow_question else 0,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "action": self.action,
+            "allow_answer": self.allow_answer,
+            "allow_context": self.allow_context,
+            "allow_question": self.allow_question,
+            "max_questions": self.max_questions,
+        }
 
 
 @dataclass
@@ -119,6 +179,8 @@ class ResponseContext:
     one_question: bool = True
     # 计划 §6：要问的那一项（slot / intent / 意思锚点）
     question_spec: QuestionSpec = field(default_factory=QuestionSpec)
+    # 计划 v2.8 §十二：这一轮允许表达什么（语义任务范围，不是 token 限制）
+    response_shape: ResponseShape = field(default_factory=ResponseShape)
 
     def __post_init__(self) -> None:
         """旧字段 → QuestionSpec 的一次性归一（保证只有一份"要问什么"）。"""
@@ -129,6 +191,10 @@ class ResponseContext:
                 slot=str(self.question_slot or ""),
                 intent=str(self.question_intent or ""),
                 text=str(self.question or ""),
+            )
+        if not self.response_shape.action:
+            self.response_shape = ResponseShape.for_action(
+                self.action, has_question=self.question_spec.is_ask
             )
 
     def effective_restrictions(self) -> List[str]:
@@ -216,6 +282,12 @@ class ResponseContext:
     def prompt_block(self) -> str:
         """给 LLM 的**结构化**业务上下文（不含任何"该不该推荐"的判断权）。"""
         lines = [f"Dialogue action: {self.action}"]
+        shape = self.response_shape.to_dict()
+        lines.append(
+            "Response shape (what this turn allows): "
+            f"answer={shape['allow_answer']}, context={shape['allow_context']}, "
+            f"question={shape['allow_question']}, max_questions={shape['max_questions']}"
+        )
         if self.business_goal:
             lines.append(f"Business goal: {self.business_goal}")
         if self.customer_message:
@@ -278,18 +350,20 @@ class ResponseContext:
             lines.append(f"Engineering constraint: {constraint}")
         if self.required_question:
             lines.append(f"Required question (slot): {self.required_question}")
-        if self.question_slot or self.question_intent:
-            slot = self.question_slot or self.required_question
-            intent = self.question_intent or self.question
+        spec = self.question_spec
+        if spec.is_ask or self.question_slot or self.question_intent:
+            slot = spec.slot or self.question_slot or self.required_question
+            intent = spec.intent or self.question_intent or ""
             lines.append(f"Question to ask — slot: {slot}; what it must achieve: {intent}")
             lines.append(
                 "Phrasing is entirely yours: ask it in your own natural words "
                 "(exactly one question). Sound like a person, not a form."
             )
-        if self.question:
+        anchor = spec.expression_anchor or self.question
+        if anchor:
             lines.append(
-                "Canned line from the system (meaning anchor only — do NOT copy it "
-                f"verbatim, rewrite it in your own words): {self.question}"
+                "Meaning anchor only (NOT the final wording — do NOT copy it "
+                f"verbatim, rewrite it in your own words): {anchor}"
             )
         if self.recent_questions:
             lines.append(

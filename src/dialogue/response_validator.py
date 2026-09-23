@@ -46,6 +46,48 @@ INTERNAL_TERMS = (
 )
 PRODUCT_PARAM_RE = re.compile(r"\bP\d(?:\.\d+)?\b|\b\d{3,5}\s*(?:nit|nits)\b", re.IGNORECASE)
 
+# 用于"问错槽位"扫描的槽位清单（关键词由 readiness.question_keywords 提供）
+_SLOT_KEYWORDS = (
+    "environment",
+    "purpose",
+    "installation",
+    "pixel_pitch",
+    "viewing_distance",
+    "size",
+    "brightness",
+)
+
+# 客户已说过的事实短语（重复复述会被记为 repeated_known_facts）
+_KNOWN_FACT_RES = (
+    re.compile(r"\b(?:indoor|outdoor)\b", re.IGNORECASE),
+    re.compile(r"\b\d+(?:\.\d+)?\s*(?:m|meter|meters|metre|metres)\b", re.IGNORECASE),
+    re.compile(r"\b\d+\s*(?:x|by|\*)\s*\d+\b", re.IGNORECASE),
+    re.compile(r"\b(?:church|mosque|school|mall|shopping mall|meeting room|classroom)\b", re.IGNORECASE),
+)
+
+
+def _known_fact_phrases(message: str) -> List[str]:
+    """客户这句话里已经确认的事实短语（用于检测"机械复述"）。"""
+    text = str(message or "")
+    found: List[str] = []
+    for pattern in _KNOWN_FACT_RES:
+        for match in pattern.finditer(text):
+            phrase = match.group(0).strip()
+            if phrase and phrase.lower() not in {item.lower() for item in found}:
+                found.append(phrase)
+    return found
+
+# ── 计划 v2.8 §十八：话术块拼接 / 语义完整性 ─────────────────────────────
+# "多个独立回复块"：空行分隔、且每一块都自带完整句子结束符 + 各自有动词主语
+_BLOCK_SPLIT_RE = re.compile(r"\n\s*\n")
+_SENTENCE_END_RE = re.compile(r"[.!?。！？]\s*$")
+# 明显没写完的收尾（模型被截断 / 半句话）
+_TRUNCATED_TAIL_RE = re.compile(
+    r"(?:\b(?:and|or|with|for|to|the|a|an|of|about|such as|including|which|that)\b"
+    r"|[,;:，、]|\bwe can\b|\blet me\b|\bI can\b)\s*$",
+    re.IGNORECASE,
+)
+
 # 客户已经回答过、却又被重复追问的判定（用于 question_repeat_rate）
 REASK_PATTERNS: Dict[str, str] = {
     "viewing_distance": r"how far|how far away|viewing distance",
@@ -91,6 +133,11 @@ class ResponseValidation:
     ungrounded_facts: List[str] = field(default_factory=list)
     ungrounded_numbers: List[str] = field(default_factory=list)
     pitch_mismatch_unexplained: bool = False
+    # v2.8：话术块拼接 / 重复已知事实 / 语义完整性 / 问错槽位
+    response_blocks: int = 1
+    repeated_known_facts: List[str] = field(default_factory=list)
+    incomplete_tail: bool = False
+    wrong_question_slot: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -113,6 +160,10 @@ class ResponseValidation:
             "ungrounded_facts": list(self.ungrounded_facts),
             "ungrounded_numbers": list(self.ungrounded_numbers),
             "pitch_mismatch_unexplained": self.pitch_mismatch_unexplained,
+            "response_blocks": self.response_blocks,
+            "repeated_known_facts": list(self.repeated_known_facts),
+            "incomplete_tail": self.incomplete_tail,
+            "wrong_question_slot": self.wrong_question_slot,
         }
 
 
@@ -232,6 +283,53 @@ def validate_response(
             lowered_question = content.lower()
             if not any(word.lower() in lowered_question for word in keywords):
                 result.issues.append("question_intent_mismatch")
+
+    # ── 计划 v2.8 §十八：问错槽位 / 多个回复块 / 重复已知事实 / 语义不完整 ──
+    # 1) 问错槽位：Python 定 slot=application，AI 却问 viewing distance → fail
+    if question_slot and result.question_count:
+        others = [
+            other for other in _SLOT_KEYWORDS
+            if other != question_slot and _slot_keywords(other)
+        ]
+        lowered = content.lower()
+        asked_slot = next(
+            (
+                other for other in others
+                if all(word.lower() in lowered for word in _slot_keywords(other))
+            ),
+            "",
+        )
+        if asked_slot:
+            result.wrong_question_slot = True
+            result.issues.append("wrong_question_slot")
+
+    # 2) 多个独立回复块：空行分隔的块 ≥2，且每块自成完整句子（不是同一段的换行）
+    blocks = [
+        part.strip() for part in _BLOCK_SPLIT_RE.split(content) if part.strip()
+    ]
+    result.response_blocks = max(1, len(blocks))
+    if len(blocks) >= 3 or (
+        len(blocks) == 2
+        and all(len(part) > 40 and _SENTENCE_END_RE.search(part) for part in blocks)
+    ):
+        result.issues.append("multiple_response_blocks")
+
+    # 3) 机械重复已确认事实（客户已说过的信息再原样复述一遍）
+    if customer_message:
+        for fact in _known_fact_phrases(customer_message):
+            if fact.lower() in content.lower():
+                result.repeated_known_facts.append(fact)
+        # 计划 v2.8 §十八：允许"顺带确认"一两个已确认事实；
+        # 只有机械复述一大堆（≥3）才算话术拼接
+        if len(result.repeated_known_facts) >= 3:
+            result.issues.append("repeated_known_facts")
+
+    # 4) 语义完整性：结尾明显没写完（半句话 / 被截断）
+    if _TRUNCATED_TAIL_RE.search(content.strip()) and not _SENTENCE_END_RE.search(
+        content.strip()
+    ):
+        result.incomplete_tail = True
+        result.issues.append("incomplete_response")
     # 同一句话换汤不换药地重复问 → 提示换说法（软问题，交给重写）
     recent = [str(item) for item in (recent_questions or []) if str(item).strip()]
     if recent and result.question_count:
