@@ -587,6 +587,40 @@ class DualAgentOrchestrator:
         result["duplicate_check"] = duplicate_check
         questions = self._question_candidates(result)
 
+        # ── Phase 1（计划 §16.2）：最终问的必须是 DialoguePolicy 定的那一项 ──
+        # 销售层准备好的问句只能"提候选"：如果 Policy 定的槽位与它不一致，
+        # 以 Policy 为准（日志里问的槽位和客户看到的问句必须一致）。
+        # 例外：重复提问闸门刚刚**故意改问别的槽位**（duplicate_question*）——
+        # 那是同一决策层的防重放行，不能反过来被覆盖。
+        policy_slot = str(getattr(selected_action, "question_slot", "") or "")
+        firewall_rerouted = str(duplicate_check or "").startswith("duplicate_question")
+        if (
+            not firewall_rerouted
+            and policy_slot
+            and question_slot
+            and policy_slot != question_slot
+        ):
+            logger.warning(
+                "[ActionConsistency] Policy=ASK(%s) 与销售层准备的问句(%s)不一致 → 以 Policy 为准",
+                policy_slot, question_slot,
+            )
+            overridden_slot = question_slot
+            aligned = self._question_text_for_slot(policy_slot)
+            question_slot = policy_slot if aligned else ""
+            result["pending_slot"] = question_slot
+            result["pending_question"] = aligned
+            if aligned:
+                # 正文里那句"问错槽位"的问句必须换掉：先去掉旧问句，再补 Policy 槽位的问句
+                guard = self._response_coordinator()._guard()
+                kept = guard.strip_questions(str(result.get("response") or "")).strip()
+                result["response"] = f"{kept} {aligned}".strip() if kept else aligned
+            result["action_consistency"] = {
+                "policy_slot": policy_slot,
+                "overridden_slot": overridden_slot,
+                "question_realigned": bool(aligned),
+            }
+            questions = self._question_candidates(result)
+
         conversation = self._conversation_state(session_id)
         momentum = compute_momentum(
             newly_filled_slots=newly_filled,
@@ -836,7 +870,17 @@ class DualAgentOrchestrator:
                 ),
                 question_count=1 if decision.get("question") else 0,
             ))
-        if result.get("pending_question"):
+        # ── Phase 1（架构收口）：DialoguePolicy 定了槽位就以它为准 ──────────
+        # 计划 §16.1/§16.2：QuestionPlanner / QuestionFlow / script_generator
+        # 只能"提候选"，不能改最终决定。以前这里无条件把销售层准备的
+        # pending_slot 也当成候选，于是它可能压过 Policy 的选择
+        # （实测：Policy=ASK(viewing_distance) 最终却问了 pixel_pitch）。
+        policy_decided_slot = (
+            str((result.get("dialogue_action") or {}).get("target_slot") or "")
+            if isinstance(result.get("dialogue_action"), dict)
+            else ""
+        )
+        if result.get("pending_question") and not policy_decided_slot:
             slot = str(result.get("pending_slot") or "")
             # 注意：这里必须用 **Dialogue Policy 的动作词表**（ask_only），
             # 不能混进 DialogueDecision 的 ASK —— 否则日志里同一件事会有两个名字。
@@ -871,6 +915,23 @@ class DualAgentOrchestrator:
                 "source": "question_flow",
             })
         return candidates
+
+    @staticmethod
+    def _question_text_for_slot(slot: str) -> str:
+        """按槽位取标准问句（Phase 1：Policy 定槽位、模板给句子，措辞仍由 LLM 重写）。
+
+        只在"销售层准备的问句与 Policy 定的槽位不一致"时兜底用。
+        """
+        target = str(slot or "").strip()
+        if not target:
+            return ""
+        try:
+            from .rag.readiness import question_for
+
+            return str(question_for(target, "en", 0, easier=False) or "")
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[ActionConsistency] 取标准问句失败 slot=%s: %s", target, exc)
+            return ""
 
     @staticmethod
     def _facts_for_turn(result: Dict[str, Any]) -> List[Dict[str, Any]]:
