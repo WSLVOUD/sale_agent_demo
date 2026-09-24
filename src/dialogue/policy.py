@@ -104,20 +104,36 @@ def question_candidates(
     """当前还值得问的候选槽位（按业务价值从高到低）。
 
     价值 = 硬性条件 / 工程必要 > 推荐优化 > 销售偏好；同价值的顺序由会话随机种子决定。
+
+    注意（2026-09-24 修复）：候选必须用**与 Gate 同一套 Action 表** ——
+    包括跨槽位规则（客户给了点间距 → 观看距离不再问）。以前这里只调
+    ``field_action``、没跑 ``apply_cross_slot_rules``，于是"客户给了 P4"之后
+    还会把 viewing_distance 当候选排到 size 前面，收口层再"以 Policy 为准"
+    把它强制问出去（客户实测：给了 P4 又被问可视距离）。
     """
     if profile is None:
         return []
-    from .question_flow import ASK_POOL, environment_should_ask_now
+    # _actions() 就是"与 Gate 同一套字段策略 + 跨槽位规则"，直接复用，
+    # 避免在三个地方各写一份"该不该问"的判断。
+    from .question_flow import ASK_POOL, _actions, environment_should_ask_now
     from .question_order import shuffled_slots
-    from src.rag.field_policy import field_action
 
     order = list(shuffled_slots(ASK_POOL, seed=session_id or ""))
+    try:
+        actions = _actions(profile)
+    except Exception:  # pragma: no cover - 防御式
+        actions = {}
     scores: List[Tuple[str, float]] = []
     for slot in order:
-        try:
-            action = field_action(profile, slot)
-        except Exception:  # pragma: no cover - 防御式
-            continue
+        action = str(actions.get(slot) or "")
+        if not action:
+            # 表里没有这个槽位（极少数）→ 退回单字段策略，保持旧行为
+            try:
+                from src.rag.field_policy import field_action
+
+                action = str(field_action(profile, slot) or "")
+            except Exception:  # pragma: no cover - 防御式
+                continue
         if action not in ("ask", "ask_easier", "ask_later"):
             continue
         if slot == "environment":

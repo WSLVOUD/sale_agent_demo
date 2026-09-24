@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .final_guard import FinalResponseGuard
+from .action import MAX_QUESTIONS_PER_TURN
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,12 @@ class FinalResponse:
 class FinalResponseCoordinator:
     """把"这一轮所有想说的话"收成一条客户可见回复。"""
 
-    def __init__(self, guard: Optional[FinalResponseGuard] = None, *, max_questions: int = 1):
+    def __init__(
+        self,
+        guard: Optional[FinalResponseGuard] = None,
+        *,
+        max_questions: int = MAX_QUESTIONS_PER_TURN,
+    ):
         self.guard = guard or FinalResponseGuard(max_questions=max_questions)
         self.last_guard_result: Any = None
 

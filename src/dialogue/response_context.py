@@ -31,6 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from .action import MAX_QUESTIONS_PER_TURN
 from .grounded_facts import (
     SOURCE_CALCULATED,
     SOURCE_CALCULATED_FROM_DIMENSIONS,
@@ -111,7 +112,7 @@ class ResponseShape:
     allow_answer: bool = False
     allow_context: bool = True
     allow_question: bool = False
-    max_questions: int = 1
+    max_questions: int = MAX_QUESTIONS_PER_TURN
 
     @classmethod
     def for_action(cls, action: str, *, has_question: bool = False) -> "ResponseShape":
@@ -131,7 +132,7 @@ class ResponseShape:
             allow_answer=allow_answer,
             allow_context=True,
             allow_question=allow_question,
-            max_questions=1 if allow_question else 0,
+            max_questions=MAX_QUESTIONS_PER_TURN if allow_question else 0,
         )
 
     def to_dict(self) -> Dict[str, Any]:

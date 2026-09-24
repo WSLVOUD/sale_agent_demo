@@ -52,28 +52,31 @@ def is_explicit_closing(message: str) -> bool:
     return bool(_CLOSING_STOP_RE.search(str(message or "")))
 
 
-def _asked_product_type_question(session_id: str) -> tuple[bool, str]:
-    """我们上一轮是不是在问"要 LED 还是 LCD"（读对话状态，不做关键词匹配）。
-
-    返回 (是否问过类型, 上一轮问的原话)。
-    """
+def _previous_question(session_id: str) -> tuple[str, str]:
+    """上一轮 AI 问的是哪一项、问的原话（读对话状态，不做关键词匹配）。"""
     if not session_id:
-        return False, ""
+        return "", ""
     try:
         from ....dialogue import get_conversation_state
 
         conversation_state = get_conversation_state(session_id)
     except Exception as exc:  # pragma: no cover - 防御式
         logger.warning("Conversation state unavailable for product type: %s", exc)
-        return False, ""
+        return "", ""
     if conversation_state is None:
-        return False, ""
+        return "", ""
     slot = str(
         getattr(conversation_state, "last_question_slot", "")
         or getattr(conversation_state, "last_slot", "")
         or ""
     )
     question = str(getattr(conversation_state, "last_ai_question", "") or "")
+    return slot, question
+
+
+def _asked_product_type_question(session_id: str) -> tuple[bool, str]:
+    """我们上一轮是不是在问"要 LED 还是 LCD"（返回 (是否问过类型, 原话)）。"""
+    slot, question = _previous_question(session_id)
     return slot == "display_type", question
 
 
@@ -273,6 +276,50 @@ def classify(state: SalesState) -> SalesState:
                         reply_signal.get("reply"), reply_signal.get("display_type"),
                         reply_signal.get("reason"),
                     )
+                    # ── 客户口径（2026-09-24）：这是**回答**，不是"问产品" ────────
+                    # 客户只回一个 "led" 时，模型容易把它当成"产品提问"，
+                    # 整轮就被送进 Solution 的自由问答（RAG），拿不到答案时就冒出
+                    # "放宽一个条件我就能给你配型号"这种**匹配不到产品**的话术
+                    # （客户实测）。语境判断已经确认他在选型，且这句话没有提问
+                    # → 按"回答我们的问题"处理，走需求采集。
+                    if (
+                        str(reply_signal.get("reply") or "") == "chose"
+                        and "?" not in str(message)
+                        and "？" not in str(message)
+                        and intent in ("product_question", "greeting", "others")
+                    ):
+                        logger.info(
+                            "Product type answer detected → intent %s → need_query", intent
+                        )
+                        intent = "need_query"
+                        state["intent"] = intent
+
+            # ── 客户口径（2026-09-24）：这句是**在回答我们上一轮的问题** ────────
+            # 模型很容易把 "p4" / "3*5" / "indoor" 这类**参数式回答**当成"产品提问"，
+            # 整轮就会走 Solution 的自由问答 / FAST 路径，需求还没收齐就把型号报出来
+            # （客户实测：只说了 P4，AI 就报 "TW11-3216-P4.0 is the closest match…"）。
+            # 判断依据是**对话状态 + 答案匹配**（上一轮问的是哪一项），不是关键词；
+            # 带问号的真提问不受影响。
+            if intent in ("product_question", "greeting", "others") and not (
+                "?" in str(message) or "？" in str(message)
+            ):
+                from ....dialogue.conversation_state import match_answer_to_question
+
+                previous_slot, _previous_text = _previous_question(session_id)
+                match = match_answer_to_question(
+                    message, last_question_slot=previous_slot
+                )
+                if match.kind in (
+                    "ANSWER_PREVIOUS_QUESTION",
+                    "ANSWER_WRONG_SLOT",
+                    "NEW_REQUIREMENT",
+                ):
+                    logger.info(
+                        "Requirement answer detected (%s, slot=%s) → intent %s → need_query",
+                        match.kind, match.slot or previous_slot, intent,
+                    )
+                    intent = "need_query"
+                    state["intent"] = intent
         except Exception as exc:  # pragma: no cover - 防御式
             logger.warning("Product type reply understanding failed: %s", exc)
             reply_signal = {}

@@ -2,9 +2,48 @@
 
 > 基于大模型（DeepSeek）的 LED/LCD/IFP 全品类显示产品智能销售助手，采用多 Agent 协作 + 混合检索（RAG）架构，为销售团队提供实时产品推荐和技术咨询能力。
 
-> **当前版本：v2.6（2026-09-21）** ｜ 全量测试：`python -m pytest -q` → **591 条，约 1.5 分钟**
+> **当前版本：v2.9.6（2026-09-24）** ｜ 全量测试：`python -m pytest -q` → **760 条，约 2 分 40 秒**
 >
 > 当前行为口径集中在下面「当前行为口径」一节；历史版本的逐条变更见文末「变更明细」。
+>
+> **架构整理（2026-09-24）**：代码结构瘦身与职责收敛见 [`docs/refactor/`](docs/refactor/)，
+> 结论见下方「架构整理」一节。文中历史章节的数字（如 591 条）是当时的快照，保留不动。
+
+---
+
+## 架构整理（2026-09-24）
+
+目标：**不改业务行为，只收敛职责**。基线与验收数字都在 [`docs/refactor/`](docs/refactor/)：
+
+| 文档 | 内容 |
+|---|---|
+| `baseline.md` | 环境 / 启动 / 12 个接口 / 760 条测试 / 评测基线（计算 1.0、槽位 0.7032、路由 0.7439…） |
+| `dependency_map.md` | 真实 import 索引 + 分层调用链 + 多入口风险点 |
+| `module_inventory.md` | 160 个模块分类（CORE / ADAPTER / COMPATIBILITY / LEGACY / TEST_ONLY） |
+| `behavior_baseline.md` | S1~S7 关键对话行为 + 量化基线 + 行为锚点测试 |
+| `test_inventory.md` | 测试按功能分类 + 迁移方案 |
+
+本轮实际做的事：
+
+```text
+1. 产品类型词汇只保留一处定义（turn_kind），product_type_router 改为引用
+2. "一轮最多一个问题"的预算只保留一处定义（action.MAX_QUESTIONS_PER_TURN），
+   final_guard / final_response / response_context 全部改为引用
+3. 删除两个零引用的旧需求适配层：
+   src/core/sales_requirement_adapter.py、src/core/solution_requirement_adapter.py
+4. 新增 5 个架构护栏测试文件（34 条）：唯一需求模型 / 唯一产品类型入口 /
+   唯一对话决策入口 / 层间边界（RAG 不碰对话、计算层独立、Vision 只抽需求）/
+   Sales 与 Solution 共用同一套需求系统 + 推荐单一入口
+```
+
+验收（同一环境、与 `baseline.md` 逐项对比）：
+
+```text
+python -m pytest -q                          → 760 passed（基线 726，只增不减）
+python -m eval.calculator_eval               → 1.0（14/14，与基线一致）
+python -m eval.recommendation_eval           → 0.7032 / 0.5923 / 0.7439（与基线逐位一致）
+python -m eval.retrieval_eval --limit 12     → model_recall@10 0.9333、MRR 0.6708、违规率 0.0（一致）
+```
 
 ---
 

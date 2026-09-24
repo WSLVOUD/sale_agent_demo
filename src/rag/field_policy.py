@@ -298,11 +298,16 @@ def apply_cross_slot_rules(profile: Any, actions: Dict[str, str]) -> Dict[str, s
         (key for key in ("viewing_distance_m", "viewing_distance") if key in actions),
         "viewing_distance_m",
     )
-    if actions.get(distance_key) in (ASK, ASK_EASIER, DEFER, DEGRADE, DEFER_CALCULATION):
-        # 点间距已经确定（客户给的 / 已推导）：观看距离对选型没有作用，不再占用
-        # 推荐理由（SKIP），也不该被记成"降级项"
-        if pitch in (USE, INFER, ASK):
-            actions[distance_key] = SKIP
+    # 点间距已经确定（客户给的 / 已推导 / 正要去问）→ 观看距离不再问，
+    # 也不占用推荐理由（SKIP）、不算降级项。
+    #
+    # ⚠️ 2026-09-24 修复：以前这里只处理 ASK / ASK_EASIER / DEFER / DEGRADE /
+    # DEFER_CALCULATION，**漏了 ASK_LATER**（客户说过"不知道"、先换别的问题、
+    # 最后一轮再问的 parked 状态）。于是"客户给了 P4 + 视距被 park"时这条规则
+    # 没生效 → 视距留在候选里 → 收口层"以 Policy 为准"又把它问了一遍
+    # （客户实测：明明已经知道 P4，后面又被问"观众离屏多远"）。
+    if pitch in (USE, INFER, ASK) and actions.get(distance_key) not in (USE, INFER):
+        actions[distance_key] = SKIP
     return actions
 
 

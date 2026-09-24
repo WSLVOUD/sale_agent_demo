@@ -861,6 +861,31 @@ class DualAgentOrchestrator:
         )
         if removed_mechanical:
             result["mechanical_phrases_removed"] = removed_mechanical
+
+        # ── 客户口径（2026-09-24）：没在交付推荐，就不许出现具体型号 ─────────────
+        # 实测：客户只说了 P4（需求还差尺寸/场景/安装），回复里就冒出
+        # "TW11-3216-P4.0 is the closest match, 4mm pixel pitch, 500nit…"。
+        # 型号只能随推荐交付（Gate READY / 真的给了产品）一起出现；其余轮次一律清掉，
+        # 避免"需求没收齐就先报型号"。
+        try:
+            delivering = bool(result.get("products")) or bool(
+                (result.get("recommendation_gate") or {}).get("ready")
+            )
+            if text and not delivering:
+                from .rag.model_guard import strip_model_mentions
+
+                cleaned, removed_models = strip_model_mentions(
+                    text, allow=result.get("allowed_models") or ()
+                )
+                if removed_models:
+                    logger.info(
+                        "[ModelGate] 需求未就绪 → 清掉提前报出的型号：%s", removed_models
+                    )
+                    result["model_mentions_stripped"] = removed_models
+                    text = cleaned or text
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[ModelGate] 型号闸门失败：%s", exc)
+
         # ② v2.6：合并追加气泡 → 只保留一条回复 + 最多一个问题
         final = self._final_response_coordinator().build(
             text=text or str(result.get("response") or ""),

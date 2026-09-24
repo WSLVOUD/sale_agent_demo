@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .action import question_priority
+from .action import MAX_QUESTIONS_PER_TURN
 from .response_validator import INTERNAL_TERMS
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,7 @@ def _has_internal_terms(sentence: str) -> bool:
 class FinalResponseGuard:
     """客户可见文本的最后一道关卡（不改变业务决策，只做收口）。"""
 
-    def __init__(self, *, max_questions: int = 1):
+    def __init__(self, *, max_questions: int = MAX_QUESTIONS_PER_TURN):
         self.max_questions = max(1, int(max_questions))
 
     # ── 主入口 ──────────────────────────────────────────────────────────

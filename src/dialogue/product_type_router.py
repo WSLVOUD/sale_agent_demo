@@ -32,10 +32,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-# 第一层产品类型（IFP 不出现在这里）
-LED = "LED"
-LCD = "LCD"
-UNKNOWN = "UNKNOWN"
+# ── 产品类型词汇：只允许有一处定义（turn_kind）─────────────────────────────
+# 瘦身计划 Phase 2：以前这里又写了一遍 "LED"/"LCD"/"UNKNOWN" 字符串常量，
+# 和 turn_kind 各存一份，迟早漂移。现在只引用，不再重复定义。
+# 第一层产品类型（IFP 不出现在这里：它是 LCD 的子类型，见 SUBTYPE_IFP）。
+from .turn_kind import IFP as SUBTYPE_IFP, LCD, LED, UNKNOWN  # noqa: E402
 
 # 状态 / 来源（计划 §十二）
 STATUS_UNKNOWN = "UNKNOWN"
@@ -48,8 +49,7 @@ SOURCE_INFERENCE = "INFERENCE"
 SOURCE_DEFAULT = "DEFAULT"
 
 # LCD 子类型（§十四：IFP 在 LCD 链路内部判断）
-SUBTYPE_IFP = "IFP"
-SUBTYPE_PLAIN_LCD = "LCD"
+SUBTYPE_PLAIN_LCD = LCD
 
 _LED_RE = re.compile(r"\bled\b|led屏|点间距|箱体|模组", re.IGNORECASE)
 _LCD_RE = re.compile(r"\blcd\b|液晶|video ?wall|拼接屏|拼接", re.IGNORECASE)
