@@ -116,6 +116,9 @@ class SolutionState(TypedDict):
 
     # ── Phase 6：结构化需求档案（RequirementProfile）─────────────────────────
     requirement_profile: Optional[Any]
+    # ── Phase 12-1（计划 2.0）：没有 RequirementProfile 时标记未就绪 ───────────
+    # Solution 不再自己从 history / 关键词重建需求，由上层决定怎么处理。
+    requirement_not_ready: Optional[bool]
 
     # ── Phase 8/9/10：确定性选型结果 + 工程计算结果 ─────────────────────────
     recommendation_result: Optional[Dict[str, Any]]

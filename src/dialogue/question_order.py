@@ -26,16 +26,7 @@ def shuffled_slots(slots: Iterable[str], seed: str = "", seed_override: int = No
     return items
 
 
-def next_in_order(ordered: Sequence[str], candidates: Iterable[str]) -> str:
-    """按"已洗好的顺序"从候选里挑第一个（候选为空返回空串）。
-
-    这样同一会话里：先问顺序里的第 1 个，下轮问第 2 个……而不是每轮重新洗牌。
-    """
-    wanted = {str(item) for item in candidates}
-    for slot in ordered:
-        if slot in wanted:
-            return slot
-    return ""
-
-
-__all__ = ["next_in_order", "shuffled_slots"]
+# 说明（计划 2.0 Phase 12-2）：历史辅助函数 `next_in_order` 已删除 ——
+# 全仓 0 个调用方（只在 dialogue 包出口挂着），挑选逻辑实际由
+# question_flow / policy 用"洗好的顺序 + 业务价值"决定。
+__all__ = ["shuffled_slots"]

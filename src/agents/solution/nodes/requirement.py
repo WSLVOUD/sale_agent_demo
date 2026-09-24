@@ -228,6 +228,9 @@ def understand_node(state: SolutionState) -> SolutionState:
         all_text = " ".join([m.get("content", "") for m in messages])
 
         # Update state
+        # [LEGACY-COMPAT] 兼容分支：只有在"没有 RequirementProfile"时才会走到这里
+        # （有档案时上面已经走统一抽取器 + profile_to_solution_requirement 投影）。
+        # Phase 12-1/12-6：这里写的是旧 requirement 字典，不允许再进入新的需求决策。
         updates = {
             "requirement": new_req,
             "info_sufficient": parsed.get("info_sufficient", False),
@@ -327,6 +330,7 @@ def clarify_node(state: SolutionState) -> SolutionState:
     )
     if size_missing and inferred_size:
         logger.info(f"Using inferred size '{inferred_size}' for missing '尺寸'")
+        # [LEGACY-COMPAT] 同上：补齐旧字典的 size 只是给兼容消费者看，不是新的真值来源。
         new_requirement = {**requirement, "size": inferred_size}
         new_missing = [
             m for m in missing

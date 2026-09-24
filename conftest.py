@@ -69,17 +69,6 @@ def clean_memory():
         pass
 
 
-@pytest.fixture(scope="function")
-def clean_enhanced_memory():
-    """每个测试后清理增强记忆"""
-    yield
-    try:
-        from src.memory.enhanced import enhanced_memory
-        enhanced_memory.clear_all()
-    except ImportError:
-        pass
-
-
 @pytest.fixture(autouse=True)
 def _reset_response_llm_breaker():
     """每个用例后复位 ResponseGenerator 的"LLM 熔断"状态。

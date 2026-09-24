@@ -578,6 +578,21 @@ def final_fallback() -> DisplayTypeDecision:
     )
 
 
+def build_self_check(probe: str = "i need a display") -> Dict[str, str]:
+    """启动自检：返回"跑的是不是带产品类型闸门的版本"（供 api 启动日志使用）。
+
+    计划 2.0 Phase 12-5：API 不参与业务决策 —— 自检属于**路由器自己的事**，
+    所以探测逻辑放在这里，API 只负责把结果写进启动日志
+    （客户口径：看到旧行为时，最常见原因是服务还在跑改动前的进程）。
+    """
+    decision = route_display_type(probe)
+    return {
+        "probe": probe,
+        "display_type": decision.display_type,
+        "status": decision.status,
+    }
+
+
 # 计划 §九：客户不知道 LED/LCD 是什么时，只给**简单业务解释**（不给技术文档）
 EXPLANATION_LINES = {
     "en": (
@@ -684,6 +699,7 @@ __all__ = [
     "UNKNOWN",
     "DisplayTypeDecision",
     "EXPLANATION_LINES",
+    "build_self_check",
     "explanation_lines",
     "product_type_question",
     "final_fallback",

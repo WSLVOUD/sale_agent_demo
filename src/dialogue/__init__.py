@@ -19,7 +19,7 @@ from .conversation_state import (
     update_conversation_state,
 )
 from .question_planner import QuestionPlan, plan_question
-from .question_order import next_in_order, shuffled_slots
+from .question_order import shuffled_slots
 from .question_flow import (
     ASK_POOL,
     HARD_SLOTS,
@@ -289,7 +289,6 @@ __all__ = [
     "hard_recap_pending",
     "known_question",
     "match_answer_to_question",
-    "next_in_order",
     "next_question_plan",
     "note_ai_turn",
     "note_customer_turn",

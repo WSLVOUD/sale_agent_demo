@@ -195,39 +195,6 @@ def _normalize_images(images: Optional[List[ImageInput]]) -> List[str]:
     return normalized
 
 
-def _merge_turn_request(request: "ChatRequest") -> tuple[str, List[str]]:
-    """v2.5：把"一次请求里的多条消息"合并成一个 turn（并做 message_id 幂等）。
-
-    · 前端把客户连续发的多条消息放进 `messages`（按顺序）；
-    · 老客户端仍然只发 `question` / `images`，两条路径都支持；
-    · 同一个 `message_id` 重复提交（重试 / 网络重发）只处理一次。
-    """
-    try:
-        from .input import merge_request_payload
-
-        payload = merge_request_payload(
-            str(getattr(request, "session_id", "") or ""),
-            question=str(getattr(request, "question", "") or ""),
-            images=[_normalize_images(getattr(request, "images", None))] if getattr(request, "images", None) else None,
-            messages=getattr(request, "messages", None),
-            message_ids=getattr(request, "client_message_ids", None),
-        )
-        text = payload.text or str(getattr(request, "question", "") or "")
-        images = payload.images
-        if text != str(getattr(request, "question", "") or "") or images:
-            logger.info(
-                "[TurnAggregate] parts=%d → text_len=%d images=%d ids=%s",
-                len(getattr(request, "messages", None) or []) or 1,
-                len(text), len(images), payload.message_ids,
-            )
-        return text, images
-    except Exception as error:  # pragma: no cover - 防御式
-        logger.warning("Turn aggregation failed, falling back: %s", error)
-        return str(getattr(request, "question", "") or ""), _normalize_images(
-            getattr(request, "images", None)
-        )
-
-
 def _collect_turn_request(request: "ChatRequest"):
     """v2.7 §4.3：把请求拆成**消息对象列表**（不再用 text / message_ids 两个数组）。
 
@@ -536,14 +503,15 @@ async def startup_event():
         # （实测：客户看到旧行为时，最常见原因就是 uvicorn 还在跑改动之前的进程）
         try:
             from src.dialogue import turn_kind as _turn_kind
-            from src.dialogue.product_type_router import route_display_type as _route_dt
+            from src.dialogue.product_type_router import build_self_check
 
-            _probe = _route_dt("i need a display")
+            # Phase 12-5：探测逻辑归 ProductTypeRouter 自己（API 不参与业务判断）
+            _probe = build_self_check()
             logger.info(
                 "[Build] ProductTypeRouter=enabled（probe 'i need a display' → %s/%s）"
                 "；greeting_merge=%s；ascii_dash_normalisation=%s",
-                _probe.display_type,
-                _probe.status,
+                _probe.get("display_type"),
+                _probe.get("status"),
                 hasattr(_turn_kind, "has_greeting_opener"),
                 True,
             )

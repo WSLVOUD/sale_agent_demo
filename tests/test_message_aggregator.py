@@ -104,69 +104,82 @@ class TestIdempotency:
         assert turn is not None and "b" in turn.text
 
 
-class TestTurnPayload:
-    """v2.5：一次请求里的多条消息 → 一个 UserTurn 负载（前端聚合后的入口）。"""
+class TestCollectMessagesEntry:
+    """Phase 12-5（计划 2.0）：只保留 `collect_messages` 这一个合并入口。
 
-    def test_merge_messages_keeps_order(self):
-        from src.input import merge_message_parts
+    原来这一组测的是 `input.turn_payload`（merge_message_parts / merge_request_payload）
+    与 API 的 `_merge_turn_request` —— 那条链已确认 **0 个业务调用**（只被测试与
+    兼容层引用），本次删除后，断言全部迁移到**真实入口**上（覆盖不减）。
+    """
 
-        payload = merge_message_parts([
-            {"text": "We need an LED screen.", "message_id": "m1"},
-            {"text": "It is for a church.", "message_id": "m2"},
-            {"images": ["img-1"], "message_id": "m3"},
-            {"text": "Around 200 people.", "message_id": "m4"},
-        ])
-        assert payload.text == "We need an LED screen.\nIt is for a church.\nAround 200 people."
-        assert payload.images == ["img-1"]
-        assert payload.message_ids == ["m1", "m2", "m3", "m4"]
+    def test_messages_keep_order_and_images(self):
+        from src.input import collect_messages
 
-    def test_legacy_question_still_works(self):
-        from src.input import merge_request_payload
-
-        payload = merge_request_payload("legacy", question="indoor screen")
-        assert payload.text == "indoor screen"
-
-    def test_duplicate_message_ids_are_dropped(self):
-        from src.input import merge_request_payload
-
-        parts = [{"text": "first message", "message_id": "dup-1"}]
-        first = merge_request_payload("dedupe-session", messages=parts)
-        second = merge_request_payload("dedupe-session", messages=parts)
-        assert first.text == "first message"
-        assert second.text == "", "同一个 message_id 重复提交时不再处理"
-
-    def test_images_survive_dedupe(self):
-        from src.input import merge_request_payload
-
-        parts = [{"text": "look", "message_id": "img-dup", "images": ["img-a"]}]
-        merge_request_payload("dedupe-images", messages=parts)
-        again = merge_request_payload("dedupe-images", messages=parts)
-        assert again.images == ["img-a"]
-
-    def test_api_merge_helper(self):
-        """API 层的 _merge_turn_request：messages 优先、兼容 question，且幂等。"""
-        from src.api import ChatRequest, _merge_turn_request
-
-        request = ChatRequest(
-            session_id="api-merge",
+        messages = collect_messages(
+            session_id="collect-order",
             messages=[
-                {"text": "we need a screen", "message_id": "api-1"},
-                {"text": "for a church", "message_id": "api-2"},
+                {"text": "We need an LED screen.", "message_id": "m1"},
+                {"text": "It is for a church.", "message_id": "m2"},
+                {"images": ["img-1"], "message_id": "m3"},
+                {"text": "Around 200 people.", "message_id": "m4"},
             ],
         )
-        text, images = _merge_turn_request(request)
-        assert "we need a screen" in text and "for a church" in text
-        assert images == []
-        # 重复提交同样的 message_id → 文本被幂等过滤
-        text2, _ = _merge_turn_request(request)
-        assert text2 == ""
 
-    def test_api_merge_helper_legacy_path(self):
-        from src.api import ChatRequest, _merge_turn_request
+        assert [m.text for m in messages] == [
+            "We need an LED screen.",
+            "It is for a church.",
+            "",
+            "Around 200 people.",
+        ]
+        assert [m.message_id for m in messages] == ["m1", "m2", "m3", "m4"]
+        assert messages[2].images == ["img-1"]
 
-        request = ChatRequest(session_id="api-legacy", question="5m x 3m indoors")
-        text, images = _merge_turn_request(request)
-        assert text == "5m x 3m indoors" and images == []
+    def test_legacy_question_still_works(self):
+        from src.input import collect_messages
+
+        messages = collect_messages(session_id="collect-legacy", question="indoor screen")
+
+        assert [m.text for m in messages] == ["indoor screen"]
+
+    def test_duplicate_message_ids_are_dropped(self):
+        from src.input import collect_messages
+
+        # 同一个请求里放了重复的 message_id → 只算一条（跨请求的幂等在 TurnExecutor，
+        # 见本文件 TestIdempotency）
+        messages = collect_messages(
+            session_id="collect-dedupe",
+            messages=[
+                {"text": "first message", "message_id": "dup-1"},
+                {"text": "first message", "message_id": "dup-1"},
+            ],
+        )
+
+        assert [m.text for m in messages] == ["first message"]
+
+    def test_api_collect_helper_legacy_path(self):
+        """API 层：老客户端只发 question 也要收成一条消息。"""
+        from src.api import ChatRequest, _collect_turn_request
+
+        messages = _collect_turn_request(
+            ChatRequest(session_id="api-legacy", question="5m x 3m indoors")
+        )
+
+        assert [m.text for m in messages] == ["5m x 3m indoors"]
+
+    def test_api_collect_helper_prefers_messages(self):
+        from src.api import ChatRequest, _collect_turn_request
+
+        messages = _collect_turn_request(
+            ChatRequest(
+                session_id="api-collect",
+                messages=[
+                    {"text": "we need a screen", "message_id": "api-1"},
+                    {"text": "for a church", "message_id": "api-2"},
+                ],
+            )
+        )
+
+        assert [m.text for m in messages] == ["we need a screen", "for a church"]
 
 
 class TestMultimodal:

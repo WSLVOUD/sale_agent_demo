@@ -82,12 +82,6 @@ def _normalize_index_documents(documents: List = None) -> List[Dict[str, Any]]:
     return normalized
 
 
-def _extract_requirements(message: str, existing: Dict = None) -> Dict[str, Any]:
-    """Extract requirements from a message."""
-    from ...rag.parameter_inference import extract_requirements
-    return extract_requirements(message, existing or {})
-
-
 def merge_fast_path_constraints(
     inferred: Dict[str, Any] | None,
     requirements: Dict[str, Any] | None,
@@ -202,6 +196,9 @@ class SolutionAgentRunner:
                 and normalized_history[-1].get("content") == message):
             normalized_history = normalized_history[:-1]
 
+        # Phase 12-1：没有 RequirementProfile 时明确标记未就绪（见下面的分支）
+        requirement_not_ready = False
+
         # ── M7：优先使用 Sales 传下来的 RequirementProfile ─────────────────────
         # Solution 不再自己从对话重建需求；旧 requirement 字典只是 Profile 的投影。
         from ...models.legacy_adapter import profile_to_solution_requirement
@@ -214,40 +211,19 @@ class SolutionAgentRunner:
                 "Solution: 使用 Sales 的 RequirementProfile（%s 个字段），不再重建需求",
                 len(merged_requirement),
             )
-        elif requirements:
-            location = requirements.get("location_type", "")
-            is_indoor = location in ("室内", "户内", "室内使用")
-            is_outdoor = location in ("户外", "室外", "外面", "露天", "全户外", "半户外", "户外使用", "室外使用")
-            
-            # Infer location from usage if not explicit
-            outdoor_usages = ("演唱会", "音乐会", "体育", "足球", "篮球", "田径", "广告", "户外", "露天", "舞台", "演出")
-            indoor_usages = ("会议", "教室", "培训", "医院", "商场", "展厅", "博物馆", "展示", "会议室", "报告厅")
-            usage = requirements.get("usage", "")
-            if not is_indoor and not is_outdoor and usage:
-                if any(kw in usage for kw in outdoor_usages):
-                    is_outdoor = True
-                elif any(kw in usage for kw in indoor_usages):
-                    is_indoor = True
-
-            merged_requirement = {
-                "indoor": is_indoor,
-                "outdoor": is_outdoor,
-                "distance": requirements.get("viewing_distance", ""),
-                "purpose": requirements.get("usage", ""),
-                "size": requirements.get("size", ""),
-                "display_type": requirements.get("display_type"),
-            }
         else:
-            # Extract requirements from history
-            merged_requirement = {}
-            for entry in normalized_history:
-                if entry.get("role") != "user":
-                    continue
-                parsed = _extract_requirements(entry.get("content", ""), merged_requirement)
-                merged_requirement = {**merged_requirement, **(parsed.get("requirement") or {})}
-
-            current_parsed = _extract_requirements(message, merged_requirement)
-            merged_requirement = {**merged_requirement, **(current_parsed.get("requirement") or {})}
+            # ── Phase 12-1（计划 2.0）步骤 3/4：关闭 Solution 自己的需求重建 ──────
+            # 以前这里有两条"第二套需求逻辑"：
+            #   (a) 用中文关键词表重新推断室内外（outdoor_usages / indoor_usages）；
+            #   (b) 逐条扫 history 调 _extract_requirements 重新抽一遍需求。
+            # 现在都不做了：没有 RequirementProfile 就**只原样带上调用方给的旧字典**，
+            # 并标记 REQUIREMENT_NOT_READY，交由上层（Sales / Orchestrator）处理。
+            merged_requirement = dict(requirements or {})
+            requirement_not_ready = True
+            logger.warning(
+                "Solution: 没有 RequirementProfile → REQUIREMENT_NOT_READY"
+                "（不再从 history / 关键词重建需求）"
+            )
 
         # Determine intent
         if intent:
@@ -270,6 +246,8 @@ class SolutionAgentRunner:
             # 【M7】Sales 的 RequirementProfile 直接进入 Solution state，
             # recommendation_gate_node 会优先使用它（不再自己重建）
             "requirement_profile": profile,
+            # Phase 12-1：没有 profile → 明确告诉上层"需求还没准备好"
+            "requirement_not_ready": bool(requirement_not_ready),
             "intent": current_intent,
             "current_message": message,
             "info_sufficient": False,

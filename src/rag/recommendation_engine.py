@@ -160,6 +160,10 @@ class RecommendationEngine:
     ) -> Dict[str, Any]:
         """产出 Model 级推荐（确定性，无 LLM）。"""
         if profile is None:
+            # [LEGACY-COMPAT] 兼容回退：调用方没给 RequirementProfile 时，只能在这里
+            # 自己解析一次（Phase 12-8 护栏 6：推荐层不得重新解析客户需求 ——
+            # 生产入口 RecommendationService 一定会传档案，本分支只服务旧调用方）。
+            # 全项目只允许存在这一处，新增第二处会被架构护栏测试拦下。
             from src.rag.query_understanding import understand_query
 
             profile = understand_query(message, history=history).profile
