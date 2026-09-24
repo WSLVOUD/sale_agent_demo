@@ -14,6 +14,43 @@ from ..config import config
 logger = logging.getLogger(__name__)
 
 
+def vision_display_type_payload(vision_results: List[Any]) -> Dict[str, Any]:
+    """把图片识别结果里的产品类型整理成"给第一层产品判断用"的最小载荷（计划 v2.9.4 §六）。
+
+    计划 §五 第四优先级：客户发图片 → Vision 判断 LED / LCD → 向客户确认。
+    路由侧（``src/dialogue/product_type_router.py`` 的"③ 图片判断"分支）早就写好了，
+    缺的是把结果送过去 —— 这里负责那一段搬运，只做三件事：
+
+      - 多张图片先合并（显式证据优先于推断，见 ``merge_vision_results``）；
+      - Vision 说 IFP 时**原样保留**（由路由器翻成 LCD + ``subtype=IFP``，计划 §十四）；
+      - 拿不到可用类型时返回 ``{}``（不猜、不默认 LED）。
+
+    纯函数，方便单测；不依赖 memory / session。
+    """
+    if not vision_results:
+        return {}
+    try:
+        from .extractor import merge_vision_results
+
+        merged = merge_vision_results(vision_results)
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("Vision display_type payload failed: %s", exc)
+        return {}
+
+    field = getattr(merged, "display_type", None)
+    value = str(getattr(field, "value", "") or "").strip().upper()
+    if value not in ("LED", "LCD", "IFP"):
+        return {}
+    source = str(getattr(field, "source", "") or "") or "vision_inferred"
+    evidence = str(getattr(field, "evidence", "") or "").strip()
+    return {
+        "display_type": value,
+        "source": source,
+        "confidence": float(getattr(field, "confidence", 0.0) or 0.0),
+        "reason": evidence or f"the image looks like a {value} display",
+    }
+
+
 def _vision_enabled() -> bool:
     """视觉开关（默认开；配置里 VISION_ENABLED=false 可整体关掉）。"""
     try:

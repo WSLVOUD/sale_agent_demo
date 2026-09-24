@@ -84,6 +84,27 @@ class SalesState(TypedDict):
 
     # ── 本轮是否带了图片（图片识别结果要跟客户确认一次）──────────────────
     vision_applied: bool
+    # ── 本轮图片识别出的关键信息（计划 v2.9.4 §六）───────────────────────
+    # {"display_type": "LED"|"LCD"|"IFP", "source": "vision_explicit", "reason": str}
+    # 第一层产品判断（Product Type Router）的"图片判断"分支读它。
+    vision: Dict[str, Any]
+
+    # ── 第一层产品判断（LED / LCD）的结果（计划 v2.9.2/v2.9.3/v2.9.4）──────
+    # 【必须写在 schema 里】LangGraph 只把**声明过的键**带出图。这几个键以前没声明，
+    # 于是 orchestrator 收到的 display_type_decision 恒为 {} —— 收口层的
+    # "类型没确认就不许问需求细节"闸门在真实链路上从来没生效过
+    # （2026-09-23 线上日志：客户说 "i need a display" 却被问了室内外）。
+    display_type_decision: Dict[str, Any]
+    product_entry: str
+    product_domain: str
+    product_subtype: str
+    product_switch: Dict[str, Any]
+    turn_kind: str
+    turn_understanding: Dict[str, Any]
+    understanding: Dict[str, Any]
+    # LCD 入口 / 类型闸门的留痕（供 orchestrator、日志与审计读取）
+    lcd_entry: Dict[str, Any]
+    product_type_gate: Dict[str, Any]
 
     # ── 本轮客户说的是与需求无关的话（只"接住"这句话，再继续问需求）──────
     offtopic_turn: bool

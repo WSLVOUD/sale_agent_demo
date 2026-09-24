@@ -76,6 +76,7 @@ def decide_continuation(
     off_topic: bool,
     ack_streak: int = 0,
     max_ack_streak: Optional[int] = None,
+    type_gate_question: bool = False,
 ) -> ContinuationDecision:
     """这一轮是"承接（不问）"还是"可以问需求"。纯函数，方便单测。
 
@@ -86,6 +87,10 @@ def decide_continuation(
         ack_streak: 已经连续承接了几条（不含本轮；按 turn 计，
             同一轮里客户连发多条消息只算一次）
         max_ack_streak: 承接上限（默认读 ``LED_RAG_MAX_ACK_STREAK``，缺省 1）
+        type_gate_question: 本轮要问的是不是"LED 还是 LCD"（计划 §五 第一优先级）。
+            类型没确认之前，这个问题**不是**"申请细节"，不受承接额度约束 ——
+            线上实测（2026-09-23）：它被承接额度压掉后，客户只收到一段
+            LED 需求话术，既没推进，也没人问他到底要哪种屏。
     """
     streak = max(0, int(ack_streak or 0))
     limit = max(
@@ -101,6 +106,9 @@ def decide_continuation(
         # ① 客户说的是需求相关的话（哪怕是答了别的一项 / 问业务问题）→
         #    不做"只承接"，直接接住 + 追问缺的那一项
         return ContinuationDecision(False, "requirement_related", 0)
+    if type_gate_question:
+        # ①.5 类型未确认 → "LED 还是 LCD"照问，且不消耗承接额度
+        return ContinuationDecision(False, "type_gate_first", streak)
     if not has_question:
         # ② 闲聊，且本轮没有可问的需求问题 → 只承接（照样占额度）
         return ContinuationDecision(False, "no_question_this_turn", streak + 1)

@@ -662,6 +662,70 @@ def _natural_reply(
     )
 
 
+def _type_gate_needs_explanation(state) -> bool:
+    """这一轮的类型回复是不是"解释 LED/LCD 区别"（而不是只问一句选哪个）。"""
+    return bool((state.get("display_type_decision") or {}).get("needs_explanation"))
+
+
+def _type_gate_business_goal(state) -> str:
+    """类型闸门这一轮的"要表达什么"（措辞交给唯一话术出口）。
+
+    客户口径（2026-09-24）：客户不知道选哪个时，**先把 LED 与 LCD 的区别讲清楚**，
+    再让他选 —— 不是把"你要 LED 还是 LCD"原样再问一遍。
+    """
+    decision = state.get("display_type_decision") or {}
+    if _type_gate_needs_explanation(state):
+        return (
+            "explain the practical difference between LED and LCD using the given facts "
+            "(LED can be built very large with no visible seams between panels and works "
+            "indoors and outdoors; LCD panels tile into a video wall but the seams stay "
+            "visible and they are normally used indoors), then invite the customer to say "
+            "which direction they want, or to describe the use case so you can advise"
+        )
+    if (
+        str(decision.get("status") or "") == "INFERRED"
+        and str(decision.get("display_type") or "")
+    ):
+        return (
+            "confirm our product-type suggestion with a yes/no question "
+            "(do not present a menu of options, do not assume LED, "
+            "do not ask requirement details yet)"
+        )
+    return (
+        "confirm whether the customer wants LED or LCD "
+        "(do not assume LED, do not ask requirement details yet)"
+    )
+
+
+def _product_type_gate_question(state: SalesState) -> str:
+    """类型还没确认时，本轮**唯一**该问的问题（计划 §五/§六）。
+
+    返回 "" 表示类型已确认（或没有判断依据）→ 走原来的需求采集逻辑。
+
+    为什么需要它：``script_generator`` 里"闲聊 / 无关话""交期""售后"几个分支排在
+    类型闸门**前面**，以前它们会拿 LED 的需求问题直接去问客户
+    （线上日志 2026-09-23：客户说 "i need a display"，AI 回的是
+    "indoor and outdoor screens differ in cabinet build and brightness"）。
+    这些分支要问问题时，必须先用这里把问题换成"LED 还是 LCD"。
+    """
+    decision = state.get("display_type_decision") or {}
+    if not decision or str(decision.get("status") or "") == "CONFIRMED":
+        return ""
+    try:
+        from ....dialogue.product_type_router import load_decision, product_type_question
+        # 注意：不能 import 成 reply_language —— 那会把它变成整个函数的局部变量
+        from ....rag.reply_composer import reply_language as _reply_language
+
+        return product_type_question(
+            load_decision(decision),
+            language=_reply_language(str(state.get("current_message") or "")),
+            seed=_turn_seed(state),
+        )
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("[ProductType] 类型问题生成失败：%s", exc)
+        return ""
+
+
 def script_generator(state: SalesState) -> SalesState:
     """Produce the final user-facing response."""
     # Check if router has already processed
@@ -708,11 +772,26 @@ def script_generator(state: SalesState) -> SalesState:
     if state.get("offtopic_turn"):
         ack = str(state.get("acknowledgement") or "")
         pending = str(state.get("pending_question") or "")
+        pending_slot = str(state.get("pending_slot") or "")
+        # ── 计划 v2.9.4 修复（线上日志 2026-09-23）────────────────────────
+        # 这一支排在类型闸门前面：类型没确认时，不许把 LED 的需求问题问出去
+        # （实测客户 "i need a display" 收到的是室内外箱体/亮度那段 LED 话术）。
+        # 承接的话照旧保留，只把"问什么"换成 LED / LCD。
+        gate_question = _product_type_gate_question(state)
+        if gate_question:
+            pending = gate_question
+            # 只改"这一轮问什么"的局部变量，不写 state["pending_slot"] ——
+            # 槽位归 Question Planner / Dialogue Policy 决定，收口层负责收口
+            # （架构收敛测试把这个写入钉死了）。
+            pending_slot = "display_type"
+            # 留痕：这一轮的类型问题/类型说明已经写进正文 →
+            # 收口层只对齐槽位，不再把同一段话追加一遍（否则客户看到两遍）
+            state["product_type_gate"] = dict(state.get("display_type_decision") or {})
         if pending:
             confirmation = _vision_confirmation(state)
             draft = compose_requirement_reply(
                 question=pending,
-                slot=str(state.get("pending_slot") or ""),
+                slot=pending_slot,
                 message=str(state.get("current_message") or ""),
                 seed=_turn_seed(state),
                 requirement=state.get("requirements") or {},
@@ -725,6 +804,22 @@ def script_generator(state: SalesState) -> SalesState:
             if confirmation:
                 # 图片确认句是系统写好的事实核对，保持原样
                 state["response"] = _strip_markdown(draft)
+            elif gate_question and _type_gate_needs_explanation(state):
+                # 客户口径（2026-09-24）：解释 LED/LCD 的区别时**直接说** ——
+                # 不要 "It's a lot to take in at once." / "The quick version:" 这类
+                # 开场白和过渡话术（实测客户明确要求去掉）。
+                state["response"] = _strip_markdown(gate_question)
+            elif gate_question:
+                # 类型问题：意思是确定的（LED 还是 LCD），措辞交给唯一话术出口
+                state["response"] = _natural_reply(
+                    state,
+                    question=pending,
+                    slot=pending_slot,
+                    business_goal=(
+                        "acknowledge the customer, then "
+                        + _type_gate_business_goal(state)
+                    ),
+                )
             else:
                 # v2.5++：唯一话术出口（结构化上下文 → LLM 原生生成 → 校验 → 回退）
                 state["response"] = _natural_reply(
@@ -877,20 +972,26 @@ def script_generator(state: SalesState) -> SalesState:
             # 带图那一轮：先把"图片里看到什么"跟客户核一遍（计划 v2.9.3 §六），
             # 再问类型 —— 同一条消息，由统一话术出口组织。
             vision_line = _vision_confirmation(state)
+            if decision.needs_explanation and not vision_line:
+                # 客户口径（2026-09-24）：客户不知道选哪个时，**LED 与 LCD 的区别
+                # 必须真的讲出来**。这段是事实说明，不能交给改写（实测被压成
+                # "又把同一句问一遍"），所以原样发出。
+                state["response"] = _strip_markdown(type_question)
+                state["product_type_gate"] = decision.to_dict()
+                logger.info(
+                    "[ProductType] 客户不知道选哪个 → 先解释 LED/LCD 区别：%s",
+                    state["response"],
+                )
+                return state
             state["response"] = _natural_reply(
                 state,
                 answer=vision_line,
                 question=type_question,
                 slot="display_type",
                 business_goal=(
-                    # 计划 §六：推断出的类型要客户**确认**（是/否），
-                    # 不能再把"选哪个"的菜单丢回给客户
-                    "confirm our product-type suggestion with a yes/no question "
-                    "(do not present a menu of options, do not assume LED, "
-                    "do not ask requirement details yet)"
-                    if decision.status == "INFERRED" and decision.display_type
-                    else "confirm whether the customer wants LED or LCD "
-                    "(do not assume LED, do not ask requirement details yet)"
+                    # 计划 §六：推断出的类型要客户**确认**（是/否）；
+                    # 计划 §九 + 客户口径 2026-09-24：客户不知道选哪个时先解释区别再问
+                    _type_gate_business_goal(state)
                 ),
             )
             state["product_type_gate"] = decision.to_dict()

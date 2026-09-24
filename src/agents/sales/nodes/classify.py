@@ -52,6 +52,31 @@ def is_explicit_closing(message: str) -> bool:
     return bool(_CLOSING_STOP_RE.search(str(message or "")))
 
 
+def _asked_product_type_question(session_id: str) -> tuple[bool, str]:
+    """我们上一轮是不是在问"要 LED 还是 LCD"（读对话状态，不做关键词匹配）。
+
+    返回 (是否问过类型, 上一轮问的原话)。
+    """
+    if not session_id:
+        return False, ""
+    try:
+        from ....dialogue import get_conversation_state
+
+        conversation_state = get_conversation_state(session_id)
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("Conversation state unavailable for product type: %s", exc)
+        return False, ""
+    if conversation_state is None:
+        return False, ""
+    slot = str(
+        getattr(conversation_state, "last_question_slot", "")
+        or getattr(conversation_state, "last_slot", "")
+        or ""
+    )
+    question = str(getattr(conversation_state, "last_ai_question", "") or "")
+    return slot == "display_type", question
+
+
 def classify(state: SalesState) -> SalesState:
     """Classify the user's intent.
 
@@ -214,6 +239,44 @@ def classify(state: SalesState) -> SalesState:
         vision = state.get("vision")
         if isinstance(vision, dict):
             vision_type = str(vision.get("display_type") or "")
+
+        # ── 客户口径（2026-09-24）：类型判断要读**语境**，不许靠关键字触发 ──────
+        # 只有"我们上一轮确实在问'要 LED 还是 LCD'"且类型还没定的时候，才让模型
+        # 结合语境判断客户这句话在干什么（chose / rejects / does_not_know /
+        # asks_meaning / delegates / unrelated）。拿不到信号时路由会自动退回规则解析。
+        reply_signal: dict = {}
+        try:
+            type_settled = (
+                previous_decision is not None
+                and previous_decision.display_type in ("LED", "LCD")
+                and (
+                    previous_decision.locked
+                    or previous_decision.status == "CONFIRMED"
+                )
+            )
+            asked_type, asked_question = _asked_product_type_question(session_id)
+            if not type_settled and asked_type:
+                from ....dialogue.product_type_understanding import (
+                    understand_product_type_reply,
+                )
+
+                reply_signal = understand_product_type_reply(
+                    message,
+                    session_id=session_id,
+                    conversation=conversation,
+                    asked_question=asked_question,
+                    decision=previous_decision,
+                )
+                if reply_signal:
+                    logger.info(
+                        "Product type reply (context): reply=%s type=%s reason=%s",
+                        reply_signal.get("reply"), reply_signal.get("display_type"),
+                        reply_signal.get("reason"),
+                    )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("Product type reply understanding failed: %s", exc)
+            reply_signal = {}
+
         decision = _route_display_type(
             message,
             profile=state.get("requirement_profile"),
@@ -222,6 +285,7 @@ def classify(state: SalesState) -> SalesState:
                 (vision or {}).get("reason") if isinstance(vision, dict) else ""
             ),
             current=previous_decision,
+            reply_signal=reply_signal,
         )
         state["display_type_decision"] = decision.to_dict()
 

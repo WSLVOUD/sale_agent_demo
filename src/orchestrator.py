@@ -15,11 +15,24 @@ from .first_contact.profile import load_profile
 
 logger = logging.getLogger(__name__)
 
+# 客户口径（2026-09-23）：这两种 SpeechAct 说明客户在**回应我们的判断**
+# （确认 / 纠正），不是闲聊 —— 承接额度不该把这类回答压成一句寒暄。
+# 为什么只收这两个：确认/纠正本身就是"没有需求信息的一句话"（"ok" / "不对"），
+# 会被"与需求无关"的启发式判成闲聊；而"答上一问 / 主动补需求"那几种本来就带
+# 需求信息，销售节点不会把它们判成闲聊，不需要在这里兜。
+_REQUIREMENT_RELATED_SPEECH_ACTS = frozenset(
+    {
+        "CONFIRMATION",
+        "CORRECTION",
+    }
+)
+
 # ── v2.3.1 Phase 2：业务逻辑已迁出，这里只做编排与兼容 ────────────────────────
 from .observability.perf import PerfTracker  # noqa: E402,F401  (按性能埋点，从本模块迁出)
 from .vision.pipeline import (  # noqa: E402,F401  (Vision 接入，从本模块迁出)
     _merge_vision_into_stored_profile,
     _vision_enabled,
+    vision_display_type_payload,
 )
 
 
@@ -161,6 +174,18 @@ class DualAgentOrchestrator:
         elif images:
             logger.info("[%s] Vision disabled — images ignored", session_id)
 
+        # ── 计划 v2.9.4 §六：图片识别出的产品类型要接进第一层判断 ──────────────
+        # 以前只传 has_vision 布尔量，图片判断出的 LED/LCD/IFP 到不了 classify，
+        # Product Type Router 的"③ 图片判断"分支在真实链路上是死代码。
+        vision_payload: Dict[str, Any] = {}
+        if vision_results:
+            vision_payload = vision_display_type_payload(vision_results)
+            if vision_payload:
+                logger.info(
+                    "[%s] Vision display type → 第一层判断：type=%s source=%s",
+                    session_id, vision_payload.get("display_type"), vision_payload.get("source"),
+                )
+
         # ── First Contact 检查 ────────────────────────────────────────────────
         # 客户第一次发送消息时，执行固定接待流程
         # 注意：首次接待流程必须完整执行，不允许任何其他 Agent 介入
@@ -293,6 +318,7 @@ class DualAgentOrchestrator:
             session_id=session_id,
             message=message,
             has_vision=bool(vision_results),
+            vision=vision_payload,
         )
         perf.mark("sales_done")
         # 客户口径：同一个问题全项目最多问两次 —— 客户答过的共有项要同步到其他屏，
@@ -430,6 +456,11 @@ class DualAgentOrchestrator:
         # 计划 v2.9.3：类型判断 + 入口名（收口层的类型闸门要用）
         result.setdefault(
             "display_type_decision", dict(sales_result.get("display_type_decision") or {})
+        )
+        # 计划 v2.9.4：销售层这一轮是不是**已经把类型问题/类型说明**发出去了 ——
+        # 收口层的类型闸门据此只对齐槽位、不再把同一段话追加一遍。
+        result.setdefault(
+            "product_type_gate", dict(sales_result.get("product_type_gate") or {})
         )
         result.setdefault("product_subtype", str(sales_result.get("product_subtype") or ""))
         result.setdefault("product_entry", str(sales_result.get("product_entry") or ""))
@@ -634,6 +665,8 @@ class DualAgentOrchestrator:
         # 这一条放在收口层（而不是某个分支里），所以 conversation / free question /
         # product question / need_query 哪条路径进来，都不可能绕过"先定 LED 还是 LCD"。
         type_decision = result.get("display_type_decision") or {}
+        # 销售层这一轮**已经**把类型问题/类型说明写进正文了吗（runner 透传的留痕）？
+        sales_asked_type = bool(result.get("product_type_gate"))
         if (
             # 只有"销售层确实给出过类型判断"（或入口是 PRODUCT_SELECTION）时才拦截；
             # 旧测试/旧调用没有这个字段时保持原行为（生产链路 classify 每次都会写）
@@ -666,9 +699,14 @@ class DualAgentOrchestrator:
                     result["pending_question"] = gate_question
                     result["product_type_gate"] = type_decision
                     # 正文里那句"需求细节"的问句必须换掉：去掉旧问句 → 换类型确认问句
-                    guard = self._response_coordinator()._guard()
-                    kept = guard.strip_questions(str(result.get("response") or "")).strip()
-                    result["response"] = f"{kept} {gate_question}".strip() if kept else gate_question
+                    # 例外（计划 v2.9.4）：销售层这一轮已经问过/说明过类型 →
+                    # 这里只对齐槽位，不再追加一遍（否则同一段解释/问题客户会看到两遍）。
+                    if not sales_asked_type:
+                        guard = self._response_coordinator()._guard()
+                        kept = guard.strip_questions(str(result.get("response") or "")).strip()
+                        result["response"] = (
+                            f"{kept} {gate_question}".strip() if kept else gate_question
+                        )
                     questions = self._question_candidates(result)
             except Exception as exc:  # pragma: no cover - 防御式
                 logger.warning("[ProductType] 收口层类型闸门失败：%s", exc)
@@ -739,6 +777,20 @@ class DualAgentOrchestrator:
         ack_streak = int(getattr(conversation_state, "ack_streak", 0) or 0)
         ack_limit = configured_ack_streak_limit()
         off_topic = bool(result.get("offtopic_turn"))
+        # ── 客户口径（2026-09-23）：确认 / 纠正 / 答问 / 补充需求都**不是闲聊** ──
+        # 客户回了 "ok"（确认我们的判断）之后，就该按这个方向继续推进 ——
+        # 该问下一项就问，不能被"承接额度"压成一句寒暄
+        # （实测：客户确认 LED 后只收到 "Good to know."，一整个 turn 没有推进）。
+        # 判定依据是销售节点给的 SpeechAct（语境判定），不是关键词。
+        if (
+            str(
+                (result.get("speech_act") or {}).get("speech_act")
+                or (result.get("speech_act") or {}).get("act")
+                or ""
+            ).upper()
+            in _REQUIREMENT_RELATED_SPEECH_ACTS
+        ):
+            off_topic = False
         # 档案里有值 = 客户确实给过这一项 → 问题登记簿同步成 ANSWERED，
         # 并把"档案里有值"也算成"客户答过"（实测：客户答"只在意质量"，
         # 档案已记 price_preference=quality，但登记簿还是 ASKED → 误判成没回答）。
@@ -752,6 +804,9 @@ class DualAgentOrchestrator:
             off_topic=off_topic,
             ack_streak=ack_streak,
             max_ack_streak=ack_limit,
+            # 计划 v2.9.4 修复："LED 还是 LCD"不是需求细节问题（计划 §五 第一优先级），
+            # 不受承接额度约束 —— 否则类型没定就被"先承接一句"压掉，客户看不到任何推进。
+            type_gate_question=str(question_slot or "") == "display_type",
         )
         result["continuation"] = decision.to_dict()
         result["ack_streak"] = decision.next_streak

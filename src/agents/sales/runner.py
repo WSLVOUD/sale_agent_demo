@@ -85,13 +85,21 @@ class SalesAgentRunner:
         self.graph = build_sales_graph()
         logger.info("Sales Agent graph compiled")
 
-    def run(self, session_id: str, message: str, has_vision: bool = False) -> dict:
+    def run(
+        self,
+        session_id: str,
+        message: str,
+        has_vision: bool = False,
+        vision: Optional[Dict[str, Any]] = None,
+    ) -> dict:
         """Process a single user turn and return the response payload.
         
         Args:
             session_id: Unique session identifier
             message: User's current message
             has_vision: 本轮客户是否带了图片（图片识别结果要跟客户确认一次）
+            vision: 本轮图片识别出的关键信息（计划 v2.9.4 §六）——
+                    至少含 ``display_type``（LED / LCD / IFP），供第一层产品判断使用
             
         Returns:
             Dict with keys: response, products, requirements, intent, next_action
@@ -217,6 +225,10 @@ class SalesAgentRunner:
             "previous_recommended_models": previous_models,
             # 本轮是否带图片：带图的这一轮要把"图片里看到什么"跟客户核一遍
             "vision_applied": bool(has_vision),
+            # ── 计划 v2.9.4 §六：图片识别出的产品类型（LED / LCD / IFP）──────
+            # classify 节点的 Product Type Router 靠它走"图片判断"分支；
+            # 不写进来的话，路由器永远只能靠文字猜类型。
+            "vision": dict(vision or {}),
         }
         
         # Invoke the graph
@@ -265,6 +277,17 @@ class SalesAgentRunner:
                 if hasattr(self.memory_store, "get_recommendation"):
                     preserved_recommendation = self.memory_store.get_recommendation(session_id) or {}
 
+                # ── 计划 v2.9.4：第一层产品判断（LED / LCD）也是"重要信息"，要单独保留 ──
+                # classify 在**轮内**把判断写进 memory，收尾的 clear() 会连它一起删掉，
+                # 于是下一轮读不到"我们上一轮建议过 LED" → 客户回 "ok" 也认不出来，
+                # 只能把"要 LED 还是 LCD"再问一遍（客户实测，2026-09-23）。
+                # 注意：这里取的是**本轮刚写入**的那一版（graph 已经跑完）。
+                preserved_type_decision = {}
+                if hasattr(self.memory_store, "get_display_type_decision"):
+                    preserved_type_decision = (
+                        self.memory_store.get_display_type_decision(session_id) or {}
+                    )
+
                 # 【修复】"一个项目下多条屏"的状态同样必须跨轮保留：
                 # clear() 之后如果丢掉 project_items / active_item_index，
                 # 多屏流程每轮都会回到"第 1 块屏"，第二块屏永远开不出来。
@@ -299,6 +322,14 @@ class SalesAgentRunner:
 
                 if current_display_type and hasattr(self.memory_store, "set_previous_display_type"):
                     self.memory_store.set_previous_display_type(session_id, current_display_type)
+
+                # 恢复第一层产品判断（见上面 preserved_type_decision）
+                if preserved_type_decision and hasattr(
+                    self.memory_store, "set_display_type_decision"
+                ):
+                    self.memory_store.set_display_type_decision(
+                        session_id, preserved_type_decision
+                    )
 
                 # 恢复"一个项目下多条屏"的状态（见上面 preserved_project_items）
                 if preserved_project_items and hasattr(
@@ -372,6 +403,8 @@ class SalesAgentRunner:
             "turn_kind": str(result.get("turn_kind") or ""),
             # 计划 v2.9.3：首层产品类型判断必须传出去，否则收口层的类型闸门拿不到依据
             "display_type_decision": dict(result.get("display_type_decision") or {}),
+            # 计划 v2.9.4：销售层**这一轮已经**把类型问题/类型说明发出去了（收口层别再说一遍）
+            "product_type_gate": dict(result.get("product_type_gate") or {}),
             "product_subtype": str(result.get("product_subtype") or ""),
             "product_entry": str(result.get("product_entry") or ""),
         }

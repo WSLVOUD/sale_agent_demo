@@ -515,7 +515,14 @@ class TestGraphAsksAgainAfterReset:
         assert result["next_action"] == "ask"
         assert result["intent"] == "need_query"
         assert result["pending_question"], "重置后必须重新追问一个关键问题"
-        assert result["response"] == result["pending_question"]
+        # 计划 v2.9.4 修复（线上日志 2026-09-23）：这一轮被判成 offtopic_turn，
+        # 以前"闲聊承接"分支排在类型闸门前面，于是把 LED 的室内外问题直接发了出去
+        # （客户实测："…indoor and outdoor screens differ in cabinet build…"）。
+        # 现在类型没确定前，回复里问的必须是"LED 还是 LCD"；槽位仍由 Question Planner
+        # 产出、收口层负责对齐，所以这里不再要求 response 与 pending_question 逐字相同。
+        reply = str(result["response"]).lower()
+        assert "led" in reply and "lcd" in reply, result["response"]
+        assert "indoors or outdoors" not in reply, result["response"]
         assert result["solutions"] == []
 
     def test_reset_turn_reuses_new_message_facts(self, fake_llm):
