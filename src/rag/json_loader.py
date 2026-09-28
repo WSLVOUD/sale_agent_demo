@@ -289,6 +289,8 @@ def _display_metadata(
     features: Optional[list[str]] = None,
     splicing_supported: Optional[bool] = None,
     splicing_note: str = "",
+    category: str = "",
+    category_label: str = "",
 ) -> dict[str, Any]:
     """非 LED 产品共用的 metadata（键与 LED 的 Model 级语料保持一致）。
 
@@ -321,6 +323,9 @@ def _display_metadata(
         "flexible": False,
         "warranty_years": 1,
         "features": _clean_metadata_value(features or []),
+        # 产品类别标记（客户口径 2026-09-28）：新增的 LCD 都是"广告机"，要标注清楚
+        "category": str(category or ""),
+        "category_label": str(category_label or ""),
         # 拼接口径（客户口径 2026-09-22）：LCD 可拼接但拼缝可见；IFP 不能拼接
         "splicing_supported": bool(splicing_supported),
         "splicing_note": str(splicing_note or ""),
@@ -334,14 +339,17 @@ def _display_metadata(
 
 def _lcd_text(product: "LCDProduct", model: str) -> str:
     """LCD 型号的检索文本（只写资料里有的事实）。"""
+    # 类别标记放在最前面：客户问"广告机"时这条要能被检索到（2026-09-28）
+    category = " ".join(
+        part for part in (product.category_label, product.category) if part
+    )
     parts = [
-        f"{model} | {product.series} | LCD | {'indoor' if 'indoor' in product.environment else 'outdoor'}",
+        f"{model} | {product.series} | LCD | "
+        f"{'indoor' if 'indoor' in product.environment else 'outdoor'}"
+        + (f" | {category}" if category else ""),
         f"size={product.display_size_inch}",
         f"resolution={product.resolution}",
         f"brightness={product.brightness_nit}nit",
-        f"contrast={product.contrast_ratio}",
-        f"operation={product.operation_hours}",
-        f"lifespan={product.service_life_hours}h",
         "splicing-video-wall" if product.is_splicing else "single-display",
         (
             f"splicing={product.splicing_note}"
@@ -349,6 +357,17 @@ def _lcd_text(product: "LCDProduct", model: str) -> str:
             else ("splicing=supported-with-visible-seam" if product.splicing_supported else "splicing=not-supported")
         ),
     ]
+    # 资料里没有的字段不写（不留 "contrast=None" 这种假事实）
+    if product.contrast_ratio:
+        parts.append(f"contrast={product.contrast_ratio}")
+    if product.operation_hours:
+        parts.append(f"operation={product.operation_hours}")
+    if product.service_life_hours:
+        parts.append(f"lifespan={product.service_life_hours}h")
+    if product.installation:
+        parts.append("installation=" + "/".join(str(item) for item in product.installation))
+    if product.notes:
+        parts.append(f"note={product.notes}")
     if product.bazel_mm:
         parts.append(f"bezel={product.bazel_mm}")
     if product.power_consumption_w:
@@ -371,15 +390,19 @@ def _lcd_model_document(product: "Product", lcd: "LCDProduct") -> Document:
         features=list(product.features or []) + list(lcd.features or []),
         splicing_supported=lcd.splicing_supported,
         splicing_note=lcd.splicing_note or "",
+        category=lcd.category or "",
+        category_label=lcd.category_label or "",
     )
     metadata.update({
         "display_size_inch": lcd.display_size_inch,
         "resolution": lcd.resolution,
         "bazel_mm": lcd.bazel_mm or "",
-        "operation_hours": lcd.operation_hours,
-        "service_life_hours": lcd.service_life_hours,
+        "operation_hours": lcd.operation_hours or "",
+        "service_life_hours": lcd.service_life_hours or 0,
         "is_splicing": lcd.is_splicing,
-        "contrast_ratio": lcd.contrast_ratio,
+        "contrast_ratio": lcd.contrast_ratio or "",
+        "installation_methods": "/".join(str(item) for item in (lcd.installation or [])),
+        "notes": lcd.notes or "",
     })
     return Document(page_content=_lcd_text(lcd, model), metadata=metadata)
 

@@ -341,18 +341,30 @@ class LCDProduct(BaseModel):
     display_type: Literal["LCD"] = "LCD"
     environment: list[Environment] = Field(default_factory=lambda: ["indoor"], description="适用环境")
     brightness_nit: int = Field(..., description="亮度（cd/m²）", ge=100, le=3000)
-    contrast_ratio: str = Field(..., description="对比度，如 1200:1")
+    # 客户口径（2026-09-28）：资料里没有的字段留空（不编造）。
+    # 新增的广告机系列里 DS-T55 / DS-TB55 就没给对比度 / 24x7 / 寿命。
+    contrast_ratio: Optional[str] = Field(None, description="对比度，如 1200:1")
     display_size_inch: str = Field(..., description="屏幕尺寸，如 55\"")
     bazel_mm: Optional[str] = Field(
         None, description="拼缝（边框）宽度，如 1.8mm；单体显示器（非拼接）可为空"
     )
     resolution: str = Field(..., description="分辨率，如 3840x2160@60Hz")
     panel_brand: Optional[str] = Field(None, description="面板品牌，如 LG、BOE")
-    operation_hours: str = Field(..., description="支持运行时长，如 7x24h")
-    service_life_hours: int = Field(..., description="使用寿命（小时）", ge=10000)
+    operation_hours: Optional[str] = Field(None, description="支持运行时长，如 7x24h")
+    service_life_hours: Optional[int] = Field(
+        None, description="使用寿命（小时）", ge=10000
+    )
     power_consumption_w: Optional[int] = Field(None, description="功耗（W）")
     installation: list[str] = Field(default_factory=lambda: ["wall_mount"], description="安装方式")
     features: list[str] = Field(default_factory=list, description="特性标签")
+    # 产品类别标记（客户口径 2026-09-28：新增的一批 LCD 都是"广告机"，要标注清楚）
+    #   advertising_machine → category_label="广告机"
+    #   留空 = 老的商用显示 / 拼接屏 / 触控显示器
+    category: Optional[str] = Field(
+        None, description="产品类别，如 advertising_machine（广告机）"
+    )
+    category_label: Optional[str] = Field(None, description="类别中文名，如「广告机」")
+    notes: Optional[str] = Field(None, description="资料里的补充说明 / 数据口径备注")
     # LCD 拼接屏特有字段
     is_splicing: bool = Field(False, description="是否为拼接屏（有可见拼缝）")
     splicing_supported: bool = Field(
@@ -456,13 +468,19 @@ class Product(BaseModel):
                     f"resolution={sub.resolution_per_sqm}px/m²"
                 )
         elif self.lcd_data:
-            parts.append(
-                f"size={self.lcd_data.display_size_inch}, "
-                f"resolution={self.lcd_data.resolution}, "
-                f"brightness={self.lcd_data.brightness_nit}nit, "
-                f"bazel={self.lcd_data.bazel_mm}, "
-                f"7x24h={self.lcd_data.operation_hours}"
-            )
+            lcd_bits = [
+                f"size={self.lcd_data.display_size_inch}",
+                f"resolution={self.lcd_data.resolution}",
+                f"brightness={self.lcd_data.brightness_nit}nit",
+            ]
+            if self.lcd_data.bazel_mm:
+                lcd_bits.append(f"bazel={self.lcd_data.bazel_mm}")
+            if self.lcd_data.operation_hours:
+                lcd_bits.append(f"7x24h={self.lcd_data.operation_hours}")
+            if self.lcd_data.category_label:
+                # 客户口径：广告机要标注清楚（检索文本里也要带上）
+                lcd_bits.append(f"category={self.lcd_data.category_label}")
+            parts.append(", ".join(lcd_bits))
         elif self.ifp_data:
             for sub in self.ifp_data.sub_models:
                 parts.append(
