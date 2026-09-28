@@ -6,44 +6,102 @@
 >
 > 当前行为口径集中在下面「当前行为口径」一节；历史版本的逐条变更见文末「变更明细」。
 >
-> **架构整理（2026-09-24）**：代码结构瘦身与职责收敛见 [`docs/refactor/`](docs/refactor/)，
-> 结论见下方「架构整理」一节。文中历史章节的数字（如 591 条）是当时的快照，保留不动。
+> **架构收口（2026-09-24 ~ 09-28）**：职责收敛 + 需求链路收口已完成，结论见下方
+> 「架构收口」一节。文中历史章节的数字（如 591 条）是当时的快照，保留不动；
+> 版本历史以 Git 为准（`git log --oneline`）。
 
 ---
 
-## 架构整理（2026-09-24）
+## 架构收口（2026-09-24 ~ 09-28）
 
-目标：**不改业务行为，只收敛职责**。基线与验收数字都在 [`docs/refactor/`](docs/refactor/)：
+目标：**不改业务行为，只收敛职责**。三轮收口的结果如下。
 
-| 文档 | 内容 |
-|---|---|
-| `baseline.md` | 环境 / 启动 / 12 个接口 / 760 条测试 / 评测基线（计算 1.0、槽位 0.7032、路由 0.7439…） |
-| `dependency_map.md` | 真实 import 索引 + 分层调用链 + 多入口风险点 |
-| `module_inventory.md` | 160 个模块分类（CORE / ADAPTER / COMPATIBILITY / LEGACY / TEST_ONLY） |
-| `behavior_baseline.md` | S1~S7 关键对话行为 + 量化基线 + 行为锚点测试 |
-| `test_inventory.md` | 测试按功能分类 + 迁移方案 |
-
-本轮实际做的事：
+### 一、职责收敛（架构瘦身）
 
 ```text
-1. 产品类型词汇只保留一处定义（turn_kind），product_type_router 改为引用
-2. "一轮最多一个问题"的预算只保留一处定义（action.MAX_QUESTIONS_PER_TURN），
-   final_guard / final_response / response_context 全部改为引用
-3. 删除两个零引用的旧需求适配层：
-   src/core/sales_requirement_adapter.py、src/core/solution_requirement_adapter.py
-4. 新增 5 个架构护栏测试文件（34 条）：唯一需求模型 / 唯一产品类型入口 /
-   唯一对话决策入口 / 层间边界（RAG 不碰对话、计算层独立、Vision 只抽需求）/
-   Sales 与 Solution 共用同一套需求系统 + 推荐单一入口
+1. 产品类型词汇只保留一处定义（turn_kind）；ProductTypeRouter 是唯一类型决策入口
+2. "一轮最多一个问题"的预算只保留一处定义（action.MAX_QUESTIONS_PER_TURN）
+3. 删除零引用的旧适配层 / 旧入口：
+   core/sales_requirement_adapter.py、core/solution_requirement_adapter.py、
+   input/turn_payload.py（旧 Turn 合并入口）、memory/enhanced.py
+4. 新增架构护栏测试 tests/architecture/（70 条）：唯一需求模型 / 唯一产品类型入口 /
+   唯一对话决策 / 层间边界（RAG 不碰对话、计算层独立、Vision 只抽需求）/
+   Sales 与 Solution 共用同一套需求系统 / 推荐单一入口 / API 不执行业务
 ```
 
-验收（同一环境、与 `baseline.md` 逐项对比）：
+### 二、需求链路收口（Solution 不再理解需求）
 
 ```text
-python -m pytest -q                          → 760 passed（基线 726，只增不减）
-python -m eval.calculator_eval               → 1.0（14/14，与基线一致）
-python -m eval.recommendation_eval           → 0.7032 / 0.5923 / 0.7439（与基线逐位一致）
-python -m eval.retrieval_eval --limit 12     → model_recall@10 0.9333、MRR 0.6708、违规率 0.0（一致）
+RequirementExtractor → RequirementProfile（唯一真值）
+    → ProductTypeRouter（唯一产品类型判断）
+    → ParameterInference（唯一工程推断出口，档案优先）
+    → Recommendation Gate（唯一推荐准入）
+    → Solution Agent（只执行方案）
+    → RAG / Recommendation / Calculator → Validation → Response
+
+Solution 侧删掉的东西：
+  · understand_node 改为**纯 Adapter**（读档案 → 确定性 Gate → 返回；无档案标记
+    REQUIREMENT_NOT_READY）—— 旧文件 663 → 268 行
+  · 删除 Solution 内部 LLM 需求提取（_build_requirement_prompt / _parse_requirement_response）
+  · 删除 infer_display_type()（"IFP 否则 LED"的默认判断）
+  · clarify_node 只保留"档案 → Gate → 一个问题"，删掉按面积推视距/尺寸、
+    按室内外推亮度、按点间距推分辨率等与 parameter_inference 重复的启发式
 ```
+
+### 三、路由收口（删除 Fast 业务路由）
+
+```text
+删除：solution/runner.py 里的 classify_complexity + QueryRoute.FAST / NORMAL / AGENT 三层分流
+保留：结构化产品查询能力（型号 / 点间距 / 亮度 / 防护等级）
+改名：src/rag/fast_path.py → src/rag/structured_product_query.py
+接线：Solution 直接判断"是不是结构化产品查询"并调用它（route = product_query），
+      会话里已有场景级需求时不走这条（避免绕过"环境+视距→点间距"规则表）
+```
+
+### 四、事实模型（字段来源可解释）
+
+```text
+RequirementProfile 每个字段都带来源，归一到五类口径：
+    CUSTOMER_EXPLICIT  客户明确说的
+    SCENARIO_DERIVED   场景 / 图片直接可见推出来的
+    SYSTEM_INFERRED    算法估算 / 图片推测
+    DEFAULT            系统默认值
+    UNKNOWN            没有值 / 没有依据
+（fact_class() / RequirementProfile.fact_source() / fact_sources()）
+评估据此执行"显式错才扣分"：合法推断记为 fp_derived，不计入错误。
+```
+
+### 五、评估体系（指标真正测生产链路）
+
+```text
+· Golden Dataset 标签按"客户原话证据"拆分：hard（客户明确）vs derived（推断+默认）、
+  slots vs slots_derived —— 此前 244 个字段被误标成"客户硬约束"，是指标偏低的真因
+· 新增逐字段 TP / FP / FN / Accuracy / Recall（7 个字段）
+· Product Type Accuracy：直接用 ProductTypeRouter 判分（IFP 按 LCD 子类型口径计对）
+· fast / normal / agent 降级为 legacy_route 历史字段，不再作为质量门槛
+· --agent 端到端评测走生产链路（先建 RequirementProfile 再调 Solution），
+  Top-1 / Top-3 只统计 Gate READY 子集，需追问单独统计
+```
+
+### 六、验收（2026-09-28 实测）
+
+```text
+指标                       收口前      现在      目标
+Requirement Slot Accuracy  0.7032  →  0.9914    ≥0.90 ✅
+Hard Constraint Capture    0.5923  →  0.9896    ≥0.90 ✅
+Product Type Accuracy      0.8333  →  1.0000    ≥0.90 ✅
+Calculator Accuracy        1.0     →  1.0       =1.00 ✅
+Hard Constraint Violation  0       →  0         =0    ✅
+
+python -m pytest -q                → 810 passed
+python -m eval.recommendation_eval → 上述 Slot / Hard / ProductType
+python -m eval.calculator_eval     → 1.0（14/14）
+python -m eval.retrieval_eval      → series@5 1.0 / model@10 0.9333 / MRR 0.6708 / 违规 0
+```
+
+> 顺带修掉两个真实缺陷：① 产品类型识别用的 `\b` 在中日文旁失效
+> （"一个LED显示屏"识别失败、客户说 LED 却被判 LCD）；② 点间距已知后仍会重复询问
+> 观看距离（跨槽位规则漏了挂起状态）。
 
 ---
 
@@ -51,13 +109,11 @@ python -m eval.retrieval_eval --limit 12     → model_recall@10 0.9333、MRR 0.
 
 > 📚 **文档入口**
 >
-> | 目录 | 内容 |
+> | 位置 | 内容 |
 > |---|---|
-> | [`docs/refactor/`](docs/refactor/) | 架构基线与瘦身记录（baseline / 依赖地图 / 模块清单 / 行为基线 / 测试分类 / 最终依赖扫描） |
-> | [`docs/history/`](docs/history/) | 历史变更明细（v2.0~v2.9.x 的开发记录，已从 README 迁出） |
-> | [`docs/plans/`](docs/plans/) | 各阶段优化计划（含架构瘦身 2.0 计划与未来优化清单） |
-> | [`docs/testing/`](docs/testing/) | 测试说明与入口 |
 > | [`eval/README.md`](eval/README.md) | 评测体系（Golden Dataset / 检索 / 推荐 / 计算） |
+> | `tests/architecture/` | 架构护栏（唯一需求模型 / 唯一产品类型入口 / 层间边界…） |
+> | Git 历史 | 版本变更明细：`git log --oneline`（README 只描述**当前**架构） |
 
 | 模块 | 状态 |
 |------|------|
@@ -65,7 +121,7 @@ python -m eval.retrieval_eval --limit 12     → model_recall@10 0.9333、MRR 0.
 | 方案 Agent（Solution Agent） | ✅ 已完成 |
 | 混合检索（RAG：Dense + Sparse + BM25 + RRF） | ✅ 已完成 |
 | 质量评估反射（Reflection Quality Gate） | ✅ 已完成 |
-| 三层路由（Fast / Normal / Agent Path） | ✅ 已完成 |
+| 三层路由（Fast / Normal / Agent Path） | ✅ 已移除（收敛为结构化产品查询 + 统一 Agent 链路） |
 | 会话记忆（`memory/store.py`：FIFO 50 条 + 结构化档案 + 项目多屏） | ✅ 已完成 |
 | 可观测性（PerfTracker + 可选 Langfuse） | ✅ 已完成 |
 | 评估体系（Golden Dataset + 自动评测） | ✅ 已完成 |
@@ -529,8 +585,8 @@ RequirementProfile（唯一事实源）
 
 ## 历史变更明细
 
-> 早前版本的逐条变更（v2.0 ~ v2.9.x 的开发记录）已迁到 [`docs/history/CHANGELOG_archive.md`](docs/history/CHANGELOG_archive.md)。
-> 版本历史以 Git 为准：`git log --oneline`。
+> 版本变更明细以 Git 为准：`git log --oneline`。
+> README 只描述**当前**架构与行为口径，不再往里累积历史记录。
 
 ---
 
@@ -693,13 +749,18 @@ $$
 
 ---
 
-## 三层路由（Three-Layer Routing）
+## 请求分流（2026-09-28 起）
 
-| 路由类型 | 触发条件 | 处理方式 |
-|----------|----------|----------|
-| **Fast Path** | 纯参数查询、问候语、保修/异议等固定场景 | 结构化过滤 + 模板回复，**无需 LLM 调用**；输出为 **Model 级** |
-| **Normal Path** | 简单场景需求（户外广告屏、会议室P2.5等） | 轻量 RAG + 快速推荐 |
-| **Agent Path** | 复杂推理需求（"怎么选"、"哪个合适"、多轮对话） | 完整 LangGraph Agent + Reflection 质量评估 |
+三层业务路由（fast / normal / agent）**已删除**。现在只有两类处理：
+
+| 入口 | 触发条件 | 处理方式 |
+|------|----------|----------|
+| **结构化产品查询** | 客户问产品事实：型号（P2.5 / TW21）、点间距、亮度、防护等级 | `src/rag/structured_product_query.py` 结构化过滤 → **Model 级**结果（无需 LLM） |
+| **统一 Agent 链路** | 其它一切（需求对话、推荐、自由问答） | RequirementProfile → Gate → RAG / 确定性推荐 / 计算 → Validation → Response |
+
+> 判断标准只有一条："客户是不是在问结构化的产品事实"。
+> 会话里已经采集到场景级需求时，即使消息里出现型号也不走结构化查询 ——
+> 那种情况要复用上下文做确定性选型（否则会绕过"环境 + 视距 → 点间距"规则表）。
 
 ---
 
@@ -772,7 +833,7 @@ led-rag-system/
 │   │   │
 │   │   └── solution/               # 方案 Agent（RAG 检索 + 推荐）
 │   │       ├── graph.py           # LangGraph 状态机定义
-│   │       ├── runner.py          # Agent 入口（支持 Fast/Agent 双路径）
+│   │       ├── runner.py          # Agent 入口（结构化产品查询 + 统一 Agent 链路）
 │   │       ├── state.py           # 状态 schema
 │   │       └── nodes/
 │   │           ├── intent.py      # 意图识别（recommendation / conversation 等）
@@ -797,8 +858,8 @@ led-rag-system/
 │   │   ├── fusion.py              # RRF 混合融合
 │   │   ├── rerank.py              # LLM 重排 + 冲突检测 + 类别过滤
 │   │   ├── parameter_inference.py # LLM+规则 参数推断
-│   │   ├── router.py              # 三层路由（Fast/Normal/Agent Path）
-│   │   ├── fast_path.py           # Fast Path 结构化过滤 + 模板回复
+│   │   ├── router.py              # 旧三层路由（仅剩评测的 legacy_route 历史对比）
+│   │   ├── structured_product_query.py  # 结构化产品查询（原 fast_path）
 │   │   └── json_loader.py         # JSON 产品数据加载（ProductFilter）
 │   │
 │   ├── models/
@@ -987,9 +1048,9 @@ RESPONSE_LANGUAGE_POLICY=en          # en=始终英语（默认）；auto=跟随
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | Phase 0 | Golden Dataset + 性能基线 | ✅ 完成（部分） |
-| Phase 1 | 三层路由（Fast/Normal/Agent） | ✅ 完成 |
+| Phase 1 | 三层路由（Fast/Normal/Agent） | ✅ 完成 → 2026-09-28 已删除（收敛为结构化产品查询 + 统一 Agent 链路） |
 | Phase 2 | 消除 Sales/Solution 重复推理 | ✅ 完成 |
-| Phase 3 | Fast Path 强化（结构化过滤 + 模板） | ✅ 完成 |
+| Phase 3 | Fast Path 强化（结构化过滤 + 模板） | ✅ 完成 → 能力保留为 `structured_product_query.py` |
 | Phase 4 | 产品数据结构化（ProductFilter） | ✅ 完成 |
 | Phase 5 | Agent Path 精简（Graph 瘦身） | ✅ 完成 |
 | Phase 6 | Reflection → Quality Gate | ✅ 完成 |
