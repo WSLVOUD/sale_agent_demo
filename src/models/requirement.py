@@ -139,6 +139,38 @@ CONFIRMED_SOURCES: frozenset[str] = frozenset(
     {"explicit", "confirmed", "scenario_derived", "vision_accepted"}
 )
 
+# ── 计划 update_v2.9.10 §10：三层事实模型的**对外口径** ─────────────────────
+# 内部 source（7 级强度，见 _EXPLICIT_STRENGTH）保持不变；这里给出评估/日志用的
+# 五类归一化口径，回答"这个字段到底是客户说的、场景推的、系统算的，还是默认的"。
+FACT_CUSTOMER_EXPLICIT = "CUSTOMER_EXPLICIT"   # 客户明确说的（explicit / confirmed）
+FACT_SCENARIO_DERIVED = "SCENARIO_DERIVED"     # 场景/图片直接可见推出来的
+FACT_SYSTEM_INFERRED = "SYSTEM_INFERRED"       # 算法估算 / 图片推测
+FACT_DEFAULT = "DEFAULT"                       # 系统默认值
+FACT_UNKNOWN = "UNKNOWN"                       # 没有值 / 没有依据
+
+_SOURCE_TO_FACT: Dict[str, str] = {
+    "explicit": FACT_CUSTOMER_EXPLICIT,
+    "confirmed": FACT_CUSTOMER_EXPLICIT,
+    "vision_accepted": FACT_SCENARIO_DERIVED,
+    "vision_explicit": FACT_SCENARIO_DERIVED,
+    "scenario_derived": FACT_SCENARIO_DERIVED,
+    "vision_inferred": FACT_SYSTEM_INFERRED,
+    "inferred": FACT_SYSTEM_INFERRED,
+    "default": FACT_DEFAULT,
+}
+
+
+def fact_class(source: Any) -> str:
+    """内部 source → 五类事实口径（计划 §10）。未知来源按 UNKNOWN（不猜）。"""
+    key = str(source or "").strip().lower()
+    return _SOURCE_TO_FACT.get(key, FACT_UNKNOWN if not key else FACT_SYSTEM_INFERRED)
+
+
+def is_customer_explicit(source: Any) -> bool:
+    """该字段是不是"客户明确说的"（只有这类错了才算错）。"""
+    return fact_class(source) == FACT_CUSTOMER_EXPLICIT
+
+
 # 图片"明确可见"（vision_explicit）能作为选型依据的字段。
 # 这几项图片确实能看出来（明显的室内会议室 / 明显的 LED 屏 / 明显的租赁箱体），
 # 所以 Gate 不必再问一遍；但它**不是客户确认**，status 仍报 inferred。
@@ -866,6 +898,25 @@ class RequirementProfile(BaseModel):
         self.field_decisions[key] = value
         return self.field_decision(key)
 
+    # ── 计划 update_v2.9.10 §10：五类事实口径 ────────────────────────────────
+    def fact_source(self, slot: str) -> str:
+        """该槽位的事实口径（CUSTOMER_EXPLICIT / SCENARIO_DERIVED /
+        SYSTEM_INFERRED / DEFAULT / UNKNOWN）。没有值或没有依据 → UNKNOWN。
+        """
+        key = canonical_slot(slot)
+        if getattr(self, key, None) in (None, "", [], {}):
+            return FACT_UNKNOWN
+        return fact_class((self.sources or {}).get(key))
+
+    def fact_sources(self) -> Dict[str, str]:
+        """整份档案里"有值或有来源标记"的字段各属于哪一类事实。"""
+        keys = set(self.sources or {})
+        keys.update(
+            field for field in SLOT_TO_FIELD.values()
+            if getattr(self, field, None) not in (None, "", [], {})
+        )
+        return {key: self.fact_source(key) for key in sorted(keys)}
+
     def field_decision(self, slot: str) -> str:
         """字段状态（大写，计划第 3.1 节）：MISSING / CONFIRMED / INFERRED /
 
@@ -1099,5 +1150,12 @@ __all__ = [
     "REQUIRED_FOR_RECOMMENDATION",
     "SLOT_ORDER",
     "RequirementProfile",
+    "FACT_CUSTOMER_EXPLICIT",
+    "FACT_DEFAULT",
+    "FACT_SCENARIO_DERIVED",
+    "FACT_SYSTEM_INFERRED",
+    "FACT_UNKNOWN",
+    "fact_class",
+    "is_customer_explicit",
     "merge_profiles",
 ]

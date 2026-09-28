@@ -60,6 +60,28 @@ SCORED_SLOTS = (
 )
 
 
+# 计划 update_v2.9.10 §11【1】：场景词表归一（中文场景词 ↔ 英文枚举），
+# 否则"会议室"和系统输出的 "conference" 会被判成两个值。
+_PURPOSE_CANON = {
+    "会议室": "conference", "会议": "conference", "培训": "conference", "报告厅": "conference",
+    "教室": "classroom", "课堂": "classroom",
+    "教堂": "church",
+    "商场": "retail", "店铺": "retail", "零售": "retail", "商店": "retail",
+    "展厅": "showroom", "展览": "showroom",
+    "广告": "advertising", "户外广告": "advertising", "招牌": "advertising",
+    "体育馆": "stadium", "体育场": "stadium", "球场": "stadium", "场馆": "stadium",
+    "舞台": "stage", "演出": "stage", "演唱会": "stage", "音乐会": "stage",
+    "办公室": "office", "办公": "office",
+}
+
+
+def _canon_purpose(value: Any) -> Any:
+    if value in (None, ""):
+        return value
+    text = str(value).strip()
+    return _PURPOSE_CANON.get(text, text.lower())
+
+
 def _predicted_slots(constraints: Dict[str, Any]) -> Dict[str, Any]:
     """把生产规则提取结果映射到 Golden Dataset 的 slot 词汇表。"""
     slots: Dict[str, Any] = {}
@@ -76,7 +98,7 @@ def _predicted_slots(constraints: Dict[str, Any]) -> Dict[str, Any]:
     elif constraints.get("is_rental") is not None:
         slots["installation"] = "rental" if constraints["is_rental"] else "fixed"
     if constraints.get("purpose"):
-        slots["purpose"] = constraints["purpose"]
+        slots["purpose"] = _canon_purpose(constraints["purpose"])
     pitch = constraints.get("pixel_pitch_mm")
     if pitch is None:
         pitch = constraints.get("pixel_pitch")
@@ -90,7 +112,34 @@ def _predicted_slots(constraints: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _expected_slots(case: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: v for k, v in (case.get("slots") or {}).items() if k in SCORED_SLOTS}
+    expected = {k: v for k, v in (case.get("slots") or {}).items() if k in SCORED_SLOTS}
+    if "purpose" in expected:
+        expected["purpose"] = _canon_purpose(expected["purpose"])
+    return expected
+
+
+def _product_type_check(query: str, expected: Dict[str, Any]) -> Dict[str, Any]:
+    """产品类型路由准确率（计划 update_v2.9.10 §14/§15）。
+
+    只对"客户明确点了类型"的用例判分：这种用例的正确答案是唯一的。
+    没点名的用例按口径应当是 UNKNOWN 或"推断后要客户确认"，不在这里计分。
+    """
+    want = expected.get("display_type")
+    if not want:
+        return {"expected": None, "predicted": None, "correct": None}
+    try:
+        from src.dialogue.product_type_router import route_display_type
+
+        decision = route_display_type(query)
+        got = decision.display_type
+        # 口径（v2.9.x 已确认）：IFP 是 LCD 的子类型，首层只出 LED / LCD。
+        # 所以标注为 IFP 的用例，路由器给 LCD + subtype=IFP 即为正确。
+        if str(want).upper() == "IFP" and got == "LCD" and decision.subtype == "IFP":
+            got = "IFP"
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("product type route failed: %s", exc)
+        got = None
+    return {"expected": want, "predicted": got, "correct": got == want}
 
 
 def _history_constraints(history: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -125,8 +174,12 @@ def evaluate_case(case: Dict[str, Any]) -> Dict[str, Any]:
     predicted_route = decision.route.value
     route_ok = predicted_route == case.get("route")
 
-    # 硬约束抓取率：Query 里明确写出的硬条件是否被提取出来
+    # 硬约束抓取率（计划 update_v2.9.10 第一/七阶段）：
+    #   hard    = 客户**明确说的**约束 → 必须抓到
+    #   derived = 场景/规则推断 + 系统默认 → 只做信息统计，不作为硬指标
+    # （以前所有标签都塞在 hard 里，模型行为正确也会被判错 —— 这是 0.5923 的主因）
     hard = case.get("hard") or {}
+    derived = case.get("derived") or {}
     hard_checks: Dict[str, bool] = {}
     if hard.get("environment"):
         hard_checks["environment"] = predicted.get("environment") == hard["environment"]
@@ -147,6 +200,15 @@ def evaluate_case(case: Dict[str, Any]) -> Dict[str, Any]:
             hard_checks["pixel_pitch"] = (
                 (low is None or value >= low - 0.2) and (high is None or value <= high + 0.2)
             )
+
+    # 推断/默认字段的抓取情况（只统计，不判对错）
+    derived_checks: Dict[str, bool] = {}
+    for key, value in derived.items():
+        slot = "pixel_pitch_mm" if key.startswith("pixel_pitch") else key
+        if key == "pixel_pitch_min" or key == "pixel_pitch_max":
+            derived_checks.setdefault(key, predicted.get("pixel_pitch_mm") is not None)
+            continue
+        derived_checks[key] = predicted.get(slot) == value
 
     return {
         "id": case["id"],
@@ -175,6 +237,18 @@ def evaluate_case(case: Dict[str, Any]) -> Dict[str, Any]:
         "hard_capture_rate": (
             round(sum(hard_checks.values()) / len(hard_checks), 4) if hard_checks else None
         ),
+        "derived_checks": derived_checks,
+        "derived_capture_rate": (
+            round(sum(derived_checks.values()) / len(derived_checks), 4)
+            if derived_checks else None
+        ),
+        # 计划 update_v2.9.10 §10/§15：每个字段来自哪一类事实（客户明确 / 场景推断 /
+        # 系统推算 / 默认），供"显式错才扣分"的判定使用
+        "predicted_facts": (
+            understanding.profile.fact_sources()
+            if getattr(understanding, "profile", None) is not None else {}
+        ),
+        "product_type": _product_type_check(query, expected),
     }
 
 
@@ -339,12 +413,70 @@ def summarize_slots(case_results: List[Dict[str, Any]]) -> Dict[str, Any]:
         "per_slot_accuracy": {
             key: round(sum(values) / len(values), 4) for key, values in sorted(per_slot.items())
         },
+        # 计划 update_v2.9.10 第四阶段：逐字段 TP / FP / FN / Accuracy / Recall
+        "per_field_confusion": _per_field_confusion(scored),
+        # 计划 update_v2.9.10 §14/§15：产品类型路由准确率（唯一决策入口）
+        "product_type_accuracy": _product_type_accuracy(case_results),
         "hard_constraint_capture_rate": round(mean(hard_rates), 4) if hard_rates else None,
-        "route_accuracy": round(
+        "derived_capture_rate": round(
+            mean([c["derived_capture_rate"] for c in case_results
+                  if c.get("derived_capture_rate") is not None]), 4
+        ),
+        # 旧的 fast / normal / agent 三层路由：只作历史对比字段（计划第一阶段 任务 3）
+        "legacy_route_accuracy": round(
+            mean([1.0 if c["route_correct"] else 0.0 for c in case_results]), 4
+        ),
+        "route_accuracy": round(  # 兼容旧调用方；含义同 legacy_route_accuracy
             mean([1.0 if c["route_correct"] else 0.0 for c in case_results]), 4
         ),
         "route_confusion": _route_confusion(case_results),
     }
+
+
+def _per_field_confusion(case_results: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """逐字段 TP / FP / FN / Accuracy / Recall（计划 update_v2.9.10 第四阶段）。
+
+    只统计"标注里出现过该字段"的用例 + "预测里多给该字段"的用例：
+
+        TP = 标注有、系统也给了且相等
+        FP = 标注没有（或值不同）、系统却给了
+        FN = 标注有、系统没给
+    """
+    stats: Dict[str, Dict[str, int]] = {}
+    for case in case_results:
+        expected = case.get("expected_slots") or {}
+        predicted = case.get("predicted_slots") or {}
+        facts = case.get("predicted_facts") or {}
+        for key in sorted(set(expected) | set(predicted)):
+            row = stats.setdefault(key, {"tp": 0, "fp": 0, "fn": 0, "fp_derived": 0})
+            want = expected.get(key)
+            got = predicted.get(key)
+            if want is None:
+                if got is not None:
+                    # 计划 §10：系统**推断/默认**出来的额外字段不算"错"（信息更全），
+                    # 只有"系统当成客户明确说的"才算硬错。
+                    if facts.get(key) == "CUSTOMER_EXPLICIT":
+                        row["fp"] += 1
+                    else:
+                        row["fp_derived"] += 1
+                continue
+            if got is None:
+                row["fn"] += 1
+            elif got == want:
+                row["tp"] += 1
+            else:
+                row["fp"] += 1
+                row["fn"] += 1
+    result: Dict[str, Dict[str, Any]] = {}
+    for key, row in sorted(stats.items()):
+        tp, fp, fn = row["tp"], row["fp"], row["fn"]
+        total = tp + fp + fn
+        result[key] = {
+            **row,
+            "accuracy": round(tp / total, 4) if total else None,
+            "recall": round(tp / (tp + fn), 4) if (tp + fn) else None,
+        }
+    return result
 
 
 def _route_confusion(case_results: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -353,6 +485,22 @@ def _route_confusion(case_results: List[Dict[str, Any]]) -> Dict[str, int]:
         key = f"{case['expected_route']}->{case['predicted_route']}"
         confusion[key] = confusion.get(key, 0) + 1
     return dict(sorted(confusion.items(), key=lambda kv: -kv[1]))
+
+
+def _product_type_accuracy(case_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """产品类型路由准确率（计划 §24 的 Product Type Accuracy）。"""
+    checked = [
+        c for c in case_results
+        if (c.get("product_type") or {}).get("correct") is not None
+    ]
+    if not checked:
+        return {"cases": 0, "accuracy": None}
+    hits = [1.0 if c["product_type"]["correct"] else 0.0 for c in checked]
+    misses = [
+        {"id": c["id"], "query": c["query"], **c["product_type"]}
+        for c in checked if not c["product_type"]["correct"]
+    ]
+    return {"cases": len(checked), "accuracy": round(mean(hits), 4), "misses": misses}
 
 
 def main() -> int:
@@ -403,8 +551,17 @@ def main() -> int:
 
     print("\n===== 需求理解 / 路由基线 =====")
     print(f"  Requirement Slot Accuracy: {summary['requirement_slot_accuracy']}")
-    print(f"  Hard Constraint Capture  : {summary['hard_constraint_capture_rate']}")
-    print(f"  Route Accuracy           : {summary['route_accuracy']}")
+    print(f"  Hard Constraint Capture  : {summary['hard_constraint_capture_rate']}  （仅客户明确说的约束）")
+    print(f"  Derived Capture          : {summary['derived_capture_rate']}  （推断/默认字段，仅供参考）")
+    print(f"  Legacy Route Accuracy    : {summary['legacy_route_accuracy']}  （fast/normal/agent，仅历史对比）")
+    print(f"  Product Type Accuracy    : {summary['product_type_accuracy']['accuracy']}  "
+          f"（{summary['product_type_accuracy']['cases']} 条客户点名的用例，唯一决策入口=ProductTypeRouter）")
+    print("  Per-field TP/FP/FN:")
+    for key, row in (summary.get("per_field_confusion") or {}).items():
+        print(
+            f"    {key:18s} tp={row['tp']:3d} fp={row['fp']:3d} fn={row['fn']:3d} "
+            f"fp_derived={row.get('fp_derived', 0):3d} acc={row['accuracy']} recall={row['recall']}"
+        )
     print(f"  逐槽位命中率: {summary['per_slot_accuracy']}")
     print(f"  路由混淆: {summary['route_confusion']}")
     print(f"  推荐引擎: {engine_result['status']} ({engine_result.get('reason', '')})")

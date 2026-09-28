@@ -99,14 +99,18 @@ def evaluate_case(hybrid, case: Dict[str, Any], top_k: int = 10) -> Dict[str, An
     """评估单条用例，返回两个模式下的指标。"""
     query = case["query"]
     hard = case.get("hard") or {}
-    filters = build_retrieval_filters(hard)
-    brightness_min = hard.get("brightness_min")
+    # 计划 update_v2.9.10：标签拆成 hard（客户明确）/ derived（推断+默认）之后，
+    # 检索评估要用的约束是**两者之和** —— 检索要回答的是"给定已知需求能不能找到对的
+    # 产品"，而不是"客户只说了一句话能不能找到"。抓取率指标才只用 hard。
+    constraints = {**(case.get("derived") or {}), **hard}
+    filters = build_retrieval_filters(constraints)
+    brightness_min = constraints.get("brightness_min")
 
     pitch_kwargs = {}
-    if hard.get("pixel_pitch_min") is not None:
-        pitch_kwargs["pitch_min"] = hard["pixel_pitch_min"]
-    if hard.get("pixel_pitch_max") is not None:
-        pitch_kwargs["pitch_max"] = hard["pixel_pitch_max"]
+    if constraints.get("pixel_pitch_min") is not None:
+        pitch_kwargs["pitch_min"] = constraints["pixel_pitch_min"]
+    if constraints.get("pixel_pitch_max") is not None:
+        pitch_kwargs["pitch_max"] = constraints["pixel_pitch_max"]
 
     result: Dict[str, Any] = {
         "id": case["id"],
@@ -146,8 +150,9 @@ def evaluate_case(hybrid, case: Dict[str, Any], top_k: int = 10) -> Dict[str, An
             "violations": violations,
             "violation_count": len(violations),
         }
-        pitch_fit_3 = pitch_fit_at_k(items, hard, 3)
-        pitch_fit_5 = pitch_fit_at_k(items, hard, 5)
+        # 点间距窗口同样用"显式 + 推断"的合并约束（见上面的 constraints）
+        pitch_fit_3 = pitch_fit_at_k(items, constraints, 3)
+        pitch_fit_5 = pitch_fit_at_k(items, constraints, 5)
         if pitch_fit_3 is not None:
             block["pitch_fit_at_3"] = pitch_fit_3
             block["pitch_fit_at_5"] = pitch_fit_5

@@ -51,13 +51,20 @@ SOURCE_DEFAULT = "DEFAULT"
 # LCD 子类型（§十四：IFP 在 LCD 链路内部判断）
 SUBTYPE_PLAIN_LCD = LCD
 
-_LED_RE = re.compile(r"\bled\b|led屏|点间距|箱体|模组", re.IGNORECASE)
-_LCD_RE = re.compile(r"\blcd\b|液晶|video ?wall|拼接屏|拼接", re.IGNORECASE)
+# 注意：不能用 \b —— 中日韩字符也算 word 字符，"一个LED显示屏" 里
+# "个L"／"屏" 两侧都没有单词边界，`\bled\b` 会漏（实测 g004/g045/g061）。
+# 改成"左右不是拉丁字母"即可，中英混排都能识别。
+_LED_RE = re.compile(
+    r"(?<![A-Za-z])led(?![A-Za-z])|led屏|led显示屏|点间距|箱体|模组", re.IGNORECASE
+)
+_LCD_RE = re.compile(
+    r"(?<![A-Za-z])lcd(?![A-Za-z])|液晶|video ?wall|拼接屏|拼接", re.IGNORECASE
+)
 _IFP_RE = re.compile(
     r"interactive (?:display|panel|flat panel|whiteboard)|touch ?screen|touch display|"
-    r"smart ?board|whiteboard|ifp|"
+    r"smart ?board|whiteboard|(?<![A-Za-z])ifp(?![A-Za-z])|"
     r"\b(?:write|writing|handwriting|annotate|annotation)\b|"
-    r"电子白板|交互平板|触控|触摸|手写|书写|会议平板|一体机",
+    r"电子白板|交互式白板|白板|交互平板|触控|触摸|手写|书写|会议平板|一体机",
     re.IGNORECASE,
 )
 _OUTDOOR_RE = re.compile(r"\boutdoor\b|\boutside\b|户外|室外|露天", re.IGNORECASE)
