@@ -133,11 +133,15 @@ python -m eval.retrieval_eval      → series@5 1.0 / model@10 0.9333 / MRR 0.67
     不设句数上限（native_length_rule()），推荐提示词也只要求"不注水、不重复"，
     型号 + 实测参数 + 两种排布（箱体数 / 实际尺寸 / 模组数）必须完整给到客户。
     问需求的轮次保持"3~4 句 + 一个问题"的短问句口径不变。
+    另外 Solution 返回前的硬截断（原 800 字符、只认中文标点、英文会被切在句中）
+    改为 cap_answer_length()：上限 2000 字符（只防 LLM 跑飞），统一在**句子边界**
+    收尾。
 
 验收（2026-09-28）
-python -m pytest -q                    → 825 passed（新增 15 条多屏回归）
+python -m pytest -q                    → 827 passed（新增 17 条多屏回归）
 tests/test_multi_screen_per_screen_facts.py 覆盖：逐屏需求句、安装方式校验、
-    室内固装 / 室外租赁各出一个型号、推荐提示词无句数 / 字数上限
+    室内固装 / 室外租赁各出一个型号、推荐提示词无句数 / 字数上限、超长回复在
+    句子边界收尾
 python -m eval.recommendation_eval     → Slot 0.9914 / Hard 0.9896 / ProductType 1.0
 python -m eval.calculator_eval         → 1.0（14/14）
 python -m eval.retrieval_eval          → 硬约束违规 0

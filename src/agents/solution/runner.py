@@ -82,6 +82,20 @@ def _normalize_index_documents(documents: List = None) -> List[Dict[str, Any]]:
     return normalized
 
 
+def cap_answer_length(answer: str, *, max_length: int = 2000) -> str:
+    """回复的"防跑飞"长度上限（推荐/交付轮不能因为长度被砍半句）。
+
+    客户口径（2026-09-28）：推荐时要完整交付"型号 + 实测参数 + 两种排布"，
+    多屏时**每一块屏**都要完整。原实现把答案硬切在 800 字符，而且只认中文标点
+    —— 英文回复会被切在句子中间并补上 "..."。现在上限放宽到 2000 字符（仍然
+    防 LLM 跑飞），并且统一在**句子边界**收尾（中英文标点都认，见
+    ``src/utils/text.truncate_text``）。
+    """
+    from ...utils.text import truncate_text
+
+    return truncate_text(str(answer or ""), max_length=max_length)
+
+
 def merge_fast_path_constraints(
     inferred: Dict[str, Any] | None,
     requirements: Dict[str, Any] | None,
@@ -417,14 +431,9 @@ class SolutionAgentRunner:
             # Keep compact format
             answer = "\n".join(line.strip() for line in answer.splitlines() if line.strip())
 
-            # Keep response concise - max 800 chars
-            if len(answer) > 800:
-                truncated = answer[:800]
-                last_period = max(truncated.rfind('。'), truncated.rfind('！'), truncated.rfind('？'))
-                if last_period > 200:
-                    answer = truncated[:last_period + 1]
-                else:
-                    answer = truncated + "..."
+            # 客户口径（2026-09-28）：推荐/交付要完整，不做"看起来简短"的截断。
+            # 这里只保留一个防跑飞的上限，并且统一在句子边界收尾。
+            answer = cap_answer_length(answer)
 
             return {
                 "answer": answer,

@@ -365,6 +365,32 @@ class TestRecommendationLengthLimitLifted:
         generator._generate_native(ResponseContextProxy("RECOMMEND"), _LLM())
         assert "no sentence limit" in captured["prompt"].lower()
 
+    def test_recommendation_answer_is_not_cut_mid_sentence(self):
+        from src.agents.solution.runner import cap_answer_length
+
+        first = (
+            "Screen 1 (indoor / church): TW11-3216-P4.0 is the closest match, "
+            "with 4.0mm pixel pitch. " + "It suits the 5m viewing distance well. " * 40
+        )
+        second = (
+            "Screen 2 (outdoor / church): TW11-OR-P3.9 is the closest match. "
+            + "The rental cabinet keeps the install quick. " * 40
+        )
+        full = first + second
+        assert len(full) > 2000, "用例要真的超过上限才有意义"
+        capped = cap_answer_length(full)
+
+        assert capped.startswith("Screen 1 (indoor / church): TW11-3216-P4.0"), capped[:80]
+        assert first.strip() in capped, "第一块屏的完整内容不能被砍"
+        assert capped.rstrip().endswith((".", "!", "?")), capped[-60:]
+        assert not capped.rstrip().endswith("..."), capped[-60:]
+
+    def test_short_recommendation_is_untouched(self):
+        from src.agents.solution.runner import cap_answer_length
+
+        text = "TW11-OR-P3.9 is the closest match for your outdoor rental screen."
+        assert cap_answer_length(text) == text
+
 
 def ResponseContextProxy(action: str):
     """最小可用的 ResponseContext（只关心 response_shape / 语言规则）。"""
