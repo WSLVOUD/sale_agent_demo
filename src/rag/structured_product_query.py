@@ -1,21 +1,52 @@
-"""
-Fast Path 处理器。
+"""结构化产品查询（Structured Product Query）。
 
-处理简单 Query，直接走结构化过滤 + 模板回复，不经过完整 Agent 流程。
-适用于：参数查询、简单推荐、固定销售异议等。
+计划 update_v2.9.10 P2-⑨⑩⑪：原来的 "Fast Path" **不再是业务路由** ——
+fast / normal / agent 三层分流已从 Solution 移除。这里只保留真正有价值的能力：
 
-注意（v2.0 修订）：Fast Path 的输出必须是 **Model 级**（如 `TW21-3216-P2.5`）。
+    结构化产品事实查询（型号 / 点间距 / 亮度 / 防护等级）→ 结构化过滤 → 产品结果
+
+调用关系也相应改成：
+
+    Solution → 结构化产品查询（本模块） → Product Result
+
+注意（v2.0 修订）：输出必须是 **Model 级**（如 `TW21-3216-P2.5`）。
 Series（`TW21-3216 series`）只是产品族，不能当作推荐结果返回给客户。
 """
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from src.models.product import Product
 from src.rag.json_loader import load_structured_products, ProductFilter
 
 logger = logging.getLogger(__name__)
+
+# ── "这是结构化产品查询吗"（取代原 Router 的 FAST 判定）─────────────────────
+# 只认**产品事实类**问法：型号（P2.5 / P3）、参数（亮度/防水/点间距）、
+# 明确的型号前缀（TW11 / TW21…）。寒暄、场景推荐、需求对话都不走这里。
+_PITCH_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])[Pp]\d+(?:\.\d+)?(?![A-Za-z0-9])")
+_MODEL_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])TW\d{2}(?:-[A-Za-z0-9]+)*(?![A-Za-z0-9])", re.IGNORECASE)
+_PARAM_WORDS = (
+    "亮度", "点间距", "像素间距", "防水", "防护", "ip65", "ip66", "hdr",
+    "brightness", "pixel pitch", "waterproof", "spec", "参数", "规格",
+    "有哪些型号", "什么型号", "亮度是多少",
+)
+
+
+def looks_like_structured_product_query(message: str) -> bool:
+    """客户是不是在问"结构化的产品事实"（而不是在聊需求 / 寒暄 / 要推荐）。"""
+    text = str(message or "").strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    if _MODEL_TOKEN_RE.search(text):
+        return True
+    # 只回一个 "p4"、"p2.5" 这种裸型号 → 是产品事实查询
+    if _PITCH_TOKEN_RE.search(text):
+        return True
+    return any(word in lowered for word in _PARAM_WORDS)
 
 # 全局产品缓存（避免重复加载）
 _product_cache: list[Product] | None = None
@@ -183,14 +214,14 @@ def _select_template(template_type: str, **kwargs) -> str:
 
 # ── Fast Path 主入口 ────────────────────────────────────────────────────────
 
-def fast_path_handle(
+def structured_product_query_handle(
     query: str,
     constraints: dict | None,
     template_type: str | None,
     data_dir: str,
 ) -> dict[str, Any]:
     """
-    Fast Path 主处理函数。
+    结构化产品查询主处理函数（原 Fast Path 的"产品查询"能力）。
 
     Args:
         query: 原始用户 Query
@@ -202,7 +233,7 @@ def fast_path_handle(
         dict，包含：
           - answer: 回复文本
           - products: 匹配产品列表
-          - route: "fast"
+          - route: "product_query"
           - template_used: 是否使用了模板
     """
     answer_parts = []
@@ -265,7 +296,13 @@ def fast_path_handle(
             }
             for p in products[:3]
         ],
-        "route": "fast",
+        "route": "product_query",
         "template_used": template_used,
         "complexity": "simple",
     }
+
+
+__all__ = [
+    "looks_like_structured_product_query",
+    "structured_product_query_handle",
+]

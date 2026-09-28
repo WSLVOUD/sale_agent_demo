@@ -12,8 +12,8 @@ from ...rag.retriever import retrieve
 from ...rag.sparse import get_sparse_search
 from ...rag.fusion import HybridSearch
 from ...rag.rerank import is_ifp_product
-from ...rag.router import classify_complexity, QueryRoute
-from ...rag.fast_path import fast_path_handle
+from ...rag.router import has_structured_requirement
+from ...rag.structured_product_query import structured_product_query_handle
 from ...utils.ifp_intent import has_ifp_intent, remove_unsupported_ifp_text, user_messages_text
 
 logger = logging.getLogger(__name__)
@@ -311,45 +311,49 @@ class SolutionAgentRunner:
         """
         history = history or []
 
-        # ── Step 1: 三层业务路由 ────────────────────────────────────────
-        from src.rag.router import QueryRoute
-
-        # 【修复】调用方（Orchestrator）只传了 profile，没传 requirements ——
-        # 这里补一份 legacy 视图给路由与 fast path 用（详见 routing_requirements）
+        # ── Step 1/2：结构化产品查询（计划 update_v2.9.10 P2-⑨⑩⑪）───────────
+        # 原来的 fast / normal / agent 三层业务路由已删除：这里只有一个判断 ——
+        # "客户是不是在问结构化的产品事实（型号 / 点间距 / 亮度 / 防护等级）"。
+        # 是 → 走结构化产品查询（Product Query → Structured Filter → Product Result）；
+        # 否 → 直接进下面的统一 Agent 链路（RequirementProfile → Gate → RAG…）。
         requirements = routing_requirements(requirements, profile)
-        routing = classify_complexity(message, existing_requirements=requirements)
-        logger.info(
-            "Routing: route=%s reason=%s inferred=%s",
-            routing.route.value,
-            routing.reason,
-            routing.inferred_constraints,
+        from src.rag.router import has_structured_requirement
+        from src.rag.structured_product_query import (
+            looks_like_structured_product_query,
+            structured_product_query_handle,
         )
 
-        # ── Step 2a: FAST ──────────────────────────────────────────────
-        # 纯参数查询，不进 Agent，直接结构化过滤 + 模板
-        if routing.route == QueryRoute.FAST:
+        if (
+            looks_like_structured_product_query(message)
+            # 会话里已经采集到场景级需求时不走这条 —— 那时要复用上下文做确定性选型
+            # （原 Router 的同款保护：实测"教堂+室内+5m"后回一句价格偏好会被
+            # 判成参数查询，绕过"环境+视距→点间距"规则表）
+            and not has_structured_requirement(requirements)
+        ):
             from src.config import config as _cfg
+            from src.rag.query_understanding import extract_slots
 
-            # 【修复】fast path 不能只用"本条消息里抽到的约束"，必须并上 Sales
-            # 已经收集的环境 / 安装方式 / 屏类型（见 merge_fast_path_constraints 注释）
-            fast_constraints = merge_fast_path_constraints(
-                routing.inferred_constraints, requirements
+            constraints = merge_fast_path_constraints(
+                dict(extract_slots(message) or {}), requirements
             )
-
-            fast_result = fast_path_handle(
+            product_result = structured_product_query_handle(
                 query=message,
-                constraints=fast_constraints,
+                constraints=constraints,
                 template_type=None,
                 data_dir=_cfg.DATA_DIR,
             )
+            logger.info(
+                "Structured product query: constraints=%s products=%d",
+                constraints or "{}", len(product_result.get("products") or []),
+            )
             return {
-                "answer": fast_result["answer"],
-                "requirement": routing.inferred_constraints or {},
+                "answer": product_result["answer"],
+                "requirement": constraints,
                 "reflection_score": 0,
-                "reflection_notes": f"FAST ({routing.reason})",
-                "products": fast_result.get("products", []),
-                "route": "fast",
-                "complexity": routing.complexity,
+                "reflection_notes": "structured product query",
+                "products": product_result.get("products", []),
+                "route": "product_query",
+                "complexity": "parameter",
             }
 
         # ── Step 2b: Agent Path ────────────────────────────────────────
@@ -358,9 +362,14 @@ class SolutionAgentRunner:
             already_recommended=already_recommended, previous_models=previous_models,
         )
 
-        # 将路由层提取的约束注入 agent state（避免 LLM 重复推理）
-        if routing.inferred_constraints and not initial_state.get("requirement"):
-            for k, v in routing.inferred_constraints.items():
+        # 把"客户这句话里的结构化槽位"注入 agent state（避免 LLM 重复推理）。
+        # 计划 update_v2.9.10 P2：这里原来是 `routing.inferred_constraints`
+        # （三层路由的产物），现在直接取统一抽取器的规则槽位，不依赖路由。
+        from ...rag.query_understanding import extract_slots as _extract_slots
+
+        inferred_constraints = dict(_extract_slots(message) or {})
+        if inferred_constraints and not initial_state.get("requirement"):
+            for k, v in inferred_constraints.items():
                 if v is not None and initial_state.get("requirement", {}).get(k) is None:
                     initial_state["requirement"][k] = v
 
@@ -423,8 +432,8 @@ class SolutionAgentRunner:
                 "reflection_score": result.get("reflection_score", 0),
                 "reflection_notes": result.get("reflection_notes", ""),
                 "products": response_products[:1],
-                "route": routing.route.value,
-                "complexity": routing.complexity,
+                "route": "agent",
+                "complexity": "agent",
             }
         except Exception as e:
             logger.error(f"Agent run error: %s", e)
@@ -436,7 +445,7 @@ class SolutionAgentRunner:
                 "reflection_notes": str(e),
                 "products": [],
                 "route": "agent",
-                "complexity": routing.complexity,
+                "complexity": "agent",
             }
 
     def run_stream(

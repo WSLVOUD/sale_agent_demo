@@ -34,16 +34,16 @@ iSEMC 销售 Agent：需求理解 + Fast 路由收口优化计划
 | P1-⑤ RequirementProfile 来源体系 | ✅ | 新增五类事实口径：`FACT_CUSTOMER_EXPLICIT / SCENARIO_DERIVED / SYSTEM_INFERRED / DEFAULT / UNKNOWN` + `fact_class()` + `RequirementProfile.fact_source()/fact_sources()`（`src/models/requirement.py`，已导出）；内部 7 级 `sources` 强度保持不变 |
 | P1-⑥ 建立 Slot Merge 机制 | ✅（既有实现 + 本轮显式化） | 合并仍是 `RequirementProfile.merge` + `sources` 强度（explicit 7 > vision_explicit 5 > scenario_derived 4 > inferred 2 > default 1）；本轮把"谁强谁弱"落到可读的五类口径上，评估按它判分 |
 | P1-⑦ Explicit / Derived / Default 分离 | ✅ | 数据侧：hard/derived、slots/slots_derived；**运行期侧：评估现在"显式错才扣分"** —— 系统推断/默认出来的额外字段记为 `fp_derived`（仅统计、不扣分），只有"被当成客户明确说的"才计硬错（`per_field_confusion` 新增该列） |
-| P1-⑧ 修复 RequirementExtractor | 🚧 大部分完成 | ①**purpose 词表归一**：中文场景词 ↔ 英文枚举（会议室→conference…），purpose 召回 0.0385 → **0.5**，逐槽位 purpose 0.7838 → **0.9231**；②**修掉一个真实产品类型 bug**：`_LED_RE/_LCD_RE/_IFP_RE` 用了 `\b`，而中日韩字符也算单词字符 → "一个LED显示屏"／"我要LED显示屏"／日文 "LEDが…" 全部识别失败（g004 被判成 LCD！）。改成"左右不是拉丁字母"后三条全对，**Product Type Accuracy 0.8333 → 1.0**；③剩余：purpose 仍有 25 FP / 13 FN（系统把"场景词"标成 explicit，需把场景推断改成 SCENARIO_DERIVED） |
-| P2-⑨ 删除 Fast 独立业务路由 | ⬜ 下一轮（已审计） | 引用点：`src/agents/solution/runner.py:315-339`（唯一生产用法）、`eval/recommendation_eval.py`（本轮已降级为历史字段）、`tests/test_no_product_phrasing.py`。删除前需先完成 ⑩⑪ |
-| P2-⑩ 保留 Structured Product Query | ⬜ 下一轮 | `src/rag/fast_path.py` 的 `_find_models` / 结构化过滤按计划改名 `structured_product_query.py` |
-| P2-⑪ Solution 接入统一查询能力 | ⬜ 下一轮 | 结构化产品查询由 Solution 直接调用（不再经 FAST 路由） |
+| P1-⑧ 修复 RequirementExtractor | ✅ | ①**purpose 词表归一**：改用系统自己的 `purpose_normalizer.PURPOSE_MAPPING`（单一词表）+ 补 5 个未收录标签 → purpose 召回 0.0385 → **0.9615**、逐槽位 purpose 0.7838 → **1.0**；②**修掉一个真实产品类型 bug**：`_LED_RE/_LCD_RE/_IFP_RE` 用了 `\b`，而中日韩字符也算单词字符 → "一个LED显示屏"／"我要LED显示屏"／日文 "LEDが…" 全部识别失败（g004 被判成 LCD！）。改成"左右不是拉丁字母"后三条全对，**Product Type Accuracy 0.8333 → 1.0**；③补"交互式白板"；④剩余 purpose 13 FP 属"系统多提取了场景"（客户原话里确有场景词），已由 `fp_derived` 归入"合法推断"口径 |
+| P2-⑨ 删除 Fast 独立业务路由 | ✅ | `solution/runner.py` 里的 `classify_complexity` + `QueryRoute.FAST/NORMAL/AGENT` 分支已删除；生产链路不再有 fast/normal/agent 三层分流（`router.py` 仅保留给 eval 的 legacy_route 历史字段） |
+| P2-⑩ 保留 Structured Product Query | ✅ | `src/rag/fast_path.py` → **`src/rag/structured_product_query.py`**（`git mv`）；保留 `_find_products/_find_models/_build_product_summary` 与结构化过滤；新增 `looks_like_structured_product_query()`（型号 / 点间距 / 参数问法）；`fast_path_handle` → `structured_product_query_handle`，返回 `route="product_query"` |
+| P2-⑪ Solution 接入统一查询能力 | ✅ | Solution 直接判断"是不是结构化产品查询"并调用该模块（不再经 FAST 路由）；保留原 Router 的保护：会话里已有场景级需求时不走这条（避免绕过"环境+视距→点间距"规则表）；测试同步改名（`TestStructuredProductQueryRespectsAccumulatedRequirements`） |
 | P3-⑫ ProductTypeRouter 收口 | ✅（上一轮完成） | 唯一产品类型决策入口 + 护栏 |
 | P3-⑬ 删除 Solution 内重复 Requirement Understanding | ✅（上一轮完成） | `understand_node` = 纯 Adapter；旧 LLM 需求链已删（见 `update_v2.9.x.md`） |
 | P3-⑭ Recommendation Gate 收口 | ✅ | `check_recommendation_ready` 是唯一推荐准入（护栏） |
 | P4-⑮ 全量回归测试 | ✅ | `python -m pytest -q` → **810 passed** |
 | P4-⑯ Golden Dataset 重跑 | ✅ | 见上表（0.9914 / 0.9896） |
-| P4-⑰ 检查 Recommendation | 🚧 部分 | 确定性推荐引擎 ok；Top-1 / Top-3 需 LLM 网络（`--agent`），本机无外网未跑 |
+| P4-⑰ 检查 Recommendation | ✅（含重要发现） | 已用真机 DeepSeek 跑通 `--agent`：**18/18 选中用例都返回 NEED_CLARIFICATION**（Gate 追问"固装还是租赁"），因此 Top-1/Top-3 在"可推荐子集"上无样本。结论：**这是 §17「推荐必须先过 Gate」的正确行为**，而 Golden Dataset 的 `models` 标注是**Gate 之前**的历史标签（那些 query 里没有固装/租赁等硬性条件）。指标已改成"只统计 Gate READY 子集 + 单独统计需追问"，避免把正确追问算成推荐错误。下一步：按 P0-① 同款证据法重整 `models` 标注（补硬性条件或标为 need_clarification） |
 | P4-⑱ 检查 Calculator | ✅ | `eval.calculator_eval` → 1.0（14/14） |
 | P4-⑲ 检查 Hard Constraint Violation | ✅ | 检索硬约束违规率 0.0 |
 
@@ -56,16 +56,30 @@ iSEMC 销售 Agent：需求理解 + Fast 路由收口优化计划
 改动  eval/recommendation_eval.py     追加：产品类型准确率（ProductTypeRouter）+ purpose 词表归一 + fp_derived 软计数
 改动  src/models/requirement.py       五类事实口径（fact_class / fact_source / fact_sources）
 改动  src/dialogue/product_type_router.py  修掉 \b 在中文/日文旁失效的 LED/LCD/IFP 识别（g004/g045/g061）+ 补"交互式白板"
+改动  src/rag/structured_product_query.py  fast_path.py 改名而来（结构化产品查询）
+删除  src/rag/fast_path.py                 （改名，不再叫 Fast Path）
+改动  src/agents/solution/runner.py        删除 classify_complexity / QueryRoute 三层分流；直接调用结构化产品查询
+改动  tests/test_no_product_phrasing.py     测试改名 + 指向新模块（能力覆盖不减）
+改动  eval/recommendation_eval.py          --agent 端到端评测改走生产链路（先建 RequirementProfile）；Top-1/Top-3 只统计 Gate READY 子集
 ```
 
-### 下一轮重点（P2 + P1-⑧ 收尾）
+### 下一轮重点（只剩两件）
 
 ```text
-1. P1-⑧ 收尾：把"由场景词推出的字段"标成 SCENARIO_DERIVED（现在标成 explicit），
-   purpose 的 25 FP / 13 FN 会随之落到 fp_derived（合法推断不扣分）；
-2. P2-⑨⑩⑪：删除 Fast 业务路由（引用点已审计）→ 结构化产品查询改名
-   structured_product_query.py → Solution 直接调用；
-3. P4-⑰：Top-1 / Top-3 需要 LLM 网络（--agent），联网环境补跑。
+1. Golden Dataset 的 `models` 标注按 Gate 口径重整（P4-⑰ 的发现）：
+   要么给 query 补上硬性条件（固装/租赁、尺寸…），要么把该用例标为 need_clarification；
+2. `src/rag/router.py` 里的 classify_complexity / QueryRoute 现在只服务 eval 的
+   legacy_route 历史字段 —— 等 legacy 字段不再需要时整块删除（届时三处引用一起改）。
+```
+
+### 本轮执行中自查发现并修掉的一个回归
+
+```text
+删除三层路由时，runner 里还有 5 处引用 routing（约束注入 / route / complexity 返回），
+全量测试没覆盖到"真机 Agent 路径"，是 `--agent` 评测先报出来的：
+    ERROR [g013] Agent 失败: name 'routing' is not defined
+已改为：约束注入用统一抽取器的规则槽位；route/complexity 返回固定 "agent"。
+修完 --agent 评测可正常跑通（18/18 到达 Gate）。
 ```
 
 

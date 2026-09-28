@@ -60,18 +60,14 @@ SCORED_SLOTS = (
 )
 
 
-# 计划 update_v2.9.10 §11【1】：场景词表归一（中文场景词 ↔ 英文枚举），
-# 否则"会议室"和系统输出的 "conference" 会被判成两个值。
-_PURPOSE_CANON = {
-    "会议室": "conference", "会议": "conference", "培训": "conference", "报告厅": "conference",
-    "教室": "classroom", "课堂": "classroom",
-    "教堂": "church",
-    "商场": "retail", "店铺": "retail", "零售": "retail", "商店": "retail",
-    "展厅": "showroom", "展览": "showroom",
-    "广告": "advertising", "户外广告": "advertising", "招牌": "advertising",
-    "体育馆": "stadium", "体育场": "stadium", "球场": "stadium", "场馆": "stadium",
-    "舞台": "stage", "演出": "stage", "演唱会": "stage", "音乐会": "stage",
-    "办公室": "office", "办公": "office",
+# 计划 update_v2.9.10 §11【1】：场景词表归一（中文场景词 ↔ 英文枚举）。
+# 首选**系统自己的词表**（`purpose_normalizer.PURPOSE_MAPPING`，单一来源）；
+# 下面只补系统词表还没收录的少数标签，避免"会议室"与 "conference" 被判成两个值。
+_PURPOSE_FALLBACK = {
+    "培训室": "classroom", "培训": "conference", "报告厅": "conference",
+    "酒店大堂": "hotel", "室内大厅": "hall",
+    "幕墙广告": "advertising", "楼体广告": "advertising", "户外广告": "advertising",
+    "舞台": "stage", "演唱会": "concert",
 }
 
 
@@ -79,7 +75,16 @@ def _canon_purpose(value: Any) -> Any:
     if value in (None, ""):
         return value
     text = str(value).strip()
-    return _PURPOSE_CANON.get(text, text.lower())
+    try:
+        from src.core.purpose_normalizer import PURPOSE_MAPPING
+
+        for key in (text, text.lower()):
+            hit = PURPOSE_MAPPING.get(key)
+            if hit is not None:
+                return str(getattr(hit, "value", hit))
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("purpose mapping unavailable: %s", exc)
+    return _PURPOSE_FALLBACK.get(text, text.lower())
 
 
 def _predicted_slots(constraints: Dict[str, Any]) -> Dict[str, Any]:
@@ -358,12 +363,23 @@ def evaluate_with_agent(cases: List[Dict[str, Any]], limit: Optional[int] = None
 
     top1_hits: List[float] = []
     top3_hits: List[float] = []
+    clarifications = 0
     details: List[Dict[str, Any]] = []
     selected = [c for c in cases if c.get("models")][: limit] if limit else [c for c in cases if c.get("models")]
 
     for case in selected:
         try:
-            result = runner.run(message=case["query"], history=case.get("history") or [])
+            # 计划 update_v2.9.10【任务 2】：端到端评测必须走**生产链路** ——
+            # query → RequirementExtractor → RequirementProfile → Solution。
+            # （Solution 已经不再自己重建需求：不传档案就会得到 REQUIREMENT_NOT_READY）
+            from src.rag.query_understanding import understand_query
+
+            understanding = understand_query(case["query"], history=case.get("history") or [])
+            result = runner.run(
+                message=case["query"],
+                history=case.get("history") or [],
+                profile=understanding.profile,
+            )
         except Exception as exc:
             logger.error("[%s] Agent 失败: %s", case["id"], exc)
             details.append({"id": case["id"], "error": str(exc)})
@@ -372,6 +388,19 @@ def evaluate_with_agent(cases: List[Dict[str, Any]], limit: Optional[int] = None
 
         _, models = identifiers_from_items(result.get("products") or [])
         expected = case["models"]
+        if not models:
+            # 计划 update_v2.9.10 §17：推荐必须先过 Recommendation Gate。
+            # 硬性条件没齐时 Gate 返回 NEED_CLARIFICATION（正确的业务行为），
+            # 这类用例不算"推荐错误"，单独统计。
+            clarifications += 1
+            details.append({
+                "id": case["id"],
+                "expected_models": expected,
+                "predicted_models": [],
+                "status": "need_clarification",
+                "answer": str(result.get("answer") or "")[:120],
+            })
+            continue
         top1_hits.append(1.0 if models[:1] and models[0] in expected else 0.0)
         top3_hits.append(1.0 if set(models[:3]) & set(expected) else 0.0)
         details.append({
@@ -384,6 +413,8 @@ def evaluate_with_agent(cases: List[Dict[str, Any]], limit: Optional[int] = None
     return {
         "status": "ok" if top1_hits else "no_data",
         "cases": len(top1_hits),
+        "cases_selected": len(selected),
+        "need_clarification": clarifications,
         "top1_accuracy": round(mean(top1_hits), 4) if top1_hits else None,
         "top3_coverage": round(mean(top3_hits), 4) if top3_hits else None,
         "cases_detail": details,

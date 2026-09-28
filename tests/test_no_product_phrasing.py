@@ -105,8 +105,8 @@ class TestFallbackRepliesUseRelaxation:
         assert "No suitable model found" not in source
         assert "relaxation_answer" in source
 
-    def test_fast_path_summary(self):
-        from src.rag.fast_path import _build_product_summary
+    def test_structured_product_query_summary(self):
+        from src.rag.structured_product_query import _build_product_summary
 
         assert not has_no_product_phrase(_build_product_summary([]))
 
@@ -134,16 +134,16 @@ class TestFallbackRepliesUseRelaxation:
         assert "No-product rule" in source
 
 
-class TestFastPathRespectsAccumulatedRequirements:
+class TestStructuredProductQueryRespectsAccumulatedRequirements:
     """实测 bug：客户前面已说"室外 + 租赁"，后面只回一句 "P3" 时，
     fast path 只用本条消息抽到的点间距约束 → 给室外租赁推荐了室内型号
     （TW11-3216 / TW21-3216），随后被回复清洗器删光，最后退化成"放宽条件"兜底。
     """
 
-    def _fast(self, constraints):
-        from src.rag.fast_path import fast_path_handle
+    def _query(self, constraints):
+        from src.rag.structured_product_query import structured_product_query_handle
 
-        return fast_path_handle(
+        return structured_product_query_handle(
             query="P3", constraints=constraints, template_type=None, data_dir="data"
         )
 
@@ -166,7 +166,7 @@ class TestFastPathRespectsAccumulatedRequirements:
         assert merged["is_rental"] is True
 
     def test_outdoor_rental_never_returns_indoor_models(self):
-        result = self._fast({
+        result = self._query({
             "pixel_pitch": 3.0, "pixel_pitch_tolerance": 0.5,
             "outdoor": True, "indoor": False, "is_rental": True, "display_type": "LED",
         })
@@ -176,7 +176,7 @@ class TestFastPathRespectsAccumulatedRequirements:
     def test_outdoor_fixed_returns_only_outdoor_and_survives_sanitizer(self):
         from src.rag.rerank import sanitize_customer_response
 
-        result = self._fast({
+        result = self._query({
             "pixel_pitch": 3.0, "pixel_pitch_tolerance": 0.5,
             "outdoor": True, "indoor": False, "is_rental": False, "display_type": "LED",
         })
@@ -188,7 +188,7 @@ class TestFastPathRespectsAccumulatedRequirements:
     def test_no_match_gives_relaxation_not_no_product(self):
         # 2026-09-18：库里新增了室外租赁（TW11-OR 等，最大 P4.8），
         # 所以"室外租赁 + P6"才是真正无匹配的组合。
-        result = self._fast({"pixel_pitch": 6.0, "outdoor": True, "is_rental": True})
+        result = self._query({"pixel_pitch": 6.0, "outdoor": True, "is_rental": True})
         assert not result["products"]
         assert result["answer"].strip()
         assert not has_no_product_phrase(result["answer"])
