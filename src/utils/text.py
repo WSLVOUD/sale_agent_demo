@@ -67,3 +67,121 @@ def remove_internal_phrasing(text: str) -> str:
     for phrase in internal_phrases:
         text = text.replace(phrase, "我了解")
     return text
+
+
+# ── "没有事实"的收尾评论句（客户口径 2026-09-28）────────────────────────────
+# 实测客户可见文本：
+#   "Both options use the same TW11-3216-P3.0 cabinets and suit a permanent church
+#    install, so the choice mainly comes down to whether you prefer the slightly
+#    taller horizontal layout or the slightly wider vertical one."
+# 这种句子不含任何排布事实（箱体数 / 实际尺寸 / 模组数），只是"怎么选"的评论 ——
+# 客户明确要求"话术少点，直接推荐就行"，所以一律删掉。
+# 带排布数字的句子（"5 x 11 = 55 cabinets" / "330 modules"）一定保留。
+_COMMENTARY_OPENER_RE = re.compile(
+    r"^\s*(?:both|either)\s+(?:options?|layouts?|configurations?|ways?|setups?)\b",
+    re.IGNORECASE,
+)
+# 注意：型号里也有数字（"TW11-3216-P3.0 cabinets"）—— 那种不算排布事实，
+# 所以数字前面不允许紧邻字母 / 点 / 连字符。
+_COMMENTARY_FACT_RE = re.compile(
+    r"(?<![\w.\-])\d+\s*(?:[x×*]\s*\d+|(?:cabinets?|modules?)\b)", re.IGNORECASE
+)
+_COMMENTARY_ASK_RE = re.compile(
+    r"[?？]|\bplease\b|\bshall i\b|\bcould you\b|\bwould you\b|\blet me know\b|\bkindly\b",
+    re.IGNORECASE,
+)
+# 句子边界 = 标点**之后**紧跟空白 / 行尾。不能用"[^.!?]+[.!?]"那种切法：
+# 型号里也有点（"TW11-3216-P3.0 cabinets"），会把一句话切碎（实测踩过：
+# 切碎后 "0 cabinets and suit …" 被当成评论句，正文被削掉半句）。
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?。！？])(?:\s+|$)")
+
+
+def sentence_spans(text: str):
+    """返回 [(start, end, 句子原文), …]（边界按上面的规则，型号不会被切碎）。"""
+    source = str(text or "")
+    spans = []
+    start = 0
+    for match in _SENTENCE_BOUNDARY_RE.finditer(source):
+        chunk = source[start:match.end()]
+        if chunk.strip():
+            spans.append((start, match.end(), chunk))
+        start = match.end()
+    tail = source[start:]
+    if tail.strip():
+        spans.append((start, len(source), tail))
+    return spans
+
+
+def is_fact_free_commentary(sentence: str, *, max_words: int = 40) -> bool:
+    """这句是不是"没有事实"的收尾评论（可以安全删掉）。"""
+    body = str(sentence or "").strip()
+    if not body or not _COMMENTARY_OPENER_RE.match(body):
+        return False
+    if _COMMENTARY_FACT_RE.search(body):     # 带排布数字 = 带事实
+        return False
+    if _COMMENTARY_ASK_RE.search(body):      # 问句 / 请求句归收口逻辑管
+        return False
+    return len(body.split()) <= int(max_words or 40)
+
+
+def strip_fact_free_commentary(text: str) -> str:
+    """删掉正文里"没有事实"的收尾评论句；删空了就原样返回。"""
+    source = str(text or "")
+    spans = [
+        (start, end)
+        for start, end, chunk in sentence_spans(source)
+        if is_fact_free_commentary(chunk)
+    ]
+    if not spans:
+        return source
+    pieces, cursor = [], 0
+    for start, end in sorted(spans):
+        pieces.append(source[cursor:start])
+        cursor = max(cursor, end)
+    pieces.append(source[cursor:])
+    cleaned = re.sub(r"[ \t]{2,}", " ", "".join(pieces))
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned or source
+
+
+# ── "复述客户需求"的前置从句（客户口径 2026-09-28）──────────────────────────
+# 实测客户可见文本：
+#   "For a permanent installation at roughly 3m by 5m with a viewing distance
+#    around 5m, the model I recommend is TW11-3216-P3.0."
+# 前半句全是客户已经说过的需求 —— 客户要求"不要重复客户需求，直接推荐"。
+# 只在这种"复述从句 + 后半句含型号"的形态下裁掉从句；后半句不含型号时一律不动
+# （避免把 "Since your wall is 3m x 5m, we can lay it out two ways." 这类带信息的句子改坏）。
+_ECHO_PREFIX_RE = re.compile(r"^\s*(?:for|since|because|as)\b([^,]{0,140}),\s*", re.IGNORECASE)
+_MODEL_CODE_RE = re.compile(r"\bTW\s?\d{2}\s*[-\s]\s*[A-Za-z0-9.-]{2,}", re.IGNORECASE)
+
+
+def strip_requirement_echo_prefix(text: str) -> str:
+    """裁掉"复述客户需求"的前置从句（仅在从句后面紧跟型号时）。"""
+    source = str(text or "")
+    spans = sentence_spans(source)
+    if not spans:
+        return source
+    pieces, cursor, changed = [], 0, False
+    for start, end, chunk in spans:
+        body = chunk.strip()
+        rewritten = body
+        match = _ECHO_PREFIX_RE.match(body)
+        if match:
+            clause = match.group(1)
+            rest = body[match.end():].strip()
+            if (
+                rest
+                and _MODEL_CODE_RE.search(rest)
+                and not _MODEL_CODE_RE.search(clause)
+            ):
+                rewritten = rest[0].upper() + rest[1:]
+        if rewritten != body:
+            changed = True
+            trailing = chunk[len(chunk.rstrip()):]
+            pieces.append(source[cursor:start])
+            pieces.append(rewritten + trailing)
+            cursor = end
+    if not changed:
+        return source
+    pieces.append(source[cursor:])
+    return "".join(pieces)

@@ -365,13 +365,23 @@ def _express_recommendation(
         + f"{calc_text}{extra}{latest}{brief}\n\n"
         "Rules:\n"
         "1. Mention the selected model with its full model code — it does not have to be the very first words.\n"
+        # 客户口径（2026-09-28）：不要在推荐话术里复述客户的需求。
+        # 实测："For a permanent installation at roughly 3m by 5m with a viewing
+        # distance around 5m, the model I recommend is TW11-3216-P3.0. …" ——
+        # 客户已经说过的话再说一遍，话术就变长了。直接推荐即可。
+        "1b. Do NOT restate the customer's requirements. Never open with things like "
+        "\"For your indoor/church/permanent install at 3m x 5m with a 5m viewing distance…\" "
+        "or \"Since your wall is 3m x 5m…\" — they already told us. Start with the model "
+        "(or one short reason about the model) and keep every other sentence about THIS model.\n"
         "2. Add 1-2 concrete selling points using ONLY the verified data above.\n"
         "2b. If the customer's latest message mentions other requirements (quality, lead time, installation, "
         "brightness, size, delivery…), acknowledge them in ONE short clause and tie the choice to them, "
         "so the reply answers what they just said instead of repeating the same text.\n"
         "3. If calculated configurations are given, present BOTH tiling options (horizontal and "
         "vertical) — for each one give the cabinet count (columns x rows = total) and the actual "
-        "screen size. Never drop one of the two layouts.\n"
+        "screen size. Never drop one of the two layouts. Do NOT add a closing comment about how the two "
+        "layouts compare or how to choose between them (no \"Both options … so the choice comes down to …\") — "
+        "the figures speak for themselves.\n"
         "3b. Mention ONLY the selected model above. Never name, hint at or compare any other model "
         "code, and never write \"If you want <something>, <OTHER MODEL>\". One model per reply.\n"
         "3c. NEVER mention price, price tier, cost, discount, budget or value for money — pricing is handled "
@@ -381,9 +391,10 @@ def _express_recommendation(
         # 客户口径（2026-09-28）：推荐时**不要**字数上限 —— 型号 + 实测参数 +
         # 两种排布（箱体数 / 实际尺寸 / 模组数）必须完整给到客户，多屏时每一块
         # 屏都要完整。只要求"不注水"（不重复、不加数据里没有的内容）。
-        f"5. Plain text only, no markdown, no bullets. There is no word or sentence limit: "
-        "give the complete recommendation (full model code, key specs, and every calculated "
-        "tiling option) instead of cutting it short. Do not pad or repeat.\n"
+        f"5. Plain text only, no markdown, no bullets. Be concise: the complete recommendation "
+        "(full model code, key specs, and every calculated tiling option) must be there, "
+        "but do not pad, do not repeat, and never restate the customer's requirements or add "
+        "commentary about the layouts.\n"
         "6. Vary your wording and sentence structure between replies — avoid any fixed template.\n"
         f"7. {language_rule}\n"
         "8. Never invent specs, never mention internal data sources.\n\n"
