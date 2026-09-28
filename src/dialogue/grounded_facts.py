@@ -254,6 +254,24 @@ def fact_fields(facts: Sequence[Any]) -> Set[str]:
     return {str(getattr(fact, "field", "") or (fact or {}).get("field", "")) for fact in facts or []}
 
 
+def facts_to_dicts(facts: Sequence[Any]) -> List[Dict[str, Any]]:
+    """这一轮用到的业务事实 → FinalResponse 需要的 dict 列表（v2.6 §4）。
+
+    从 Orchestrator 迁入（计划《Orchestrator.py 二次瘦身计划》§二/§五）：
+    "这一轮用了哪些事实"属于对话表达层的数据整理，不属于编排。
+    """
+    out: List[Dict[str, Any]] = []
+    for item in facts if isinstance(facts, (list, tuple)) else []:
+        if isinstance(item, dict):
+            out.append(dict(item))
+        elif hasattr(item, "to_dict"):
+            try:
+                out.append(dict(item.to_dict()))
+            except Exception:  # pragma: no cover - 防御式
+                continue
+    return out
+
+
 def allowed_tokens(facts: Sequence[Any], extra_texts: Iterable[str] = ()) -> Set[str]:
     """允许出现在客户可见文本里的"带数值的 token"（事实 + 客户原话）。"""
     tokens: Set[str] = set()
@@ -296,6 +314,7 @@ __all__ = [
     "SOURCE_RETRIEVED_FROM_PRODUCT_KB",
     "SOURCE_UNKNOWN",
     "allowed_tokens",
+    "facts_to_dicts",
     "build_grounded_facts",
     "fact_fields",
 ]

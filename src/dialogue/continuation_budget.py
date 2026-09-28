@@ -42,6 +42,11 @@ from typing import Any, Dict, Optional
 # 客户口径（2026-09-22）：每一次闲聊最长 1 条 —— 承接一条，第二条必须回归需求提问
 MAX_ACK_STREAK = 1
 
+# 计划 v2.9.4 / 客户口径（2026-09-23）：确认 / 纠正这两种 SpeechAct 都**不是闲聊** ——
+# 客户回了 "ok"（确认我们的判断）之后就该继续推进，不能被"承接额度"压成一句寒暄
+# （实测：客户确认 LED 后只收到 "Good to know."，一整个 turn 没有推进）。
+REQUIREMENT_RELATED_SPEECH_ACTS = frozenset({"CONFIRMATION", "CORRECTION"})
+
 
 def configured_ack_streak_limit() -> int:
     """连续承接上限（默认 1，可用 ``LED_RAG_MAX_ACK_STREAK`` 覆盖）。"""
@@ -119,9 +124,88 @@ def decide_continuation(
     return ContinuationDecision(False, "ack_budget_exhausted", 0)
 
 
+def apply_continuation_budget(
+    result: Dict[str, Any],
+    *,
+    conversation: Any = None,
+    question_slot: str,
+    questions: Any = None,
+    profile_slots: Any = (),
+    speech_act: Any = None,
+) -> "tuple[str, list]":
+    """把"承接额度"结论落进 result（从 Orchestrator 迁入，计划 §二/§五）。
+
+    客户口径（2026-09-21 → 2026-09-22 最终版）：不要连续提问 ——
+
+      · 与需求有关（给参数 / 答别的一项 / 问业务问题）→ 直接"接住 + 追问缺项"，
+        绝不做"只承接"（实测 bug：客户答 "maybe 5m"，AI 只寒暄一句就停了）；
+      · 与需求无关（闲聊）→ 只承接 1 条；第 2 条闲聊必须"接住 + 提问"写在同一条
+        消息里（客户口径："第二条……在同一条消息询问需求"）。
+
+    判定由销售节点在语境里给出（``result["offtopic_turn"]``，LLM + 规则，不看关键词）；
+    同一轮里客户连发多条消息按**一次**算（一个 turn 只决策一次）。
+
+    Returns:
+        ``(question_slot, questions)``（被承接额度压掉时问句清空）
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    data = result if isinstance(result, dict) else {}
+    ack_streak = int(getattr(conversation, "ack_streak", 0) or 0)
+    ack_limit = configured_ack_streak_limit()
+    off_topic = bool(data.get("offtopic_turn"))
+    act = speech_act if speech_act is not None else (data.get("speech_act") or {})
+    # 判定依据是销售节点给的 SpeechAct（语境判定），不是关键词。
+    if isinstance(act, dict):
+        act_name = str(act.get("speech_act") or act.get("act") or "").upper()
+    else:
+        act_name = str(getattr(act, "speech_act", "") or "").upper()
+    if act_name in REQUIREMENT_RELATED_SPEECH_ACTS:
+        off_topic = False
+    # 档案里有值 = 客户确实给过这一项 → 问题登记簿同步成 ANSWERED，并把"档案里有值"
+    # 也算成"客户答过"（实测：客户答"只在意质量"，档案已记 price_preference=quality，
+    # 但登记簿还是 ASKED → 误判成没回答）。
+    if conversation is not None:
+        for slot in profile_slots or ():
+            conversation.note_answered(str(slot))
+    has_question = bool(question_slot and data.get("pending_question"))
+    decision = decide_continuation(
+        has_question=has_question,
+        off_topic=off_topic,
+        ack_streak=ack_streak,
+        max_ack_streak=ack_limit,
+        # 计划 v2.9.4 修复："LED 还是 LCD"不是需求细节问题（计划 §五 第一优先级），
+        # 不受承接额度约束 —— 否则类型没定就被"先承接一句"压掉，客户看不到任何推进。
+        type_gate_question=str(question_slot or "") == "display_type",
+    )
+    data["continuation"] = decision.to_dict()
+    data["ack_streak"] = decision.next_streak
+    if conversation is not None:
+        conversation.ack_streak = decision.next_streak
+    if decision.suppress_question and has_question:
+        logger.info(
+            "[Continuation] 客户说的是与需求无关的话 → 本轮先承接、不问问题"
+            "（承接 %d/%d，下一轮接住 + 提问）",
+            decision.next_streak, ack_limit,
+        )
+        data["suppressed_question"] = {
+            "slot": question_slot,
+            "question": str(data.get("pending_question") or ""),
+            "ack_streak": decision.next_streak,
+        }
+        data["pending_question"] = ""
+        data["pending_slot"] = ""
+        return "", []
+    return question_slot, list(questions or [])
+
+
 __all__ = [
     "ContinuationDecision",
     "MAX_ACK_STREAK",
+    "REQUIREMENT_RELATED_SPEECH_ACTS",
+    "apply_continuation_budget",
     "configured_ack_streak_limit",
     "decide_continuation",
 ]

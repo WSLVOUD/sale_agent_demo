@@ -200,7 +200,11 @@ class TestOrchestratorAttachesFaq:
             sales_agent=self._StubAgent(), solution_agent=self._StubAgent()
         )
 
-        out = orch._attach_service_faq("TW11-3216-P3.0 looks like the best fit.", "你们包安装吗？")
+        # 售后口径的唯一实现在 ResponseCoordinator（计划《Orchestrator.py 二次瘦身计划》§五）
+        coordinator = orch._response_coordinator()
+        out = coordinator.attach_service_faq(
+            "TW11-3216-P3.0 looks like the best fit.", "你们包安装吗？"
+        )
         assert out.startswith(service_faq_fact("你们包安装吗"))
         assert out.endswith("TW11-3216-P3.0 looks like the best fit.")
 
@@ -211,4 +215,6 @@ class TestOrchestratorAttachesFaq:
         orch = DualAgentOrchestrator(
             sales_agent=self._StubAgent(), solution_agent=self._StubAgent()
         )
-        assert orch._attach_service_faq("Plain reply.", "教堂室内 P3") == "Plain reply."
+        assert orch._response_coordinator().attach_service_faq(
+            "Plain reply.", "教堂室内 P3"
+        ) == "Plain reply."

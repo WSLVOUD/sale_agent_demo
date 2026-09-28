@@ -691,6 +691,70 @@ def load_decision(payload: Any) -> DisplayTypeDecision:
     )
 
 
+def align_question_with_type_gate(
+    result: Any,
+    *,
+    question_slot: str,
+    sales_asked_type: bool = False,
+) -> "tuple[str, Any]":
+    """计划 v2.9.3 §五/§六：类型未确认前，**任何路径**都不许直接问需求细节。
+
+    这一条放在收口层（而不是某个分支里），所以 conversation / free question /
+    product question / need_query 哪条路径进来，都不可能绕过"先定 LED 还是 LCD"。
+
+    Returns:
+        ``(question_slot, questions)``；闸门不适用时原样返回（questions 重新算一遍）。
+    """
+    import logging
+
+    from .final_response import question_candidates_from_result
+
+    logger = logging.getLogger(__name__)
+    data = result if isinstance(result, dict) else {}
+    type_decision = data.get("display_type_decision") or {}
+    # 只有"销售层确实给出过类型判断"（或入口是 PRODUCT_SELECTION）时才拦截；
+    # 旧测试/旧调用没有这个字段时保持原行为（生产链路 classify 每次都会写）
+    if not (
+        (bool(type_decision) or str(data.get("product_entry") or "") == "PRODUCT_SELECTION")
+        and str(type_decision.get("status") or "") != STATUS_CONFIRMED
+        and question_slot
+        and question_slot != "display_type"
+    ):
+        return question_slot, question_candidates_from_result(data)
+
+    try:
+        gate_question = product_type_question(
+            load_decision(type_decision),
+            # 换说法：用轮次/消息做种子，避免每次都同一句（客户口径：别像问卷）
+            seed=len(str(data.get("customer_input") or "")) + len(str(data.get("turn_id") or "")),
+        )
+        if not gate_question:
+            return question_slot, question_candidates_from_result(data)
+        logger.info(
+            "[ProductType] 收口层拦截：类型未确认（status=%s）→ 把需求问题(%s)"
+            "换成类型确认问题",
+            type_decision.get("status"), question_slot,
+        )
+        question_slot = "display_type"
+        data["pending_slot"] = "display_type"
+        data["pending_question"] = gate_question
+        data["product_type_gate"] = type_decision
+        # 正文里那句"需求细节"的问句必须换掉：去掉旧问句 → 换类型确认问句
+        # 例外（计划 v2.9.4）：销售层这一轮已经问过/说明过类型 →
+        # 这里只对齐槽位，不再追加一遍（否则同一段解释/问题客户会看到两遍）。
+        if not sales_asked_type:
+            from .final_guard import FinalResponseGuard
+
+            kept = FinalResponseGuard().strip_questions(
+                str(data.get("response") or "")
+            ).strip()
+            data["response"] = f"{kept} {gate_question}".strip() if kept else gate_question
+        return question_slot, question_candidates_from_result(data)
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("[ProductType] 收口层类型闸门失败：%s", exc)
+        return question_slot, question_candidates_from_result(data)
+
+
 __all__ = [
     "LCD",
     "LED",
@@ -707,6 +771,7 @@ __all__ = [
     "DisplayTypeDecision",
     "EXPLANATION_LINES",
     "build_self_check",
+    "align_question_with_type_gate",
     "explanation_lines",
     "product_type_question",
     "final_fallback",

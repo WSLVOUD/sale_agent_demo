@@ -112,10 +112,100 @@ class ResponseCountGuard:
 FIREWALL = DuplicateQuestionFirewall()
 
 
+def apply_question_firewall(
+    result: Dict[str, Any],
+    *,
+    session_id: str = "",
+    coverage: Any = None,
+    previous_question: Optional[Dict[str, Any]] = None,
+    newly_filled: Optional[Iterable[str]] = None,
+    ranked_slots: Iterable[str] = (),
+    firewall: Optional[DuplicateQuestionFirewall] = None,
+    next_candidate: Any = None,
+) -> "tuple[str, str]":
+    """v2.7 §19.1：发送前的重复提问闸门（从 Orchestrator 迁入，计划 §二）。
+
+    Returns:
+        ``(最终的 question_slot, duplicate_check 结论)``；被拦下且没有替代槽位时，
+        会把 ``result`` 里的 ``pending_question`` / ``pending_slot`` 清空。
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    checker = firewall or FIREWALL
+    if next_candidate is None:
+        from .turn_action import next_candidate_slot
+
+        next_candidate = next_candidate_slot
+
+    previous_question = dict(previous_question or {})
+    newly = [str(item) for item in (newly_filled or [])]
+    answered = list(getattr(coverage, "answered_slots", []) or [])
+
+    slot = str(result.get("pending_slot") or "")
+    if not result.get("pending_question") or not slot:
+        return slot, "no_question"
+
+    question_state = ""
+    if session_id:
+        try:
+            from .conversation_state import get_conversation_state
+
+            registry = getattr(get_conversation_state(session_id), "registry", None)
+            if registry is not None:
+                record = registry.get(slot)
+                question_state = (
+                    str(getattr(record, "question_state", "") or "") if record else ""
+                )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[Firewall] 读取问题状态失败：%s", exc)
+
+    decision = checker.check(
+        current_slot=slot,
+        previous_slot=str(previous_question.get("question_slot") or ""),
+        current_turn_id=str(result.get("turn_id") or ""),
+        previous_turn_id=str(previous_question.get("turn_id") or ""),
+        answered_slots=answered,
+        newly_filled_slots=newly,
+        question_state=question_state,
+    )
+    if decision.allowed:
+        return slot, "pass"
+
+    alternative = next_candidate(
+        list(ranked_slots or []),
+        blocked_slot=decision.blocked_slot or slot,
+        answered_slots=answered,
+    )
+    if alternative:
+        question = ""
+        try:
+            from ..rag.readiness import question_for
+
+            question = question_for(alternative, "en", 0, easier=False) or ""
+        except Exception:  # pragma: no cover - 防御式
+            question = ""
+        if question:
+            logger.info(
+                "[Firewall] %s → 改问 %s（不再重复 %s）",
+                decision.reason, alternative, slot,
+            )
+            result["pending_question"] = question
+            result["pending_slot"] = alternative
+            return alternative, f"{decision.reason}_rerouted"
+
+    logger.info("[Firewall] %s → 本轮不再重复提问（slot=%s）", decision.reason, slot)
+    result["pending_question"] = ""
+    result["pending_slot"] = ""
+    return "", decision.reason
+
+
 __all__ = [
     "DEFER_REPEATED_SLOT",
     "FIREWALL",
     "DuplicateQuestionFirewall",
     "FirewallDecision",
     "ResponseCountGuard",
+    "apply_question_firewall",
 ]

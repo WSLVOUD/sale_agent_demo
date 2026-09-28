@@ -161,6 +161,21 @@ def _business_value(slot: str, action: str) -> float:
     return base
 
 
+def ranked_question_slots(profile: Any, *, session_id: str = "") -> List[str]:
+    """候选问题槽位（按业务价值排序）—— 重复提问闸门拦下时"换问别的"用。
+
+    从 Orchestrator 迁入（计划《Orchestrator.py 二次瘦身计划》§二）：
+    候选排序的唯一实现是 ``question_candidates``，这里只做形状转换。
+    """
+    try:
+        return [
+            str(slot)
+            for slot, _score in (question_candidates(profile, session_id=session_id) or [])
+        ]
+    except Exception:  # pragma: no cover - 防御式
+        return []
+
+
 def select_next_question(
     profile: Any,
     *,
@@ -406,6 +421,7 @@ __all__ = [
     "decide_action",
     "decide_speech_policy",
     "question_candidates",
+    "ranked_question_slots",
     "rank_slots_by_value",
     "select_next_question",
     "should_append_requirement_question",

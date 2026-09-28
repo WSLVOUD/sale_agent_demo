@@ -370,14 +370,18 @@ class TestVisionConfirmation:
             orch = DualAgentOrchestrator(
                 sales_agent=_StubAgent(), solution_agent=_StubAgent()
             )
-            out = orch._attach_vision_confirmation(
+            # 图片核对的唯一实现在 ResponseCoordinator（计划《Orchestrator.py 二次瘦身计划》§四/§五）
+            coordinator = orch._response_coordinator()
+            out = coordinator.attach_vision_confirmation(
                 "Which pixel pitch are you thinking of?", session_id, "i need this"
             )
             assert "photo" in out.lower()
             assert "indoor" in out.lower() and "conference" in out.lower()
             assert out.lower().rstrip().endswith("which pixel pitch are you thinking of?")
             # 已经确认过的内容不重复
-            assert orch._attach_vision_confirmation(out, session_id, "i need this") == out
+            assert (
+                coordinator.attach_vision_confirmation(out, session_id, "i need this") == out
+            )
         finally:
             memory.clear(session_id)
 

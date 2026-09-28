@@ -259,6 +259,163 @@ def next_candidate_slot(
     return ""
 
 
+# ── 候选 → 唯一动作（从 Orchestrator 迁入，计划《二次瘦身计划》§二）──────────
+def dialogue_action_candidates(sales_result: Any) -> List[Dict[str, Any]]:
+    """本轮出现过的**候选** Action（最终只执行一个，计划 §4.4）。
+
+    候选可以有多个（Policy 选的、QuestionFlow 想追问的…），
+    但"候选 ≠ 最终"：最终动作由 ``FinalResponse.action`` 唯一确定。
+    """
+    data = sales_result or {}
+    candidates: List[Dict[str, Any]] = []
+    decision = data.get("dialogue_action") or {}
+    if isinstance(decision, dict) and decision.get("action"):
+        candidates.append(dict(decision))
+    if data.get("pending_question"):
+        candidates.append({
+            "action": "ask_only",
+            "target_slot": str(data.get("pending_slot") or ""),
+            "question": str(data.get("pending_question") or ""),
+            "source": "question_flow",
+        })
+    return candidates
+
+
+def select_turn_action(result: Any) -> "tuple[Any, List[Any]]":
+    """把本轮出现的候选 Action 收成唯一一个（计划 §4.4/§4.5）。
+
+    Returns:
+        ``(selected, discarded)``；没有候选时返回 ``(None, [])``。
+    """
+    data = result if isinstance(result, dict) else {}
+    try:
+        from .action import (
+            QUESTION_PRIORITY_SALES_PREFERENCE,
+            DialogueDecision,
+            question_priority,
+            select_single_action,
+        )
+    except Exception:  # pragma: no cover - 防御式
+        return None, []
+    candidates: List[Any] = []
+    decision = data.get("dialogue_action") or {}
+    if isinstance(decision, dict) and decision.get("action"):
+        slot = str(decision.get("target_slot") or "") or str(data.get("pending_slot") or "")
+        candidates.append(DialogueDecision(
+            action=str(decision.get("action")),
+            reason=str(decision.get("reason") or ""),
+            question_slot=slot if decision.get("question") else "",
+            question_target=slot if decision.get("question") else "",
+            question_priority=int(
+                decision.get("priority") or QUESTION_PRIORITY_SALES_PREFERENCE
+            ),
+            question_count=1 if decision.get("question") else 0,
+        ))
+    # ── Phase 1（架构收口）：DialoguePolicy 定了槽位就以它为准 ──────────────
+    # 计划 §16.1/§16.2：QuestionPlanner / QuestionFlow / script_generator
+    # 只能"提候选"，不能改最终决定。以前这里无条件把销售层准备的
+    # pending_slot 也当成候选，于是它可能压过 Policy 的选择
+    # （实测：Policy=ASK(viewing_distance) 最终却问了 pixel_pitch）。
+    policy_decided_slot = (
+        str((data.get("dialogue_action") or {}).get("target_slot") or "")
+        if isinstance(data.get("dialogue_action"), dict)
+        else ""
+    )
+    if data.get("pending_question") and not policy_decided_slot:
+        slot = str(data.get("pending_slot") or "")
+        # 注意：这里必须用 **Dialogue Policy 的动作词表**（ask_only），
+        # 不能混进 DialogueDecision 的 ASK —— 否则日志里同一件事会有两个名字。
+        candidates.append(DialogueDecision(
+            action="ask_only",
+            reason="question_flow",
+            question_slot=slot,
+            question_target=slot,
+            question_priority=question_priority(slot) if slot else 99,
+            question_count=1,
+        ))
+    if not candidates:
+        return None, []
+    return select_single_action(candidates)
+
+
+def question_text_for_slot(slot: str) -> str:
+    """按槽位取标准问句（Policy 定槽位、模板给句子，措辞仍由 LLM 重写）。
+
+    只在"销售层准备的问句与 Policy 定的槽位不一致"时兜底用。
+    """
+    target = str(slot or "").strip()
+    if not target:
+        return ""
+    try:
+        from ..rag.readiness import question_for
+
+        return str(question_for(target, "en", 0, easier=False) or "")
+    except Exception:  # pragma: no cover - 防御式
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "[ActionConsistency] 取标准问句失败 slot=%s", target, exc_info=True
+        )
+        return ""
+
+
+def align_question_with_policy(
+    result: Dict[str, Any],
+    *,
+    selected_action: Any,
+    question_slot: str,
+    duplicate_check: str = "",
+) -> "tuple[str, List[Dict[str, Any]]]":
+    """Phase 1（计划 §16.2）：最终问的必须是 DialoguePolicy 定的那一项。
+
+    销售层准备好的问句只能"提候选"：如果 Policy 定的槽位与它不一致，以 Policy
+    为准（日志里问的槽位和客户看到的问句必须一致）。
+    例外：重复提问闸门刚刚**故意改问别的槽位**（duplicate_question*）——
+    那是同一决策层的防重放行，不能反过来被覆盖。
+
+    Returns:
+        ``(question_slot, questions)``
+    """
+    from .final_response import question_candidates_from_result
+
+    policy_slot = str(getattr(selected_action, "question_slot", "") or "")
+    firewall_rerouted = str(duplicate_check or "").startswith("duplicate_question")
+    if (
+        firewall_rerouted
+        or not policy_slot
+        or not question_slot
+        or policy_slot == question_slot
+    ):
+        return question_slot, question_candidates_from_result(result)
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.warning(
+        "[ActionConsistency] Policy=ASK(%s) 与销售层准备的问句(%s)不一致 → 以 Policy 为准",
+        policy_slot, question_slot,
+    )
+    overridden_slot = question_slot
+    aligned = question_text_for_slot(policy_slot)
+    question_slot = policy_slot if aligned else ""
+    result["pending_slot"] = question_slot
+    result["pending_question"] = aligned
+    if aligned:
+        # 正文里那句"问错槽位"的问句必须换掉：先去掉旧问句，再补 Policy 槽位的问句
+        from .final_guard import FinalResponseGuard
+
+        kept = FinalResponseGuard().strip_questions(
+            str(result.get("response") or "")
+        ).strip()
+        result["response"] = f"{kept} {aligned}".strip() if kept else aligned
+    result["action_consistency"] = {
+        "policy_slot": policy_slot,
+        "overridden_slot": overridden_slot,
+        "question_realigned": bool(aligned),
+    }
+    return question_slot, question_candidates_from_result(result)
+
+
 __all__ = [
     "ALL_ACTIONS",
     "ANSWER",
@@ -278,5 +435,9 @@ __all__ = [
     "TurnAction",
     "WAIT",
     "decide_turn_action",
+    "dialogue_action_candidates",
+    "align_question_with_policy",
     "next_candidate_slot",
+    "question_text_for_slot",
+    "select_turn_action",
 ]

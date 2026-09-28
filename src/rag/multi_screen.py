@@ -52,29 +52,6 @@ _SCREEN_FACT_KEYS = (
     "environment", "purpose", "target_width_m", "target_height_m", "pixel_pitch_mm",
 )
 
-# "没有事实"的收尾评论句（"Both options fit your wall, so you can choose…"）：
-# 带排布数字的（"5 x 11 = 55 cabinets" / "330 modules"）不算，问句 / 请求也不算；
-# 只带客户自己的尺寸（"your 3m x 5m wall"）不算事实 —— 那是在复述客户的话。
-_FILLER_SENTENCE_RE = re.compile(
-    r"^\s*(?:both|either)\s+(?:options?|layouts?|configurations?|ways?|setups?)\b",
-    re.IGNORECASE,
-)
-_FILLER_FACT_RE = re.compile(
-    r"\d+\s*[x×*]\s*\d+|\b\d+\s*(?:cabinets?|modules?)\b", re.IGNORECASE
-)
-
-
-def _is_filler_sentence(unit: str) -> bool:
-    body = str(unit or "").strip()
-    if not body or not _FILLER_SENTENCE_RE.match(body):
-        return False
-    if _FILLER_FACT_RE.search(body):
-        return False
-    if _ASK_RE.search(body):
-        return False
-    return len(body.split()) <= 40
-
-
 def _sentence_spans(text: str) -> List[Tuple[int, int, str]]:
     """句子 + 它在原文里的位置（用于删句子但保留其它排版）。"""
     return [
@@ -144,6 +121,35 @@ class MultiScreenManager:
         self._stored_profile = profile_lookup or (lambda _sid: None)
         self._load_history = history_lookup or (lambda _sid: [])
         self.solution_agent = solution_agent
+
+    # ── 对外唯一入口（计划《Orchestrator.py 二次瘦身计划》§三/§六）──────────
+    # Orchestrator 只允许通过这些方法与多屏业务交互；实现仍然在本模块内部，
+    # 不存在"第二套多屏逻辑"。
+    def split_and_apply_screen_specs(self, session_id: str, message: str) -> list:
+        """一句话里给了多块屏的规格 → 每块屏各存一份需求。"""
+        return self._split_and_apply_screen_specs(session_id, message)
+
+    def maybe_target_screen(self, session_id: str, message: str) -> Optional[int]:
+        """客户指明"改哪一块屏" → 切到那一块（返回下标，没指明返回 None）。"""
+        return self._maybe_target_screen(session_id, message)
+
+    def maybe_start_new_item(self, session_id: str, message: str) -> str:
+        """客户这句话在说"另一块屏" → 归档当前这块，开一条新需求档案。"""
+        return self._maybe_start_new_item(session_id, message)
+
+    def share_common_facts(self, session_id: str) -> None:
+        """把当前这块屏已确认的共有项同步给其他屏（同一个问题全项目只问一次）。"""
+        return self._share_common_facts(session_id)
+
+    def recommend_all_screens(self, session_id: str, message: str) -> Optional[str]:
+        """多块屏：每块屏各跑一次推荐，合成一条回复（一块屏一个型号）。"""
+        return self._recommend_all_screens(session_id, message)
+
+    def multi_item_follow_up(
+        self, session_id: str, result: Dict[str, Any], message: str = ""
+    ) -> Optional[str]:
+        """推荐完之后：记录这一块屏的结果；多块屏都推荐完就给整份汇总。"""
+        return self._multi_item_follow_up(session_id, result, message)
 
     # ── 多屏回复的"是哪一块屏"标注（v2.3.1 从 Orchestrator 迁入）─────────────
     def prefix_active_screen_label(self, session_id: str, message: str, response: str) -> str:
@@ -615,18 +621,14 @@ class MultiScreenManager:
              which proportions and cabinet count work better for your installation."
         这种句子不含任何数字 / 箱体 / 尺寸事实，删掉不影响客户判断；
         带数字的排布句（"4 x 6 = 24 cabinets"）一律保留。
+        判定规则只有一份实现：``src/utils/text.strip_fact_free_commentary``
+        （单屏推荐走 `ResponseCoordinator.postprocess_final`，用的是同一个函数）。
         """
+        from ..utils.text import strip_fact_free_commentary
+
         result: List[Tuple[str, str]] = []
         for label, text in blocks:
-            drop = [
-                (start, end)
-                for start, end, unit in _sentence_spans(text)
-                if _is_filler_sentence(unit)
-            ]
-            trimmed = _delete_spans(text, drop) if drop else text
-            if not trimmed.strip():
-                trimmed = text
-            result.append((label, trimmed))
+            result.append((label, strip_fact_free_commentary(text)))
         return result
 
     @staticmethod

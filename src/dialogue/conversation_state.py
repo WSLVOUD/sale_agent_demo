@@ -476,6 +476,30 @@ def note_ai_turn(
     )
 
 
+def conversation_snapshot(session_id: str) -> Dict[str, Any]:
+    """这一轮做决定**之前**的对话状态（给审计留痕用）。
+
+    从 Orchestrator 迁入（计划《Orchestrator.py 二次瘦身计划》§二）：
+    "会话状态长什么样"由对话层定义，编排只调用。
+    """
+    try:
+        return get_conversation_state(session_id).to_dict()
+    except Exception:  # pragma: no cover - 防御式
+        return {}
+
+
+def last_answer_match_object(session_id: str) -> Optional[AnswerMatch]:
+    """客户这一句与上一轮问题的匹配结果（AnswerMatch 对象；没有则 None）。"""
+    try:
+        data = dict(getattr(get_conversation_state(session_id), "last_answer_match", {}) or {})
+        if not data:
+            return None
+        allowed = set(getattr(AnswerMatch, "__dataclass_fields__", {}) or {})
+        return AnswerMatch(**{key: value for key, value in data.items() if key in allowed})
+    except Exception:  # pragma: no cover - 防御式
+        return None
+
+
 __all__ = [
     "ANSWER_PREVIOUS_QUESTION",
     "ANSWER_WRONG_SLOT",
@@ -489,9 +513,11 @@ __all__ = [
     "STAGE_RECOMMENDING",
     "canonical_slot_name",
     "canonical_slots",
+    "conversation_snapshot",
     "explicit_slots",
     "get_conversation_state",
     "known_question",
+    "last_answer_match_object",
     "match_answer_to_question",
     "note_ai_turn",
     "note_customer_turn",

@@ -15,18 +15,8 @@ from .first_contact.profile import load_profile
 
 logger = logging.getLogger(__name__)
 
-# 客户口径（2026-09-23）：这两种 SpeechAct 说明客户在**回应我们的判断**
-# （确认 / 纠正），不是闲聊 —— 承接额度不该把这类回答压成一句寒暄。
-# 为什么只收这两个：确认/纠正本身就是"没有需求信息的一句话"（"ok" / "不对"），
-# 会被"与需求无关"的启发式判成闲聊；而"答上一问 / 主动补需求"那几种本来就带
-# 需求信息，销售节点不会把它们判成闲聊，不需要在这里兜。
-_REQUIREMENT_RELATED_SPEECH_ACTS = frozenset(
-    {
-        "CONFIRMATION",
-        "CORRECTION",
-    }
-)
-
+# 注：确认 / 纠正这类"与需求相关"的 SpeechAct 口径已迁到对话层
+# （`dialogue.continuation_budget.REQUIREMENT_RELATED_SPEECH_ACTS`）。
 # ── v2.3.1 Phase 2：业务逻辑已迁出，这里只做编排与兼容 ────────────────────────
 from .observability.perf import PerfTracker  # noqa: E402,F401  (按性能埋点，从本模块迁出)
 from .vision.pipeline import (  # noqa: E402,F401  (Vision 接入，从本模块迁出)
@@ -46,14 +36,7 @@ try:
     RESPONSE_LANGUAGE = _config.RESPONSE_LANGUAGE_POLICY
 except Exception:  # pragma: no cover - 防御式
     RESPONSE_LANGUAGE = "en"
-
-
-
-
-
-
-
-
+    
 class DualAgentOrchestrator:
     """
     Orchestrates between Sales Agent and Solution Agent.
@@ -307,13 +290,16 @@ class DualAgentOrchestrator:
         #  ① 一句话里给了两块屏的规格（"4m x2.5 indoor and 3m x2m outdoor"）→ 分别记录
         #  ② 客户指明"改那一块"（"把室外那块改成 3m x 2m"）→ 切到那一块再改
         #  ③ 客户自己提到另一块屏 → 开一条新记录（没指明差异时两块记成一样的）
-        multi_specs = self._split_and_apply_screen_specs(session_id, message)
-        if not multi_specs and self._maybe_target_screen(session_id, message) is None:
-            self._maybe_start_new_item(session_id, message)
+        multi = self._multi_screen()
+        multi_specs = multi.split_and_apply_screen_specs(session_id, message)
+        if not multi_specs and multi.maybe_target_screen(session_id, message) is None:
+            multi.maybe_start_new_item(session_id, message)
 
         # Step 1: Sales Agent processes message
         # v2.7 §18：记下"这一轮之前"已有哪些需求 → 之后 diff 出 newly_filled_slots
-        profile_before = self._profile_slot_map(session_id)
+        from .dialogue import newly_filled_slots, profile_slot_map
+
+        profile_before = profile_slot_map(self._stored_profile(session_id))
         sales_result = self.sales_agent.run(
             session_id=session_id,
             message=message,
@@ -324,18 +310,20 @@ class DualAgentOrchestrator:
         # 客户口径：同一个问题全项目最多问两次 —— 客户答过的共有项要同步到其他屏，
         # 否则两块屏会各问一遍（实测被连问 4 次）。
         # 只填空值，绝不覆盖：能用 P3/P5、固装/租赁 等参数区分两块屏时，这些差异保留。
-        self._share_common_facts(session_id)
+        multi.share_common_facts(session_id)
         perf.intent = sales_result.get("intent", "")
-        result_newly_filled = self._newly_filled_slots(profile_before, session_id)
+        result_newly_filled = newly_filled_slots(
+            profile_before, profile_slot_map(self._stored_profile(session_id))
+        )
 
         # 多屏拆分的那一轮：Sales 的需求抽取只看到"整句话"，会把两块屏的参数
         # 混到当前这条档案里 —— 这里按拆分结果把每块屏的参数重新写回去。
         if multi_specs:
-            self._split_and_apply_screen_specs(session_id, message)
+            multi.split_and_apply_screen_specs(session_id, message)
         # 客户口径：多块屏时"没说清哪块要什么"就两块记成一样的 —— 所以客户
         # 答过一次的共有项（视频/图片、安装方式、视距、价格取向…）要同步到
         # 其他屏，绝不能因为另一块"还没答过"就把同一个问题再问一遍。
-        self._share_common_facts(session_id)
+        multi.share_common_facts(session_id)
 
         next_action = sales_result.get("next_action")
         requirements = sales_result.get("requirements", {})
@@ -377,7 +365,7 @@ class DualAgentOrchestrator:
             answer = solution_result.get("answer", sales_result.get("response", ""))
             result = {
                 # 先回答客户这个问题，再接着问还缺的需求（不能只会反问）
-                "response": self._compose_with_requirement_question(
+                "response": self._response_coordinator().compose_with_requirement_question(
                     answer=answer,
                     sales_result=sales_result,
                     message=message,
@@ -411,7 +399,7 @@ class DualAgentOrchestrator:
             perf.llm_calls += 1
             answer = solution_result.get("answer", sales_result.get("response", ""))
             result = {
-                "response": self._compose_with_requirement_question(
+                "response": self._response_coordinator().compose_with_requirement_question(
                     answer=answer,
                     sales_result=sales_result,
                     message=message,
@@ -464,7 +452,9 @@ class DualAgentOrchestrator:
         )
         result.setdefault("product_subtype", str(sales_result.get("product_subtype") or ""))
         result.setdefault("product_entry", str(sales_result.get("product_entry") or ""))
-        result.setdefault("action_candidates", self._action_candidates(sales_result))
+        from .dialogue import dialogue_action_candidates
+
+        result.setdefault("action_candidates", dialogue_action_candidates(sales_result))
         # v2.7 §18/§19：这一轮新填的槽位 + Turn 上下文（覆盖率与闸门的依据）
         result.setdefault("newly_filled_slots", result_newly_filled)
         result.setdefault("turn_context", turn_context)
@@ -504,7 +494,7 @@ class DualAgentOrchestrator:
         # ── 一个项目多条屏：几块屏就按量给几个型号（客户口径 2026-09-18）────────
         # 单屏会话仍然"只报一个型号"；多屏会话不能省 —— 每块屏各推一个。
         if perf.route == "trigger_solution":
-            multi_reply = self._recommend_all_screens(session_id, message)
+            multi_reply = self._multi_screen().recommend_all_screens(session_id, message)
             if multi_reply:
                 result["response"] = multi_reply
                 self._finalize_turn_response(result, session_id, message, turn_context)
@@ -524,7 +514,7 @@ class DualAgentOrchestrator:
             )
 
         # ── 一个项目多条屏：记录这一块屏的推荐 + 追问"还有其他位置吗" ────────
-        multi_extra = self._multi_item_follow_up(session_id, result, message)
+        multi_extra = self._multi_screen().multi_item_follow_up(session_id, result, message)
         if multi_extra:
             result.setdefault("extra_messages", []).append(multi_extra)
         self._finalize_turn_response(result, session_id, message, turn_context)
@@ -566,335 +556,36 @@ class DualAgentOrchestrator:
         ``FinalResponseCoordinator`` 产出唯一的 ``FinalResponse``。
         """
         # ── v2.7 Phase 7~14 的对话层依赖（延迟导入，避免模块级循环依赖）──
-        from .dialogue import (
-            DETAILED,
-            MINIMAL,
-            build_natural_continuation,
-            compute_answer_coverage,
-            compute_momentum,
-            configured_ack_streak_limit,
-            decide_continuation,
-            decide_turn_action,
-            next_candidate_slot,
-            render_minimal,
-            strip_mechanical_phrases,
-        )
-        from .dialogue.duplicate_firewall import FIREWALL
+        from .dialogue import facts_to_dicts
 
-        turn_context = dict(turn_context or result.get("turn_context") or {})
-        questions = self._question_candidates(result)
-        # §28：审计要记"做决定之前"的对话状态，所以先拍一张快照
-        conversation_before = self._conversation_snapshot(session_id)
-        # 计划 §4.4/§4.5：候选 Action → 唯一 Action（其余记进 discarded_actions）
-        selected_action, discarded_actions = self._select_turn_action(result)
-        action = (
-            selected_action.action
-            if selected_action is not None
-            else self._dialogue_action_label(result)
+        # 决策段（覆盖率 → 闸门 → Policy 对齐 → 类型闸门 → Momentum → Action →
+        # 承接额度）全部在对话层：ResponseCoordinator.prepare_final
+        plan = self._response_coordinator().prepare_final(
+            result, session_id=session_id, message=message, turn_context=turn_context
         )
-        result["discarded_actions"] = [item.to_dict() for item in discarded_actions]
-        if selected_action is not None:
-            result["selected_action"] = selected_action.to_dict()
-            result["action_candidates"] = [
-                item.to_dict() for item in ([selected_action] + list(discarded_actions))
-            ]
-        question_slot = str(result.get("pending_slot") or "")
-        extras = [str(item) for item in (result.get("extra_messages") or []) if item]
-        result.setdefault("customer_input", str(message or ""))
-
-        # ══ v2.7 Phase 7~11：覆盖率 → 闸门 → 唯一 Action → 承接上下文 ══════
-        previous_question = turn_context.get("previous_question") or {}
-        previous_slot = str(previous_question.get("question_slot") or "")
-        newly_filled = [str(item) for item in (result.get("newly_filled_slots") or [])]
-        coverage = compute_answer_coverage(
-            asked_slot=previous_slot,
-            match=self._answer_match_object(session_id),
-            newly_filled_slots=newly_filled,
-        )
-        result["answer_coverage"] = coverage.to_dict()
-
-        question_slot, duplicate_check = self._apply_duplicate_firewall(
-            result,
-            session_id=session_id,
-            coverage=coverage,
-            previous_question=previous_question,
-            newly_filled=newly_filled,
-            firewall=FIREWALL,
-            next_candidate=next_candidate_slot,
-        )
-        if question_slot:
-            result["pending_slot"] = question_slot
-        result["duplicate_check"] = duplicate_check
-        questions = self._question_candidates(result)
-
-        # ── Phase 1（计划 §16.2）：最终问的必须是 DialoguePolicy 定的那一项 ──
-        # 销售层准备好的问句只能"提候选"：如果 Policy 定的槽位与它不一致，
-        # 以 Policy 为准（日志里问的槽位和客户看到的问句必须一致）。
-        # 例外：重复提问闸门刚刚**故意改问别的槽位**（duplicate_question*）——
-        # 那是同一决策层的防重放行，不能反过来被覆盖。
-        policy_slot = str(getattr(selected_action, "question_slot", "") or "")
-        firewall_rerouted = str(duplicate_check or "").startswith("duplicate_question")
-        if (
-            not firewall_rerouted
-            and policy_slot
-            and question_slot
-            and policy_slot != question_slot
-        ):
-            logger.warning(
-                "[ActionConsistency] Policy=ASK(%s) 与销售层准备的问句(%s)不一致 → 以 Policy 为准",
-                policy_slot, question_slot,
-            )
-            overridden_slot = question_slot
-            aligned = self._question_text_for_slot(policy_slot)
-            question_slot = policy_slot if aligned else ""
-            result["pending_slot"] = question_slot
-            result["pending_question"] = aligned
-            if aligned:
-                # 正文里那句"问错槽位"的问句必须换掉：先去掉旧问句，再补 Policy 槽位的问句
-                guard = self._response_coordinator()._guard()
-                kept = guard.strip_questions(str(result.get("response") or "")).strip()
-                result["response"] = f"{kept} {aligned}".strip() if kept else aligned
-            result["action_consistency"] = {
-                "policy_slot": policy_slot,
-                "overridden_slot": overridden_slot,
-                "question_realigned": bool(aligned),
-            }
-            questions = self._question_candidates(result)
-
-        # ── 计划 v2.9.3 §五/§六：类型未确认前，**任何路径**都不许直接问需求细节 ──
-        # 这一条放在收口层（而不是某个分支里），所以 conversation / free question /
-        # product question / need_query 哪条路径进来，都不可能绕过"先定 LED 还是 LCD"。
-        type_decision = result.get("display_type_decision") or {}
-        # 销售层这一轮**已经**把类型问题/类型说明写进正文了吗（runner 透传的留痕）？
-        sales_asked_type = bool(result.get("product_type_gate"))
-        if (
-            # 只有"销售层确实给出过类型判断"（或入口是 PRODUCT_SELECTION）时才拦截；
-            # 旧测试/旧调用没有这个字段时保持原行为（生产链路 classify 每次都会写）
-            (bool(type_decision) or str(result.get("product_entry") or "") == "PRODUCT_SELECTION")
-            and str(type_decision.get("status") or "") != "CONFIRMED"
-            and question_slot
-            and question_slot != "display_type"
-        ):
-            try:
-                from .dialogue.product_type_router import (
-                    load_decision,
-                    product_type_question,
-                )
-
-                gate_question = product_type_question(
-                    load_decision(type_decision),
-                    # 换说法：用轮次/消息做种子，避免每次都同一句（客户口径：别像问卷）
-                    seed=len(str(result.get("customer_input") or "")) + len(
-                        str(result.get("turn_id") or "")
-                    ),
-                )
-                if gate_question:
-                    logger.info(
-                        "[ProductType] 收口层拦截：类型未确认（status=%s）→ 把需求问题(%s)"
-                        "换成类型确认问题",
-                        type_decision.get("status"), question_slot,
-                    )
-                    question_slot = "display_type"
-                    result["pending_slot"] = "display_type"
-                    result["pending_question"] = gate_question
-                    result["product_type_gate"] = type_decision
-                    # 正文里那句"需求细节"的问句必须换掉：去掉旧问句 → 换类型确认问句
-                    # 例外（计划 v2.9.4）：销售层这一轮已经问过/说明过类型 →
-                    # 这里只对齐槽位，不再追加一遍（否则同一段解释/问题客户会看到两遍）。
-                    if not sales_asked_type:
-                        guard = self._response_coordinator()._guard()
-                        kept = guard.strip_questions(str(result.get("response") or "")).strip()
-                        result["response"] = (
-                            f"{kept} {gate_question}".strip() if kept else gate_question
-                        )
-                    questions = self._question_candidates(result)
-            except Exception as exc:  # pragma: no cover - 防御式
-                logger.warning("[ProductType] 收口层类型闸门失败：%s", exc)
-
-        conversation = self._conversation_state(session_id)
-        momentum = compute_momentum(
-            newly_filled_slots=newly_filled,
-            answered_slots=coverage.answered_slots,
-            last_question_slot=str(getattr(conversation, "last_question_slot", "") or ""),
-        )
-        result["momentum"] = momentum.to_dict()
-        speech_act = result.get("speech_act") or {}
-        customer_question = bool(
-            speech_act.get("customer_questions") or speech_act.get("is_customer_question")
-        )
-        question_kind = str(speech_act.get("question_kind") or "")
-        turn_action = decide_turn_action(
-            customer_question=customer_question,
-            question_kind=question_kind,
-            ready_to_recommend=bool(
-                (result.get("recommendation_gate") or {}).get("ready")
-            ),
-            recommend_requested=bool(result.get("recommend_requested")),
-            conflicts=(result.get("requirements") or {}).get("conflicts"),
-            newly_filled_slots=newly_filled,
-            missing_slots=result.get("missing_slots") or [],
-            question_candidates=self._ranked_question_candidates(session_id),
-            momentum_slot=momentum.slot,
-            previous_question_slot=previous_slot,
-            blocked_slot=str(previous_question.get("question_slot") or "")
-            if duplicate_check.startswith("duplicate_question")
-            else "",
-            hard_gate_slot="environment" if result.get("pending_slot") == "environment" else "",
-        )
-        result["turn_action"] = turn_action.to_dict()
-        # §20/§21：Question Planner/Flow 产出候选，Dialogue Policy 决定"这一轮做不做、
-        # 做的优先级"；**具体问哪一项仍以已落地的候选为准** —— 实测教训：在这里
-        # 事后改槽位会和已经组好的正文脱节（日志里 last_question 与 last_response
-        # 不一致，客户看到的是另一个问题）。Policy 的选择记录在 turn_action 里。
-        result["policy_preferred_slot"] = str(getattr(turn_action, "target_slot", "") or "")
-        # §14：Conversation State 的"当前话题"（momentum）只用于对话规划
-        if conversation is not None:
-            conversation.current_topic = momentum.slot
-        continuation = build_natural_continuation(
-            customer_message=message,
-            speech_act=speech_act,
-            newly_filled_slots=newly_filled,
-            momentum=momentum,
-            next_required_slot=question_slot,
-            customer_question=customer_question,
-            question_kind=question_kind,
-            conflicts=(result.get("requirements") or {}).get("conflicts"),
-            has_recommendation=bool(result.get("products")),
-            is_first_contact=bool(result.get("first_contact_messages")),
-        )
-        result["response_density"] = continuation.density
-        result["natural_continuation"] = continuation.to_dict()
-
-        # ── 客户口径（2026-09-21 → 2026-09-22 最终版）：不要连续提问 ─────
-        # 判定依据**不是**"客户有没有回答上一问"，而是"这句话跟需求有没有关系"：
-        #   · 与需求有关（给参数 / 答别的一项 / 问业务问题）→ 直接"接住 + 追问缺项"，
-        #     绝不做"只承接"（实测 bug：客户答 "maybe 5m"，AI 只寒暄一句就停了）；
-        #   · 与需求无关（闲聊）→ 只承接 1 条；第 2 条闲聊必须"接住 + 提问"
-        #     写在同一条消息里（客户口径："第二条……在同一条消息询问需求"）。
-        # 判定由销售节点在语境里给出（offtopic_turn，LLM + 规则，不看关键词）；
-        # 同一轮里客户连发多条消息按**一次**算（一个 turn 只决策一次）。
-        conversation_state = conversation
-        ack_streak = int(getattr(conversation_state, "ack_streak", 0) or 0)
-        ack_limit = configured_ack_streak_limit()
-        off_topic = bool(result.get("offtopic_turn"))
-        # ── 客户口径（2026-09-23）：确认 / 纠正 / 答问 / 补充需求都**不是闲聊** ──
-        # 客户回了 "ok"（确认我们的判断）之后，就该按这个方向继续推进 ——
-        # 该问下一项就问，不能被"承接额度"压成一句寒暄
-        # （实测：客户确认 LED 后只收到 "Good to know."，一整个 turn 没有推进）。
-        # 判定依据是销售节点给的 SpeechAct（语境判定），不是关键词。
-        if (
-            str(
-                (result.get("speech_act") or {}).get("speech_act")
-                or (result.get("speech_act") or {}).get("act")
-                or ""
-            ).upper()
-            in _REQUIREMENT_RELATED_SPEECH_ACTS
-        ):
-            off_topic = False
-        # 档案里有值 = 客户确实给过这一项 → 问题登记簿同步成 ANSWERED，
-        # 并把"档案里有值"也算成"客户答过"（实测：客户答"只在意质量"，
-        # 档案已记 price_preference=quality，但登记簿还是 ASKED → 误判成没回答）。
-        profile_slots = self._profile_slot_map(session_id)
-        if conversation_state is not None:
-            for _slot in profile_slots:
-                conversation_state.note_answered(str(_slot))
-        has_question = bool(question_slot and result.get("pending_question"))
-        decision = decide_continuation(
-            has_question=has_question,
-            off_topic=off_topic,
-            ack_streak=ack_streak,
-            max_ack_streak=ack_limit,
-            # 计划 v2.9.4 修复："LED 还是 LCD"不是需求细节问题（计划 §五 第一优先级），
-            # 不受承接额度约束 —— 否则类型没定就被"先承接一句"压掉，客户看不到任何推进。
-            type_gate_question=str(question_slot or "") == "display_type",
-        )
-        result["continuation"] = decision.to_dict()
-        result["ack_streak"] = decision.next_streak
-        if conversation_state is not None:
-            conversation_state.ack_streak = decision.next_streak
-        if decision.suppress_question and has_question:
-            logger.info(
-                "[Continuation] 客户说的是与需求无关的话 → 本轮先承接、不问问题"
-                "（承接 %d/%d，下一轮接住 + 提问）",
-                decision.next_streak, ack_limit,
-            )
-            result["suppressed_question"] = {
-                "slot": question_slot,
-                "question": str(result.get("pending_question") or ""),
-                "ack_streak": decision.next_streak,
-            }
-            result["pending_question"] = ""
-            result["pending_slot"] = ""
-            question_slot = ""
-            questions = []
-        if (
-            continuation.density == MINIMAL
-            and str(result.get("response_mode") or "") != "FALLBACK"
-        ):
-            result["response_mode"] = "MINIMAL"
 
         # ① 售后口径 + 图片核对 + Guard 收口（原有链路，先算出"想说的话"）
         text = self._response_coordinator().finalize(
-            str(result.get("response") or ""),
+            plan.text,
             session_id=session_id,
             message=message,
-            questions=questions,
+            questions=plan.questions,
             service_faq_answered=str(result.get("service_faq_answered") or ""),
         )
-        # ② v2.7 §15 原先是"短回答模式：客户只给一个参数 → 直接甩一个问题"。
-        # 客户口径（2026-09-21）：太短了，要 3~4 句 —— 所以这里**不再**把回复
-        # 砍成裸问句；长度交给 LLM 提示词（NATIVE prompt 里给了 3~4 句的要求）。
-        # 只在"客户只有一个词确认 + 没有 LLM 文本"时保留极短兜底。
-        # 承接轮：正文里不许再留下问句（只接住客户的话）
-        if result.get("suppressed_question"):
-            text = self._continuation_only_text(text, result)
-        # ③ v2.7 §16：去掉机械确认开头（"Got it / Thanks / Based on that…"）
-        # 只管模板拼出来的句子；LLM 自己写的开场（客户口径：明确授权它自己组织）
-        # 不再被回头清洗，否则会把自然的话削成半句。
-        text, removed_mechanical = strip_mechanical_phrases(
-            text,
-            allow=(
-                continuation.density == DETAILED
-                or str(result.get("response_source") or "") == "llm"
-                or bool(result.get("suppressed_question"))
-            ),
+        # ② v2.7 §15/§16 + 型号闸门：正文加工统一在回复层（ResponseCoordinator）
+        text = self._response_coordinator().postprocess_final(
+            text, result=result, density=plan.density
         )
-        if removed_mechanical:
-            result["mechanical_phrases_removed"] = removed_mechanical
 
-        # ── 客户口径（2026-09-24）：没在交付推荐，就不许出现具体型号 ─────────────
-        # 实测：客户只说了 P4（需求还差尺寸/场景/安装），回复里就冒出
-        # "TW11-3216-P4.0 is the closest match, 4mm pixel pitch, 500nit…"。
-        # 型号只能随推荐交付（Gate READY / 真的给了产品）一起出现；其余轮次一律清掉，
-        # 避免"需求没收齐就先报型号"。
-        try:
-            delivering = bool(result.get("products")) or bool(
-                (result.get("recommendation_gate") or {}).get("ready")
-            )
-            if text and not delivering:
-                from .rag.model_guard import strip_model_mentions
-
-                cleaned, removed_models = strip_model_mentions(
-                    text, allow=result.get("allowed_models") or ()
-                )
-                if removed_models:
-                    logger.info(
-                        "[ModelGate] 需求未就绪 → 清掉提前报出的型号：%s", removed_models
-                    )
-                    result["model_mentions_stripped"] = removed_models
-                    text = cleaned or text
-        except Exception as exc:  # pragma: no cover - 防御式
-            logger.warning("[ModelGate] 型号闸门失败：%s", exc)
-
-        # ② v2.6：合并追加气泡 → 只保留一条回复 + 最多一个问题
+        # ③ v2.6：合并追加气泡 → 只保留一条回复 + 最多一个问题
         final = self._final_response_coordinator().build(
             text=text or str(result.get("response") or ""),
-            extras=extras,
-            questions=questions,
-            action=action,
-            question_slot=question_slot,
+            extras=plan.extras,
+            questions=plan.questions,
+            action=plan.action,
+            question_slot=plan.question_slot,
             turn_id=str(result.get("turn_id") or getattr(self, "_current_turn_id", "") or ""),
-            facts=self._facts_for_turn(result),
+            facts=facts_to_dicts(result.get("grounded_facts") or []),
             first_contact_messages=result.get("first_contact_messages"),
         )
 
@@ -913,7 +604,7 @@ class DualAgentOrchestrator:
         # （"Sure."），真正发给客户的是 Solution 的答复 —— 把它写回历史，下一轮的
         # "最近 50 条"才看得到 AI 自己说过什么（否则客户回 "yes" 时无从判断在问什么）。
         self._replace_placeholder_history(result, session_id, final.text)
-        result["conversation_state_before"] = conversation_before
+        result["conversation_state_before"] = plan.conversation_before
         self._finish_llm_turn(result, session_id)
         return result
 
@@ -937,149 +628,6 @@ class DualAgentOrchestrator:
         except Exception as exc:  # pragma: no cover - 留痕失败不影响业务
             logger.warning("[History] 替换占位符失败：%s", exc)
 
-    # ── v2.6 §4：把本轮"想说的话"整理成候选 ──────────────────────────────
-    @staticmethod
-    def _question_candidates(result: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """本轮想问的问题（可能多个）；交给 Guard / FinalResponse 收成一个。"""
-        candidates: List[Dict[str, Any]] = []
-        pending = str(result.get("pending_question") or "")
-        if pending:
-            candidates.append({
-                "text": pending,
-                "slot": str(result.get("pending_slot") or ""),
-                "source": "sales",
-            })
-        for item in result.get("question_candidates") or []:
-            if isinstance(item, dict) and item.get("text"):
-                candidates.append(dict(item))
-            elif item:
-                candidates.append({"text": str(item)})
-        return candidates
-
-    @staticmethod
-    def _dialogue_action_label(result: Dict[str, Any]) -> str:
-        """这一轮的业务动作（Dialogue Policy 选的唯一 Action）。
-
-        v2.6 §4.4/§4.5：候选可以有多个，最终只能留一个 —— 由
-        ``select_single_action`` 挑，其余进 ``discarded_actions``。
-        """
-        decision = result.get("dialogue_action") or {}
-        if isinstance(decision, dict) and decision.get("action"):
-            return str(decision["action"])
-        if result.get("pending_question"):
-            return "ask_only"
-        return str(result.get("next_action") or "")
-
-    @staticmethod
-    def _select_turn_action(result: Dict[str, Any]):
-        """把本轮出现的候选 Action 收成唯一一个（计划 §4.4/§4.5）。
-
-        Returns:
-            ``(selected, discarded)``；没有候选时返回 ``(None, [])``。
-        """
-        try:
-            from .dialogue import (
-                DialogueDecision,
-                QUESTION_PRIORITY_SALES_PREFERENCE,
-                question_priority,
-                select_single_action,
-            )
-        except Exception:  # pragma: no cover - 防御式
-            return None, []
-        candidates = []
-        decision = result.get("dialogue_action") or {}
-        if isinstance(decision, dict) and decision.get("action"):
-            slot = str(decision.get("target_slot") or "") or str(
-                result.get("pending_slot") or ""
-            )
-            candidates.append(DialogueDecision(
-                action=str(decision.get("action")),
-                reason=str(decision.get("reason") or ""),
-                question_slot=slot if decision.get("question") else "",
-                question_target=slot if decision.get("question") else "",
-                question_priority=int(
-                    decision.get("priority") or QUESTION_PRIORITY_SALES_PREFERENCE
-                ),
-                question_count=1 if decision.get("question") else 0,
-            ))
-        # ── Phase 1（架构收口）：DialoguePolicy 定了槽位就以它为准 ──────────
-        # 计划 §16.1/§16.2：QuestionPlanner / QuestionFlow / script_generator
-        # 只能"提候选"，不能改最终决定。以前这里无条件把销售层准备的
-        # pending_slot 也当成候选，于是它可能压过 Policy 的选择
-        # （实测：Policy=ASK(viewing_distance) 最终却问了 pixel_pitch）。
-        policy_decided_slot = (
-            str((result.get("dialogue_action") or {}).get("target_slot") or "")
-            if isinstance(result.get("dialogue_action"), dict)
-            else ""
-        )
-        if result.get("pending_question") and not policy_decided_slot:
-            slot = str(result.get("pending_slot") or "")
-            # 注意：这里必须用 **Dialogue Policy 的动作词表**（ask_only），
-            # 不能混进 DialogueDecision 的 ASK —— 否则日志里同一件事会有两个名字。
-            candidates.append(DialogueDecision(
-                action="ask_only",
-                reason="question_flow",
-                question_slot=slot,
-                question_target=slot,
-                question_priority=question_priority(slot) if slot else 99,
-                question_count=1,
-            ))
-        if not candidates:
-            return None, []
-        return select_single_action(candidates)
-
-    @staticmethod
-    def _action_candidates(sales_result: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """计划 §4.4：列出本轮出现过的**候选** Action（最终只执行一个）。
-
-        候选可以有多个（Policy 选的、QuestionFlow 想追问的…），
-        但"候选 ≠ 最终"：最终动作由 ``FinalResponse.action`` 唯一确定。
-        """
-        candidates: List[Dict[str, Any]] = []
-        decision = (sales_result or {}).get("dialogue_action") or {}
-        if isinstance(decision, dict) and decision.get("action"):
-            candidates.append(dict(decision))
-        if (sales_result or {}).get("pending_question"):
-            candidates.append({
-                "action": "ask_only",
-                "target_slot": str(sales_result.get("pending_slot") or ""),
-                "question": str(sales_result.get("pending_question") or ""),
-                "source": "question_flow",
-            })
-        return candidates
-
-    @staticmethod
-    def _question_text_for_slot(slot: str) -> str:
-        """按槽位取标准问句（Phase 1：Policy 定槽位、模板给句子，措辞仍由 LLM 重写）。
-
-        只在"销售层准备的问句与 Policy 定的槽位不一致"时兜底用。
-        """
-        target = str(slot or "").strip()
-        if not target:
-            return ""
-        try:
-            from .rag.readiness import question_for
-
-            return str(question_for(target, "en", 0, easier=False) or "")
-        except Exception as exc:  # pragma: no cover - 防御式
-            logger.warning("[ActionConsistency] 取标准问句失败 slot=%s: %s", target, exc)
-            return ""
-
-    @staticmethod
-    def _facts_for_turn(result: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """这一轮用到的业务事实（GroundedFact），供 FinalResponse 留痕。"""
-        facts = result.get("grounded_facts") or []
-        out: List[Dict[str, Any]] = []
-        for item in facts if isinstance(facts, (list, tuple)) else []:
-            if isinstance(item, dict):
-                out.append(dict(item))
-            elif hasattr(item, "to_dict"):
-                try:
-                    out.append(dict(item.to_dict()))
-                except Exception:  # pragma: no cover - 防御式
-                    continue
-        return out
-
     def _final_response_coordinator(self):
         coordinator = getattr(self, "_final_response_instance", None)
         if coordinator is None:
@@ -1088,171 +636,6 @@ class DualAgentOrchestrator:
             coordinator = FinalResponseCoordinator()
             self._final_response_instance = coordinator
         return coordinator
-
-    def _conversation_snapshot(self, session_id: str) -> Dict[str, Any]:
-        """这一轮做决定**之前**的对话状态（给 §28 的审计用）。"""
-        try:
-            from .dialogue import get_conversation_state
-
-            return get_conversation_state(session_id).to_dict()
-        except Exception:  # pragma: no cover - 防御式
-            return {}
-
-    def _continuation_only_text(self, text: str, result: Dict[str, Any]) -> str:
-        """承接轮：把正文里的问句去掉，只留"接住客户那句话"的内容。
-
-        客户口径：客户没回答时不要再抛问题；先顺着客户的消息聊一句，
-        最多一条之后（由 continuation_budget 控制）必须拉回需求。
-        """
-        guarded = self._response_coordinator()._guard()
-        stripped = guarded.strip_questions(str(text or "")).strip()
-        if stripped:
-            return stripped
-        # 去掉问句后没内容了 → 用这一轮的"接话"（LLM 生成的 acknowledgement）
-        acknowledgement = str(result.get("acknowledgement") or "").strip()
-        if acknowledgement:
-            return guarded.strip_questions(acknowledgement).strip() or acknowledgement
-        # 兜底：把客户刚说的话接住（不提问）
-        customer = " ".join(str(result.get("customer_input") or "").split())
-        if customer:
-            # 客户口径：不要"回执腔"复读客户原话（"3*5 — noted." 很僵硬），
-            # 用一句简短的人话接住即可（真正的接话由 LLM 的 acknowledgement 负责）。
-            return self._neutral_continuations(seed=len(customer)) 
-        return "Got it."
-
-    @staticmethod
-    def _neutral_continuations(seed: int = 0) -> str:
-        """没拿到 LLM 接话时的中性兜底（短、像人、不复读客户原话）。"""
-        options = (
-            "That makes sense.",
-            "Right, I follow you.",
-            "Good to know.",
-            "Makes sense so far.",
-        )
-        return options[int(seed or 0) % len(options)]
-
-    def _conversation_state(self, session_id: str):
-        """取当前会话的对话状态对象（拿不到就返回 None）。"""
-        try:
-            from .dialogue import get_conversation_state
-
-            return get_conversation_state(session_id)
-        except Exception:  # pragma: no cover - 防御式
-            return None
-
-    def _answer_match_object(self, session_id: str):
-        """v2.7 §18：客户这一句与上一轮问题的匹配结果（对象形态）。"""
-        try:
-            from types import SimpleNamespace
-
-            state = self._conversation_state(session_id)
-            data = dict(getattr(state, "last_answer_match", {}) or {})
-            return SimpleNamespace(**data) if data else None
-        except Exception:  # pragma: no cover - 防御式
-            return None
-
-    def _profile_slot_map(self, session_id: str) -> Dict[str, Any]:
-        """当前需求档案里"已经有值"的槽位（用于 diff 出 newly_filled_slots）。
-
-        实测 bug（2026-09-22）：这里原来用 ``profile.to_facts()``，而它**不包含**
-        ``price_preference`` / ``content_type`` / ``budget_level`` → 客户答了
-        "只在意质量"，档案里其实已经有值，但 newly_filled_slots 里看不到 →
-        「承接上限」逻辑误判成"客户一直没回答那个问题" → 每轮都把问题压下去，
-        结果既不问缺的 `installation`、也不推荐，对话卡死。
-
-        v2.3.1 边界（``tests/test_v231_orchestrator_boundary.py``）：Orchestrator
-        不持有"档案字段 → 槽位名"的业务映射，映射表放在对话层
-        (:mod:`src.dialogue.profile_slots`)，这里只做委托。
-        """
-        from .dialogue.profile_slots import profile_slot_map
-
-        return profile_slot_map(self._stored_profile(session_id))
-
-    def _newly_filled_slots(self, before: Dict[str, Any], session_id: str) -> List[str]:
-        """v2.7 §18：这一轮新填进来的槽位（Answer Coverage 的核心输入）。"""
-        after = self._profile_slot_map(session_id)
-        return [
-            key for key, value in after.items()
-            if key not in before or before.get(key) != value
-        ]
-
-    def _ranked_question_candidates(self, session_id: str) -> List[str]:
-        """Dialogue Policy 的候选问题（按业务价值排序）—— 闸门拦下时换问用。"""
-        try:
-            from .dialogue import question_candidates
-
-            profile = self._stored_profile(session_id)
-            return [
-                str(slot)
-                for slot, _score in (question_candidates(profile, session_id=session_id) or [])
-            ]
-        except Exception:  # pragma: no cover - 防御式
-            return []
-
-    def _apply_duplicate_firewall(
-        self,
-        result: Dict[str, Any],
-        *,
-        session_id: str,
-        coverage: Any,
-        previous_question: Dict[str, Any],
-        newly_filled: List[str],
-        firewall: Any,
-        next_candidate: Any,
-    ) -> "tuple[str, str]":
-        """v2.7 §19.1：发送前的重复提问闸门。
-
-        Returns:
-            ``(最终的 question_slot, duplicate_check 结论)``
-        """
-        slot = str(result.get("pending_slot") or "")
-        if not result.get("pending_question") or not slot:
-            return slot, "no_question"
-
-        conversation = self._conversation_state(session_id)
-        registry = getattr(conversation, "registry", None)
-        question_state = ""
-        if registry is not None:
-            record = registry.get(slot)
-            question_state = str(getattr(record, "question_state", "") or "") if record else ""
-
-        decision = firewall.check(
-            current_slot=slot,
-            previous_slot=str(previous_question.get("question_slot") or ""),
-            current_turn_id=str(result.get("turn_id") or ""),
-            previous_turn_id=str(previous_question.get("turn_id") or ""),
-            answered_slots=coverage.answered_slots,
-            newly_filled_slots=newly_filled,
-            question_state=question_state,
-        )
-        if decision.allowed:
-            return slot, "pass"
-
-        alternative = next_candidate(
-            self._ranked_question_candidates(session_id),
-            blocked_slot=decision.blocked_slot or slot,
-            answered_slots=coverage.answered_slots,
-        )
-        if alternative:
-            try:
-                from .rag.readiness import question_for
-
-                question = question_for(alternative, "en", 0, easier=False) or ""
-            except Exception:  # pragma: no cover - 防御式
-                question = ""
-            if question:
-                logger.info(
-                    "[Firewall] %s → 改问 %s（不再重复 %s）",
-                    decision.reason, alternative, slot,
-                )
-                result["pending_question"] = question
-                result["pending_slot"] = alternative
-                return alternative, f"{decision.reason}_rerouted"
-
-        logger.info("[Firewall] %s → 本轮不再重复提问（slot=%s）", decision.reason, slot)
-        result["pending_question"] = ""
-        result["pending_slot"] = ""
-        return "", decision.reason
 
     # ── v2.6 §8：AI 侧留痕 ───────────────────────────────────────────────
     def _note_ai_turn(self, result: Dict[str, Any], session_id: str, final: Any) -> None:
@@ -1459,59 +842,6 @@ class DualAgentOrchestrator:
             )
             self._multi_screen_instance = manager
         return manager
-
-    def _split_and_apply_screen_specs(self, session_id: str, message: str) -> list:
-        return self._multi_screen()._split_and_apply_screen_specs(session_id, message)
-
-    def _maybe_target_screen(self, session_id: str, message: str):
-        return self._multi_screen()._maybe_target_screen(session_id, message)
-
-    def _maybe_start_new_item(self, session_id: str, message: str) -> str:
-        return self._multi_screen()._maybe_start_new_item(session_id, message)
-
-    def _screen_pending_block(self, index: int, profile_data: dict, language: str) -> str:
-        return self._multi_screen()._screen_pending_block(index, profile_data, language)
-
-    def _share_common_facts(self, session_id: str) -> None:
-        return self._multi_screen()._share_common_facts(session_id)
-
-    def _model_matches_screen(self, model_name: str, profile_data: dict) -> bool:
-        return self._multi_screen()._model_matches_screen(model_name, profile_data)
-
-    def _recommend_all_screens(self, session_id: str, message: str):
-        return self._multi_screen()._recommend_all_screens(session_id, message)
-
-    def _multi_item_follow_up(self, session_id: str, result, message: str):
-        return self._multi_screen()._multi_item_follow_up(session_id, result, message)
-
-    # 回复层（`src/dialogue/response_coordinator.py`）：只做委托
-    def _attach_service_faq(self, response: str, message: str) -> str:
-        return self._response_coordinator().attach_service_faq(response, message)
-
-    def _attach_vision_confirmation(self, response: str, session_id: str, message: str) -> str:
-        return self._response_coordinator().attach_vision_confirmation(
-            response, session_id, message
-        )
-
-    def _vision_confirmation_sentence(self, session_id: str, message: str) -> str:
-        return self._response_coordinator().vision_confirmation_sentence(session_id, message)
-
-    def _compose_with_requirement_question(
-        self,
-        *,
-        answer: str,
-        sales_result: Dict[str, Any],
-        message: str,
-        seed: int = 0,
-        session_id: str = "",
-    ) -> str:
-        return self._response_coordinator().compose_with_requirement_question(
-            answer=answer,
-            sales_result=sales_result,
-            message=message,
-            seed=seed,
-            session_id=session_id,
-        )
 
     def _stored_profile(self, session_id: str):
         """取本会话已收集的需求档案（转发给 Solution Agent，避免它重新问一遍）。"""

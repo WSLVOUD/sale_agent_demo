@@ -134,11 +134,60 @@ def render_minimal(
     return short_question_response(answer)
 
 
+# ── 承接轮（客户说题外话时只接住、不再抛问题）─────────────────────────────
+# 从 Orchestrator 迁入（计划《Orchestrator.py 二次瘦身计划》§二/§五）：
+# "承接这一句"属于对话表达，不属于编排。
+NEUTRAL_CONTINUATIONS: tuple[str, ...] = (
+    "That makes sense.",
+    "Right, I follow you.",
+    "Good to know.",
+    "Makes sense so far.",
+)
+
+
+def neutral_continuation(seed: int = 0) -> str:
+    """没拿到 LLM 接话时的中性兜底（短、像人、不复读客户原话）。"""
+    return NEUTRAL_CONTINUATIONS[int(seed or 0) % len(NEUTRAL_CONTINUATIONS)]
+
+
+def continuation_only_text(
+    *,
+    text: str,
+    acknowledgement: str = "",
+    customer_input: str = "",
+) -> str:
+    """承接轮：把正文里的问句去掉，只留"接住客户那句话"的内容。
+
+    客户口径：客户没回答时不要再抛问题；先顺着客户的消息聊一句，
+    最多一条之后（由 continuation_budget 控制）必须拉回需求。
+    """
+    from .final_guard import FinalResponseGuard
+
+    guard = FinalResponseGuard()
+    stripped = guard.strip_questions(str(text or "")).strip()
+    if stripped:
+        return stripped
+    # 去掉问句后没内容了 → 用这一轮的"接话"（LLM 生成的 acknowledgement）
+    ack = str(acknowledgement or "").strip()
+    if ack:
+        return guard.strip_questions(ack).strip() or ack
+    # 兜底：把客户刚说的话接住（不提问）
+    customer = " ".join(str(customer_input or "").split())
+    if customer:
+        # 客户口径：不要"回执腔"复读客户原话（"3*5 — noted." 很僵硬），
+        # 用一句简短的人话接住即可（真正的接话由 LLM 的 acknowledgement 负责）。
+        return neutral_continuation(seed=len(customer))
+    return "Got it."
+
+
 __all__ = [
     "DETAILED",
     "MINIMAL",
     "NORMAL",
+    "NEUTRAL_CONTINUATIONS",
     "NaturalContinuation",
     "build_natural_continuation",
+    "continuation_only_text",
+    "neutral_continuation",
     "render_minimal",
 ]

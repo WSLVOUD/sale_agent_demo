@@ -157,9 +157,11 @@ class TestDuplicateFirewallStillWins:
         try:
             orch = _orchestrator()
             # 模拟闸门"刚改过问"：verify 时直接返回 rerouted（真实链路见 duplicate_firewall 测试）
+            # 闸门实现已迁到对话层（计划《Orchestrator.py 二次瘦身计划》§二/§五）→
+            # 补丁打在对话层真正被调用的那个函数上（ResponseCoordinator.prepare_final
+            # 每次调用都会从 duplicate_firewall 模块里取，所以补丁生效）
             monkeypatch.setattr(
-                orch,
-                "_apply_duplicate_firewall",
+                "src.dialogue.duplicate_firewall.apply_question_firewall",
                 lambda *a, **k: ("installation", "duplicate_question_rerouted"),
             )
             result = {

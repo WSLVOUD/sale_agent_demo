@@ -43,6 +43,29 @@ def count_questions(text: str) -> int:
     return str(text or "").count("?") + str(text or "").count("？")
 
 
+def question_candidates_from_result(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """本轮"想问的问题"候选（可能多个）—— 交给 Guard / FinalResponse 收成一个。
+
+    从 Orchestrator 迁入（计划《Orchestrator.py 二次瘦身计划》§二/§五）：
+    这是最终回复的输入形状，属于回复层，不属于编排。
+    """
+    data = result if isinstance(result, dict) else {}
+    candidates: List[Dict[str, Any]] = []
+    pending = str(data.get("pending_question") or "")
+    if pending:
+        candidates.append({
+            "text": pending,
+            "slot": str(data.get("pending_slot") or ""),
+            "source": "sales",
+        })
+    for item in data.get("question_candidates") or []:
+        if isinstance(item, dict) and item.get("text"):
+            candidates.append(dict(item))
+        elif item:
+            candidates.append({"text": str(item)})
+    return candidates
+
+
 @dataclass
 class FinalResponse:
     """这一轮**唯一**的客户可见回复（计划 §4.3 的结构）。"""
@@ -223,4 +246,5 @@ __all__ = [
     "VALIDATION_REPAIRED",
     "build_final_response",
     "count_questions",
+    "question_candidates_from_result",
 ]

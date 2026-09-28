@@ -8,9 +8,11 @@ from .conversation_state import (
     NO_REQUIREMENT,
     canonical_slot_name,
     canonical_slots,
+    conversation_snapshot,
     explicit_slots,
     get_conversation_state,
     known_question,
+    last_answer_match_object,
     match_answer_to_question,
     note_ai_turn,
     note_customer_turn,
@@ -37,6 +39,7 @@ from .answer_coverage import AnswerCoverage, compute_answer_coverage
 from .continuation_budget import (
     MAX_ACK_STREAK,
     ContinuationDecision,
+    apply_continuation_budget,
     configured_ack_streak_limit,
     decide_continuation,
 )
@@ -45,6 +48,7 @@ from .duplicate_firewall import (
     DuplicateQuestionFirewall,
     FirewallDecision,
     ResponseCountGuard,
+    apply_question_firewall,
 )
 from .momentum import (
     ConversationMomentum,
@@ -55,6 +59,8 @@ from .momentum import (
 from .natural_continuation import (
     NaturalContinuation,
     build_natural_continuation,
+    continuation_only_text,
+    neutral_continuation,
     render_minimal,
 )
 from .natural_response import (
@@ -62,7 +68,7 @@ from .natural_response import (
     is_mechanical,
     strip_mechanical_phrases,
 )
-from .profile_slots import profile_slot_map
+from .profile_slots import newly_filled_slots, profile_slot_map
 from .response_density import (
     DETAILED,
     MINIMAL,
@@ -84,8 +90,16 @@ from .turn_action import (
     TurnAction,
     WAIT,
     decide_turn_action,
+    align_question_with_policy,
+    dialogue_action_candidates,
     next_candidate_slot,
+    question_text_for_slot,
+    select_turn_action,
 )
+from .action_bridge import dialogue_action_label
+from .final_response import question_candidates_from_result
+from .grounded_facts import facts_to_dicts
+from .policy import ranked_question_slots
 from .response_coordinator import ResponseCoordinator
 from .response_planner import ResponsePlan, plan_response, reassure_line
 from .action import (

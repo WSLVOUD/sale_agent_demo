@@ -96,7 +96,12 @@ class TestPitchAndViewingDistanceAreOnePair:
             )
             monkeypatch.setattr(orchestrator, "memory_store", memory)
 
-            slots = orchestrator._ranked_question_candidates(session_id)
+            # 候选排序的唯一实现在对话层（计划《Orchestrator.py 二次瘦身计划》§二）
+            from src.dialogue import ranked_question_slots
+
+            slots = ranked_question_slots(
+                orchestrator._stored_profile(session_id), session_id=session_id
+            )
             assert "viewing_distance" not in slots, slots
         finally:
             memory.clear(session_id)

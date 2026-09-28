@@ -60,7 +60,10 @@ class TestOrchestratorOnlyDelegates:
         source = io.open(
             os.path.join(project_root, "src", "orchestrator.py"), encoding="utf-8"
         ).read()
-        assert "from .dialogue.profile_slots import profile_slot_map" in source
+        # 计划《Orchestrator.py 二次瘦身计划》§二：映射表 + 映射函数只在对话层，
+        # 编排从对话包出口取用（不再有 profile_slot_map 的包装方法）。
+        assert "profile_slot_map" in source
+        assert "from .dialogue import" in source
         assert "FIELD_TO_SLOT" not in source
 
     def test_every_mapped_field_is_a_real_profile_field(self):

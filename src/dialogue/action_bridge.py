@@ -67,6 +67,21 @@ def expression_action(state: Any, *, answer: str = "", question: str = "") -> st
     return ASK
 
 
+def dialogue_action_label(result: Any) -> str:
+    """这一轮的业务动作标签（Policy 定过就用它，否则退到"有没有问题/next_action"）。
+
+    从 Orchestrator 迁入（计划《Orchestrator.py 二次瘦身计划》§二）：
+    "动作词表"在表达层只有这一份（``_POLICY_TO_EXPRESSION``），这里复用同一张表。
+    """
+    data = result if isinstance(result, dict) else {}
+    decision = data.get("dialogue_action") or {}
+    if isinstance(decision, dict) and decision.get("action"):
+        return str(decision["action"])
+    if data.get("pending_question"):
+        return "ask_only"
+    return str(data.get("next_action") or "")
+
+
 __all__ = [
     "ACK_ONLY",
     "ANSWER_AND_ASK",
@@ -75,5 +90,6 @@ __all__ = [
     "CONFIRM",
     "DIRECT_ANSWER",
     "RECOMMEND",
+    "dialogue_action_label",
     "expression_action",
 ]

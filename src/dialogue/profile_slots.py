@@ -66,4 +66,17 @@ def profile_slot_map(profile: Any) -> Dict[str, Any]:
     return slots
 
 
-__all__ = ["FIELD_TO_SLOT", "profile_slot_map"]
+def newly_filled_slots(before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
+    """这一轮新填进来的槽位（v2.7 §18 Answer Coverage 的核心输入）。
+
+    从 Orchestrator 迁入（计划《Orchestrator.py 二次瘦身计划》§二）：
+    档案 diff 属于对话层，不属于编排。
+    """
+    before = before or {}
+    return [
+        key for key, value in (after or {}).items()
+        if key not in before or before.get(key) != value
+    ]
+
+
+__all__ = ["FIELD_TO_SLOT", "newly_filled_slots", "profile_slot_map"]

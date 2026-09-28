@@ -18,7 +18,11 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.dialogue import get_conversation_state, reset_conversation_state  # noqa: E402
+from src.dialogue import (  # noqa: E402
+    get_conversation_state,
+    profile_slot_map,
+    reset_conversation_state,
+)
 from src.memory.store import memory  # noqa: E402
 from src.models.requirement import RequirementProfile  # noqa: E402
 from src.orchestrator import DualAgentOrchestrator  # noqa: E402
@@ -102,7 +106,8 @@ class TestProfileSlotMapCoversAllFields:
         _prepare(session_id)
         try:
             orch = DualAgentOrchestrator(sales_agent=_StubSales(), solution_agent=_StubSolution())
-            slots = orch._profile_slot_map(session_id)
+            # 档案映射的唯一实现在对话层（计划 §二）；编排只取档案再交给它
+            slots = profile_slot_map(orch._stored_profile(session_id))
             assert slots.get("price_preference") == "quality"
             assert slots.get("content_type") == "mixed"
             assert slots.get("installation") == "fixed"
