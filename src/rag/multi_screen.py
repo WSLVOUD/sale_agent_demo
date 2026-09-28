@@ -13,9 +13,82 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional
+import re
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+# ── 多屏回复的"统一收口"（客户口径 2026-09-28 第二次实测）──────────────────
+# 两块屏各跑一次推荐 → 每块都带一次招呼（"Hi Jack, thanks for reaching out."）、
+# 每块都问一遍、两块读起来像同一个模板念了两遍。这里在合成一条回复时统一收口：
+#   ① 招呼只出现一次（第一块保留，后面重复的那句删掉）
+#   ② 整条回复只留一个"要客户做的事"（问句 / please / shall I…），且落在最后
+_SENTENCE_RE = re.compile(r"[^.!?。！？\n]+[.!?。！？]*\s*")
+
+# 整句就是招呼 / 致谢（"Hi Jack, thanks for reaching out."）
+_OPENER_SENTENCE_RE = re.compile(
+    r"^\s*(?:"
+    r"(?:hi|hello|hey|dear)\b[^.!?\n]*[.!?]"
+    r"|(?:thanks|thank you)\b[^.!?\n]*(?:reaching out|your (?:message|interest|time)|getting in touch)"
+    r"[^.!?\n]*[.!?]"
+    r")\s*",
+    re.IGNORECASE,
+)
+# 招呼和正题在同一句里（"Hi Jack, for your outdoor screen …"）→ 只摘掉招呼前缀
+_GREETING_PREFIX_RE = re.compile(
+    r"^\s*(?:hi|hello|hey|dear)\b[^,.!?\n]*[,!.]\s+", re.IGNORECASE
+)
+_ASK_RE = re.compile(
+    r"[?？]|\bplease\b|\bshall i\b|\bcould you\b|\bwould you\b|\blet me know\b|\bkindly\b",
+    re.IGNORECASE,
+)
+
+
+def _sentence_spans(text: str) -> List[Tuple[int, int, str]]:
+    """句子 + 它在原文里的位置（用于删句子但保留其它排版）。"""
+    return [
+        (match.start(), match.end(), match.group(0))
+        for match in _SENTENCE_RE.finditer(str(text or ""))
+        if match.group(0).strip()
+    ]
+
+
+def _delete_spans(text: str, spans: Sequence[Tuple[int, int]]) -> str:
+    """按位置删掉若干句子（保留换行等排版，只收敛多余空白）。"""
+    if not spans:
+        return str(text or "")
+    pieces: List[str] = []
+    cursor = 0
+    for start, end in sorted(spans):
+        pieces.append(text[cursor:start])
+        cursor = max(cursor, end)
+    pieces.append(text[cursor:])
+    joined = re.sub(r"[ \t]{2,}", " ", "".join(pieces))
+    return joined.strip()
+
+
+def _strip_leading_openers(text: str, *, drop: bool) -> Tuple[str, bool]:
+    """摘掉段首的招呼 / 致谢；``drop=False`` 时只探测（保留第一个招呼）。"""
+    body = str(text or "")
+    found = False
+    while True:
+        match = _OPENER_SENTENCE_RE.match(body)
+        if not match:
+            break
+        found = True
+        if not drop:
+            return body, True
+        body = body[match.end():].lstrip()
+        if not body:
+            break
+    if not found:
+        match = _GREETING_PREFIX_RE.match(body)
+        if match:
+            found = True
+            if drop:
+                body = body[match.end():].lstrip()
+    return body, found
 
 
 class MultiScreenManager:
@@ -378,6 +451,132 @@ class MultiScreenManager:
         memory_store.set_project_items(session_id, items)
 
     @staticmethod
+    def _screen_brief(index: int, profile_data: Dict[str, Any], total: int) -> str:
+        """告诉 LLM"这一段只写哪一块屏"（多屏逐屏推荐专用）。
+
+        实测（2026-09-28 第二次）：室外那块屏的话术里写成 "For your indoor 3x5
+        screen" —— 因为历史对话里全是室内那块的信息，LLM 顺手抄了另一块屏的场景。
+        """
+        data = dict(profile_data or {})
+        facts: List[str] = []
+        environment = str(data.get("environment") or "").strip().lower()
+        if environment:
+            facts.append(environment)
+        installation = str(data.get("installation") or "").strip().lower()
+        if installation == "rental":
+            facts.append("rental")
+        elif installation == "fixed":
+            facts.append("fixed installation")
+        purpose = str(data.get("purpose") or "").strip()
+        if purpose:
+            facts.append(purpose)
+        width = data.get("target_width_m")
+        height = data.get("target_height_m")
+        try:
+            if width and height:
+                facts.append(f"{float(width):g}m x {float(height):g}m")
+            elif width:
+                facts.append(f"{float(width):g}m wide")
+            elif height:
+                facts.append(f"{float(height):g}m high")
+        except (TypeError, ValueError):
+            pass
+
+        other = "indoor" if environment == "outdoor" else "outdoor"
+        head = (
+            f"This project has {total} screens. This reply covers ONLY screen "
+            f"{index + 1} of {total}"
+        )
+        head += f" ({', '.join(facts)})." if facts else "."
+        return "\n".join(
+            [
+                head,
+                f"- Describe this screen only. Never call it {other} and never repeat "
+                "another screen's size or environment (each screen is handled in its own "
+                "paragraph).",
+                "- Greet the customer only if this is the very first screen; when an "
+                "earlier screen already greeted, go straight to the product.",
+                "- Do not reuse the earlier screen's opening or closing sentence; word "
+                "this screen's reply differently so the two do not read as one template.",
+                "- Finish with at most ONE question, and only if it is about this screen.",
+            ]
+        )
+
+    @classmethod
+    def _compose_screen_blocks(
+        cls, entries: Sequence[Tuple[int, Dict[str, Any], str]], language: str
+    ) -> str:
+        """把每块屏的推荐话术合成**一条**客户可见回复（统一收口）。
+
+        entries = [(屏序号, 这块屏的档案, 这块屏的推荐话术), …]；
+        `_recommend_all_screens` 与 `_multi_item_follow_up` 共用这一份收口逻辑，
+        保证两条路径出来的多屏回复长一个样（招呼一次、收尾一个）。
+        """
+        from .project_items import screen_label
+
+        cleaned: List[Tuple[str, str]] = []
+        greeted = False
+        for index, profile_data, raw in entries:
+            label = screen_label(index, profile_data or {}, language)
+            original = str(raw or "").strip()
+            text = original
+            if label.strip() and text.startswith(label.strip()):
+                text = text[len(label.strip()):].strip()
+            text, found = _strip_leading_openers(text, drop=greeted)
+            greeted = greeted or found
+            if not text.strip():
+                # 这一段本来只有一句招呼 → 宁可留着招呼，也不要留一个空段
+                text = original
+            cleaned.append((label, text))
+
+        cleaned = cls._keep_single_ask(cleaned)
+        blocks: List[str] = []
+        for label, text in cleaned:
+            if text:
+                blocks.append((label + text).strip())
+            else:
+                blocks.append(label.strip())
+        return "\n\n".join(block for block in blocks if block)
+
+    @staticmethod
+    def _keep_single_ask(
+        blocks: List[Tuple[str, str]]
+    ) -> List[Tuple[str, str]]:
+        """整条回复只留一个"要客户做的事"，并且放到最后。
+
+        "要客户做的事" = 问句（? / ？）或请求（please / shall I / could you…）——
+        只看问号会漏掉 "please share the exact dimensions…" 这种请求，客户就会
+        同时看到"要不要出报价？"和"请给我尺寸"两件事。
+        """
+        located: List[Tuple[int, int, int, str]] = []
+        for block_index, (_label, text) in enumerate(blocks):
+            for start, end, unit in _sentence_spans(text):
+                if _ASK_RE.search(unit):
+                    located.append((block_index, start, end, unit))
+        if len(located) <= 1:
+            return blocks
+
+        keep = located[-1]
+        kept_text: List[Tuple[str, str]] = []
+        for block_index, (label, text) in enumerate(blocks):
+            drop = [
+                (start, end)
+                for (owner, start, end, _unit) in located
+                if owner == block_index
+            ]
+            kept_text.append((label, _delete_spans(text, drop)))
+
+        keep_block = keep[0]
+        if not kept_text[keep_block][1].strip():
+            # 这一段只有这一句 → 不搬走，避免出现空段
+            kept_text[keep_block] = (kept_text[keep_block][0], keep[3].strip())
+            return kept_text
+
+        tail_label, tail_text = kept_text[-1]
+        kept_text[-1] = (tail_label, f"{tail_text} {keep[3].strip()}".strip())
+        return kept_text
+
+    @staticmethod
     def _screen_query_text(profile_data: Dict[str, Any], fallback: str = "") -> str:
         """把**这一块屏**的档案拼成一句需求（多屏推荐专用）。
 
@@ -487,7 +686,7 @@ class MultiScreenManager:
         另一块没有型号 → 回复里只出现一个型号、另一个屏被漏掉。
         """
         from ..models.requirement import RequirementProfile
-        from .project_items import product_model, screen_label
+        from .project_items import product_model
         from .reply_composer import reply_language
 
         memory_store = self.memory_store
@@ -500,7 +699,7 @@ class MultiScreenManager:
 
         history = self._load_history(session_id)
         language = reply_language(message)
-        blocks: list = []
+        entries: List[Tuple[int, Dict[str, Any], str]] = []
         changed = False
 
         # 【修复串台】先把**当前这块屏的实时档案**写回它的条目：
@@ -522,7 +721,9 @@ class MultiScreenManager:
                 if not profile_data:
                     # 这一块还没有需求档案（例如刚开出来还没填）也要占一段，
                     # 否则多屏回复里会只剩另一块（实测：只出现 Screen 2）。
-                    blocks.append(self._screen_pending_block(index, profile_data, language))
+                    entries.append(
+                        (index, profile_data, self._screen_pending_block(index, profile_data, language))
+                    )
                     continue
                 try:
                     # 【修复串台】单块屏只拿"这块屏自己的需求句"去推荐：
@@ -535,18 +736,27 @@ class MultiScreenManager:
                         session_id=session_id,
                         profile=RequirementProfile.model_validate(profile_data),
                         intent="need_query",
+                        # 【多屏防模板化】告诉 LLM 这一段只写哪一块屏：不要重复
+                        # 别的屏的环境/尺寸、不要重复打招呼、不要套同一套话术。
+                        multi_screen_brief=self._screen_brief(index, profile_data, len(items)),
                     )
                 except Exception as exc:  # pragma: no cover - 防御式
                     logger.warning("[%s] Per-screen recommend failed: %s", session_id, exc)
-                    blocks.append(self._screen_pending_block(index, profile_data, language))
+                    entries.append(
+                        (index, profile_data, self._screen_pending_block(index, profile_data, language))
+                    )
                     continue
                 products = outcome.get("products") or []
                 if not products:
-                    blocks.append(self._screen_pending_block(index, profile_data, language))
+                    entries.append(
+                        (index, profile_data, self._screen_pending_block(index, profile_data, language))
+                    )
                     continue
                 model_name = product_model(products[0])
                 if not model_name:
-                    blocks.append(self._screen_pending_block(index, profile_data, language))
+                    entries.append(
+                        (index, profile_data, self._screen_pending_block(index, profile_data, language))
+                    )
                     continue
                 # 【修复串台】型号必须和这块屏的环境一致：
                 # 实测室外那块屏被推了室内租赁型号 TW11-IR-P4.8 —— 那种宁可不出，
@@ -557,26 +767,29 @@ class MultiScreenManager:
                         session_id, index + 1, profile_data.get("environment"),
                         profile_data.get("installation"), model_name,
                     )
-                    blocks.append(self._screen_pending_block(index, profile_data, language))
+                    entries.append(
+                        (index, profile_data, self._screen_pending_block(index, profile_data, language))
+                    )
                     continue
                 text = str(outcome.get("answer") or "").strip()
                 item["model"] = model_name
                 item["reply"] = text
                 changed = True
 
-            label = screen_label(index, profile_data, language)
             if not text:
-                text = label + model_name
-            elif not text.lstrip().startswith(label.strip()):
-                text = label + text
-            blocks.append(text)
+                text = model_name
+            entries.append((index, profile_data, text))
 
         if changed:
             memory_store.set_project_items(session_id, items)
-        if len(blocks) < 2:
+        if len(entries) < 2:
             return None
-        logger.info("[%s] Multi-item: 按 %d 块屏分别推荐", session_id, len(blocks))
-        return "\n\n".join(blocks)
+        # 【统一收口】招呼只留一次、整条回复只留一个"要客户做的事"（放在最后）
+        reply = self._compose_screen_blocks(entries, language)
+        if not reply:
+            return None
+        logger.info("[%s] Multi-item: 按 %d 块屏分别推荐", session_id, len(entries))
+        return reply
 
     def _multi_item_follow_up(
         self, session_id: str, result: Dict[str, Any], message: str = ""
@@ -588,7 +801,7 @@ class MultiScreenManager:
         多屏仍然支持 —— 客户自己提到第二块屏（"门口再来一块室外的屏" /
         "another screen for the entrance"）时照常开新条目，最后出汇总。
         """
-        from .project_items import product_model, screen_label
+        from .project_items import product_model
         from .reply_composer import reply_language
 
         memory_store = self.memory_store
@@ -628,24 +841,19 @@ class MultiScreenManager:
 
         # 客户口径（2026-09-18）多块屏时要**按屏幕数量**推荐：
         # 每块屏给一个型号，不再只报一块屏。这里把每块屏自己的推荐话术拼成一条，
-        # 每条前面带 "Screen N (…)" 标签，客户一眼能看出哪块屏对应哪个型号。
-        blocks: list = []
+        # 每条前面带 "Screen N (…)" 标签，客户一眼能看出哪块屏对应哪个型号；
+        # 合成走与 _recommend_all_screens 同一份收口（招呼一次、收尾一个）。
+        entries: List[Tuple[int, Dict[str, Any], str]] = []
         for position, item in enumerate(items, start=1):
             model_name = str(item.get("model") or "").strip()
             if not model_name:
                 continue
             text = str(item.get("reply") or "").strip()
-            label = screen_label(position - 1, item.get("profile") or {}, language)
-            if not text:
-                text = label + model_name
-            elif not text.lstrip().startswith(label.strip()):
-                # 第一块屏当初是单屏推荐、没带标签 → 这里补上，客户才分得清哪块是哪块
-                text = label + text
-            blocks.append(text)
-        if len(blocks) >= 2:
-            result["response"] = "\n\n".join(blocks)
+            entries.append((position - 1, item.get("profile") or {}, text or model_name))
+        if len(entries) >= 2:
+            result["response"] = self._compose_screen_blocks(entries, language)
             result["multi_screen"] = True
-            logger.info("[%s] Multi-item: 按 %d 块屏分别给出推荐", session_id, len(blocks))
+            logger.info("[%s] Multi-item: 按 %d 块屏分别给出推荐", session_id, len(entries))
             return None
 
         return None

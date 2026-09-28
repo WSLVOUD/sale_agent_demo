@@ -257,6 +257,7 @@ def _express_recommendation(
     follow_up: bool = False,
     previous_models=(),
     calculation_variants=None,
+    multi_screen_brief: str = "",
 ):
     """用一次 LLM 调用把确定性结论表达成销售话术；失败时退化为模板。"""
     # 客户口径（2026-09-18）：**推荐时只报一个型号**，其他型号一律不提。
@@ -295,6 +296,13 @@ def _express_recommendation(
     latest = ""
     if customer_text:
         latest = f"\nCustomer's latest message: {str(customer_text)[:200]}"
+    # 多屏项目：这一段只写这块屏（不要重复招呼 / 不要写另一块屏 / 不要套同一个模板）
+    brief = ""
+    if multi_screen_brief:
+        brief = (
+            "\nMulti-screen brief (this paragraph covers ONE screen only — follow it "
+            "exactly):\n" + str(multi_screen_brief).strip() + "\n"
+        )
     calc_text = ""
     layouts = calculation_variants or (
         {"landscape": calculation} if calculation else {}
@@ -354,7 +362,7 @@ def _express_recommendation(
         f"{top['model']}\n\n"
         "Verified product data:\n" + "\n".join(spec_lines) + "\n\n"
         f"Recommendation reasons: {reasons}\n"
-        + f"{calc_text}{extra}{latest}\n\n"
+        + f"{calc_text}{extra}{latest}{brief}\n\n"
         "Rules:\n"
         "1. Mention the selected model with its full model code — it does not have to be the very first words.\n"
         "2. Add 1-2 concrete selling points using ONLY the verified data above.\n"
@@ -661,6 +669,7 @@ def recommend_node(state: SolutionState) -> SolutionState:
         follow_up=follow_up,
         previous_models=state.get("previous_recommended_models") or (),
         calculation_variants=calculation_variants,
+        multi_screen_brief=state.get("multi_screen_brief", "") or "",
     )
 
     # 缺尺寸时必须追问（确定性兜底：模型若没问，就补一句尺寸追问，

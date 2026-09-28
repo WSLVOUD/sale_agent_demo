@@ -30,6 +30,7 @@
     给几块屏"的完整推荐，这些上限会把内容砍掉。
 """
 import os
+import re
 import sys
 from types import SimpleNamespace
 
@@ -397,3 +398,138 @@ def ResponseContextProxy(action: str):
     from src.dialogue.response_context import ResponseContext
 
     return ResponseContext(action=action, customer_message="permanent for indoor and rental for outdoor")
+
+
+class TestMultiScreenCompositionIsNotTemplated:
+    """客户实测（2026-09-28 第二次）：两块屏各打一次招呼、两块各问一遍、读起来一个模板。
+
+        客户可见原文：
+        Screen 1 (indoor / stage): Hi Jack, thanks for reaching out. For your indoor
+            3m x 5m screen we recommend the TW11-3216-P3.0. … Shall I go ahead and
+            prepare the quotation for the TW11-3216-P3.0 indoor screen …?
+        Screen 2 (outdoor / stage): Hi Jack, thanks for reaching out. For your indoor
+            3x5 screen … please share the exact dimensions … and I'll prepare the
+            full quotation for both screens.
+
+    → 招呼必须只出现一次；整条回复只能留一个"要客户做的事"（问句或请求），
+      并且要落在整条回复的最后；第二块不能再重复第一块的招呼。
+    """
+
+    def _blocks(self):
+        indoor = _indoor_fixed_profile().model_dump()
+        outdoor = _outdoor_rental_profile().model_dump()
+        first = (
+            "Hi Jack, thanks for reaching out. For your indoor 3m x 5m screen we "
+            "recommend the TW11-3216-P3.0, with a 3.076mm pixel pitch that suits the "
+            "viewing distance. Horizontal tiling: 5 x 11 = 55 cabinets. "
+            "Shall I go ahead and prepare the quotation for the indoor screen?"
+        )
+        second = (
+            "Hi Jack, thanks for reaching out. For your outdoor 5m x 10m screen the "
+            "TW11-OR-P3.9 is the closest match, with a 3.91mm pixel pitch and a "
+            "waterproof rental cabinet. Horizontal tiling: 10 x 20 = 200 cabinets. "
+            "For the outdoor screen, please share the exact dimensions so I can "
+            "confirm the layout and prepare the full quotation."
+        )
+        return [(0, indoor, first), (1, outdoor, second)]
+
+    def _reply(self, language: str = "en") -> str:
+        from src.rag.multi_screen import MultiScreenManager
+
+        return MultiScreenManager._compose_screen_blocks(self._blocks(), language)
+
+    def test_greeting_appears_only_once(self):
+        reply = self._reply()
+
+        assert reply.lower().count("hi jack") == 1, reply
+        assert reply.lower().count("thanks for reaching out") == 1, reply
+
+    def test_second_block_does_not_open_with_the_same_opener(self):
+        reply = self._reply()
+
+        second = reply.split("\n\n")[1]
+        body = second.split(":", 1)[1].strip().lower()
+        assert not body.startswith(("hi", "hello", "hey", "thanks", "thank you")), body[:60]
+
+    def test_only_one_ask_survives_and_it_closes_the_reply(self):
+        reply = self._reply()
+
+        questions = reply.count("?") + reply.count("？")
+        requests = len(re.findall(r"\bplease\b|\bshall i\b|\bcould you\b", reply, re.IGNORECASE))
+        assert questions + requests == 1, reply
+        assert reply.rstrip().endswith((".", "?", "!", "。", "？", "！")), reply[-80:]
+        assert "please share" in reply, "保留下来的应该是最后那一个收尾请求"
+
+    def test_each_block_keeps_its_own_model_and_facts(self):
+        reply = self._reply()
+        first, second = reply.split("\n\n")
+
+        assert "TW11-3216-P3.0" in first and "5 x 11 = 55" in first, first
+        assert "TW11-OR-P3.9" in second and "10 x 20 = 200" in second, second
+        assert "TW11-3216-P3.0" not in second, second
+
+    def test_single_block_keeps_its_own_greeting(self):
+        from src.rag.multi_screen import MultiScreenManager
+
+        one = self._blocks()[:1]
+        reply = MultiScreenManager._compose_screen_blocks(one, "en")
+
+        assert reply.lower().count("hi jack") == 1, reply
+
+
+class TestScreenBriefTellsTheModelWhichScreenThisIs:
+    """第二块不能再借用第一块的场景/环境（实测：室外那块写成 "your indoor 3x5 screen"）。"""
+
+    def test_brief_names_this_screen_and_forbids_the_other(self):
+        from src.rag.multi_screen import MultiScreenManager
+
+        brief = MultiScreenManager._screen_brief(
+            1, _outdoor_rental_profile().model_dump(), 2
+        )
+        lowered = brief.lower()
+
+        assert "screen 2 of 2" in lowered, brief
+        assert "outdoor" in lowered, brief
+        assert "indoor" in lowered, "要点明这块屏是室外的（不要写成室内、不要提另一块屏）: " + brief
+        assert "greet" in lowered, brief
+
+    def test_per_screen_recommend_passes_the_brief(self):
+        from src.memory.store import memory
+        from src.models.requirement import RequirementProfile
+        from src.rag.multi_screen import MultiScreenManager
+
+        session_id = "multi-screen-brief"
+        memory.clear(session_id)
+        indoor = _indoor_fixed_profile()
+        outdoor = _outdoor_rental_profile()
+        memory.set_project_items(
+            session_id,
+            [{"profile": indoor.model_dump()}, {"profile": outdoor.model_dump()}],
+        )
+        memory.set_active_item_index(session_id, 1)
+        memory.set_requirement_profile(session_id, outdoor)
+
+        seen: list = []
+
+        class _Stub:
+            def run(self, message="", history=None, session_id="", profile=None, **_kwargs):
+                seen.append(_kwargs.get("multi_screen_brief", ""))
+                return {
+                    "answer": f"Hi Jack, {message}",
+                    "products": [{"model": "TW11-3216-P4.0" if len(seen) == 1 else "TW11-OR-P3.9"}],
+                    "route": "agent",
+                }
+
+        manager = MultiScreenManager(
+            store=memory,
+            profile_lookup=lambda sid: RequirementProfile.model_validate(
+                memory.get_requirement_profile(sid)
+            ),
+            history_lookup=lambda sid: [],
+            solution_agent=_Stub(),
+        )
+        manager._recommend_all_screens(session_id, "permanent for indoor and rental for outdoor")
+
+        assert len(seen) == 2, seen
+        assert "screen 1 of 2" in seen[0].lower(), seen[0]
+        assert "screen 2 of 2" in seen[1].lower(), seen[1]

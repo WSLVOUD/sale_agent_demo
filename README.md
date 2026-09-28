@@ -137,11 +137,25 @@ python -m eval.retrieval_eval      → series@5 1.0 / model@10 0.9333 / MRR 0.67
     改为 cap_answer_length()：上限 2000 字符（只防 LLM 跑飞），统一在**句子边界**
     收尾。
 
+问题 3（两块屏都推出来了，但"一个模板念两遍"）
+
+    客户可见原文：两块屏各带一次 "Hi Jack, thanks for reaching out."，各问一遍
+    （"Shall I … quotation …?" + "please share the exact dimensions …"），而且
+    室外那块写成 "For your indoor 3x5 screen"（抄了另一块屏的场景）。
+
+    修法：
+    · MultiScreenManager._compose_screen_blocks()：多屏回复的唯一收口（逐屏推荐
+      与后续汇总共用）——段首招呼只保留第一次，后面重复的招呼/致谢整句删掉；
+      整条回复只留一个"要客户做的事"（问句或 please / shall I… 请求），并放到最后。
+    · MultiScreenManager._screen_brief() 随每次逐屏推荐下发："这一段只写第 N 块屏
+      （环境/安装/尺寸）"、不要写成另一块屏、不要重复招呼、不要复用上一块的收尾句；
+      经 solution_agent.run(multi_screen_brief=…) → SolutionState → 推荐提示词。
+
 验收（2026-09-28）
-python -m pytest -q                    → 827 passed（新增 17 条多屏回归）
+python -m pytest -q                    → 834 passed（新增 24 条多屏回归）
 tests/test_multi_screen_per_screen_facts.py 覆盖：逐屏需求句、安装方式校验、
     室内固装 / 室外租赁各出一个型号、推荐提示词无句数 / 字数上限、超长回复在
-    句子边界收尾
+    句子边界收尾、多屏回复收口（招呼一次 / 收尾一个 / 各块不串场景）
 python -m eval.recommendation_eval     → Slot 0.9914 / Hard 0.9896 / ProductType 1.0
 python -m eval.calculator_eval         → 1.0（14/14）
 python -m eval.retrieval_eval          → 硬约束违规 0

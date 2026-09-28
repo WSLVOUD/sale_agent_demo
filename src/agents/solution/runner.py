@@ -200,6 +200,7 @@ class SolutionAgentRunner:
         intent: str = "",
         already_recommended: bool = False,
         previous_models: Optional[List[str]] = None,
+        multi_screen_brief: str = "",
     ) -> SolutionState:
         """Build the initial state for the agent."""
         # Normalize history
@@ -279,6 +280,8 @@ class SolutionAgentRunner:
             "hybrid_search": self.hybrid_search,
             "search_keywords": [],
             "additional_requirements": additional_requirements or [],
+            # 多屏逐屏推荐：这一段只写哪一块屏（由 MultiScreenManager 传）
+            "multi_screen_brief": str(multi_screen_brief or ""),
             "inferred_brightness_min_nit": None,
             "inferred_brightness_max_nit": None,
             "inferred_pixel_pitch_min_mm": None,
@@ -306,6 +309,7 @@ class SolutionAgentRunner:
         intent: str = "",
         already_recommended: bool = False,
         previous_models: Optional[List[str]] = None,
+        multi_screen_brief: str = "",
     ) -> Dict[str, Any]:
         """Run the agent with a user message.
 
@@ -374,6 +378,7 @@ class SolutionAgentRunner:
         initial_state = self._build_initial_state(
             message, history, requirements, additional_requirements, profile, session_id, intent,
             already_recommended=already_recommended, previous_models=previous_models,
+            multi_screen_brief=multi_screen_brief,
         )
 
         # 把"客户这句话里的结构化槽位"注入 agent state（避免 LLM 重复推理）。

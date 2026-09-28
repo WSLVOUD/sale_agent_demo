@@ -85,6 +85,11 @@ class SolutionState(TypedDict):
     # These will be analyzed for pixel pitch, brightness, rental considerations
     additional_requirements: List[str]
 
+    # ── 多屏项目：这一段只写哪一块屏（多屏逐屏推荐专用）──────────────────
+    # 由 MultiScreenManager 传入：项目共几块屏、这块屏自己的环境/尺寸/安装方式，
+    # 以及"不要重复打招呼 / 不要写另一块屏 / 不要套同一个模板"的约束。
+    multi_screen_brief: str
+
     # ── Inferred technical parameters (added before retrieval) ──────────────
     # These are produced by the parameter_inference node from the customer's
     # natural-language requirement, so the retriever and reranker can apply
