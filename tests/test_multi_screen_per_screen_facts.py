@@ -742,3 +742,107 @@ class TestInstallationTypoTolerance:
         specs = split_multi_screen_specs("fixed for indoor and reantal for outdoor")
         by_env = {spec["environment"]: spec.get("installation") for spec in specs}
         assert by_env == {"indoor": "fixed", "outdoor": "rental"}, specs
+
+
+class TestPurposeNeverCarriesTheInstallationWord:
+    """客户实测（2026-09-28 第四次）：
+
+        客户: fixed for indoor and rental for outdoor / 5m view distance / price
+        AI  : Screen 1 (indoor / rental): this one is still being confirmed …
+              Screen 2 (outdoor / rental): TW11-OR-P4.8 …
+
+    根因：purpose 被写成 "rental"（租赁本是**安装方式**，不是场景）——
+      · 客户可见标签变成 "(indoor / rental)"，客户以为需求收错了；
+      · 逐屏检索句里也带上了这词 → extract_slots 把这块屏的 installation 又翻成
+        rental → 室内那块被推了室内**租赁**款 TW11-IR-P3.9，又被安装方式校验
+        拦下 → "still being confirmed"（永远推不出来）。
+    """
+
+    def test_extract_slots_does_not_turn_rental_into_a_purpose(self):
+        from src.rag.query_understanding import extract_slots
+
+        slots = extract_slots("fixed for indoor and rental for outdoor")
+
+        assert slots.get("purpose") in (None, ""), slots
+        assert slots.get("installation") == "rental", slots
+
+    def test_sanitize_purpose_drops_installation_and_environment_words(self):
+        from src.models.requirement import sanitize_purpose
+
+        for bad in ("rental", "fixed", "indoor", "outdoor", "租赁", "rental event", "室内"):
+            assert sanitize_purpose(bad) is None, bad
+        assert sanitize_purpose("church") == "church"
+        assert sanitize_purpose(None) is None
+
+    def test_screen_label_does_not_show_the_installation_word(self):
+        from src.rag.project_items import screen_label
+
+        label = screen_label(
+            0, {"environment": "indoor", "installation": "fixed", "purpose": "rental"}, "en"
+        )
+        assert "rental" not in label.lower(), label
+        assert "indoor" in label.lower(), label
+
+    def test_indoor_screen_message_and_constraints_stay_fixed(self):
+        from src.rag.hard_filter import build_hard_constraints
+        from src.rag.multi_screen import MultiScreenManager
+        from src.rag.query_understanding import understand_query
+
+        slots = {
+            "display_type": "LED", "environment": "indoor", "installation": "fixed",
+            "purpose": "rental", "target_width_m": 3.0, "target_height_m": 5.0,
+            "viewing_distance_m": 5.0,
+        }
+        text = MultiScreenManager._screen_query_text(slots)
+        assert "rental" not in text.lower(), text
+
+        profile = _profile(**slots)
+        understanding = understand_query(text, history=[], profile=profile)
+        constraints = build_hard_constraints(understanding.profile, message=text)
+
+        assert constraints.environment == "indoor", constraints.describe()
+        assert constraints.installation == "fixed", constraints.describe()
+
+    def test_indoor_fixed_screen_still_gets_a_model(self):
+        """端到端（硬约束选择）：室内固装那块必须出室内固装型号，不能是租赁款。"""
+        from src.memory.store import memory
+        from src.models.requirement import RequirementProfile
+        from src.rag.multi_screen import MultiScreenManager
+
+        session_id = "purpose-rental-pollution"
+        memory.clear(session_id)
+        indoor = _profile(
+            display_type="LED", environment="indoor", installation="fixed",
+            purpose="rental",          # 脏数据：租赁被写进了场景
+            target_width_m=3.0, target_height_m=5.0, viewing_distance_m=5.0,
+        )
+        outdoor = _profile(
+            display_type="LED", environment="outdoor", installation="rental",
+            target_width_m=3.0, target_height_m=5.0, viewing_distance_m=5.0,
+        )
+        memory.set_project_items(
+            session_id,
+            [{"profile": indoor.model_dump()}, {"profile": outdoor.model_dump()}],
+        )
+        memory.set_active_item_index(session_id, 1)
+        memory.set_requirement_profile(session_id, outdoor)
+
+        stub = _CanonicalStubSolution()
+        manager = MultiScreenManager(
+            store=memory,
+            profile_lookup=lambda sid: RequirementProfile.model_validate(
+                memory.get_requirement_profile(sid)
+            ),
+            history_lookup=lambda sid: [],
+            solution_agent=stub,
+        )
+        reply = manager._recommend_all_screens(session_id, "price")
+
+        assert reply, reply
+        assert len(stub.models) == 2, stub.models
+        assert "still being confirmed" not in reply, reply
+        assert "rental" not in reply.split("\n\n")[0].lower(), reply.split("\n\n")[0]
+
+        first = _canonical_record(stub.models[0])
+        assert getattr(first, "indoor", False) is True, stub.models[0]
+        assert getattr(first, "installation", "") == "fixed", stub.models[0]

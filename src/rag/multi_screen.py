@@ -518,7 +518,10 @@ class MultiScreenManager:
             facts.append("rental")
         elif installation == "fixed":
             facts.append("fixed installation")
-        purpose = str(data.get("purpose") or "").strip()
+        # 同上：安装方式词不能作为"场景"出现在给 LLM 的说明里
+        from ..models.requirement import sanitize_purpose
+
+        purpose = sanitize_purpose(data.get("purpose")) or ""
         if purpose:
             facts.append(purpose)
         width = data.get("target_width_m")
@@ -700,7 +703,11 @@ class MultiScreenManager:
         display_type = str(data.get("display_type") or "").strip().upper()
         parts.append(f"{display_type} display" if display_type in ("LED", "LCD", "IFP") else "display")
 
-        purpose = str(data.get("purpose") or "").strip()
+        # purpose 可能是脏数据里的安装方式词（"rental"）—— 拼进检索句会把这块屏的
+        # installation 又翻成租赁（实测 2026-09-28 第四次），所以要先过滤。
+        from ..models.requirement import sanitize_purpose
+
+        purpose = sanitize_purpose(data.get("purpose")) or ""
         if purpose:
             parts.append(purpose)
 

@@ -96,7 +96,11 @@ def _screen_where(profile: Any, lang: str) -> str:
     """这一块屏的"环境 / 场景"短语（用于标签与汇总）。"""
     data = profile if isinstance(profile, dict) else getattr(profile, "model_dump", lambda: {})()
     data = data or {}
-    scene = str(data.get("purpose") or data.get("usage") or "").strip()
+    # purpose 可能是历史/脏数据里的安装方式词（"rental"）—— 那种不能当场景显示，
+    # 否则客户看到 "Screen 1 (indoor / rental)" 会以为需求收错了。
+    from src.models.requirement import sanitize_purpose
+
+    scene = sanitize_purpose(data.get("purpose") or data.get("usage")) or ""
     env = _norm_environment(data.get("environment"))
     env_text = {
         "indoor": "室内" if lang == "zh" else "indoor",

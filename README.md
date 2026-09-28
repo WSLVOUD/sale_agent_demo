@@ -180,16 +180,43 @@ python -m eval.retrieval_eval      → series@5 1.0 / model@10 0.9333 / MRR 0.67
     · 顺带认了客户笔误："fixed for indoor and reantal for outdoor" 里的 reantal
       现在按 rental 认（此前室外那块被记成固装，型号也推荐错了）。
 
+问题 5（租赁被当成"场景"→ 室内那块显示成 "indoor / rental" 且永远推不出型号）
+
+    客户: fixed for indoor and rental for outdoor / 5m view distance / price
+    AI  : Screen 1 (indoor / rental): this one is still being confirmed …
+          Screen 2 (outdoor / rental): TW11-OR-P4.8 …
+
+    根因（链路级）：purpose 被写成 "rental" —— 租赁本来是**安装方式**：
+      · 客户可见标签用"环境 / 场景"，于是显示成 "(indoor / rental)"，看起来像收错了需求；
+      · 逐屏推荐句里也带上了这词（`_screen_query_text` 会把 purpose 拼进去）→
+        extract_slots 把这块屏的 installation 又翻成 rental →
+        室内那块被推了室内**租赁**款 TW11-IR-P3.9，又被安装方式校验拦下 →
+        永远停在 "this one is still being confirmed"。
+    日志实测：Hard filters: display_type=LED, environment=indoor, installation=rental
+    → candidates ['TW11-IR-P3.9', …]，而这块屏的档案是 fixed。
+
+    修法：
+    · query_understanding._PURPOSE_KEYWORDS 去掉 ("rental", (…"rental", "event"…)) ——
+      租赁/rental 只作为安装方式记录，不再当场景；
+    · models.requirement.sanitize_purpose()：purpose 里出现安装方式/室内外词
+      （rental / fixed / indoor / outdoor / 租赁 / 固装 / 室内外…）一律丢掉，
+      RequirementProfile.from_slots 与两个客户可见出口（标签 _screen_where、
+      逐屏检索句 _screen_query_text）都用它兜底，历史脏数据也不会再复现。
+    效果（真实 SolutionAgentRunner + LLM 打桩实测）：
+      INDOOR  → Hard filters: indoor + fixed → TW11-3216-P3.0（安装方式校验通过）；
+      OUTDOOR → Hard filters: outdoor + rental → TW11-OR-P4.8。两块屏都出型号。
+
 验收（2026-09-28）
-python -m pytest -q                    → 845 passed（多屏回归 35 条）
+python -m pytest -q                    → 850 passed（多屏回归 40 条）
 tests/test_multi_screen_per_screen_facts.py 覆盖：逐屏需求句、安装方式校验、
     室内固装 / 室外租赁各出一个型号、推荐提示词无句数 / 字数上限、超长回复在
     句子边界收尾、多屏回复收口（招呼一次 / 收尾一个 / 各块不串场景）、
     幻影第三块屏（报数量不新开条目 + 空条目不入回复）、两块屏推荐的长度预算、
-    租赁笔误
+    租赁笔误、purpose 不再携带安装方式词（标签 / 逐屏检索句 / 端到端选择）
 python -m eval.recommendation_eval     → Slot 0.9914 / Hard 0.9896 / ProductType 1.0
+                                         （purpose 逐字段准确率 0.641 → 0.7812，误报 13 → 6）
 python -m eval.calculator_eval         → 1.0（14/14）
-python -m eval.retrieval_eval          → 硬约束违规 0
+python -m eval.retrieval_eval          → 硬约束违规 0（本次改动前后逐项一致，A/B 验证）
 ```
 
 ---

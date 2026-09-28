@@ -175,7 +175,11 @@ _PURPOSE_KEYWORDS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("hospital", ("医院", "医疗", "诊所", "hospital", "clinic", "medical"), "hospital medical"),
     ("exhibition", ("展会", "展览会", "展销", "trade show", "expo", "exhibition"), "exhibition trade show"),
     ("hall", ("大厅", "hall", "concourse"), "large indoor hall"),
-    ("rental", ("租赁", "rental", "event"), "rental event"),
+    # 注：**不要**把 租赁/rental/event 当作 purpose —— 租赁是安装方式
+    # （installation=rental 已单独记录）。实测（2026-09-28 第四次）：客户说
+    # "fixed for indoor and rental for outdoor"，purpose 被写成 "rental"，
+    # 客户看到 "Screen 1 (indoor / rental)" 这种标签，以为需求收错了；
+    # 更严重的是逐屏检索句里也带上了这词，把这块屏的 installation 又翻成租赁。
 )
 
 _WATERPROOF_KEYWORDS = ("防水", "waterproof", "ip65", "ip66", "防雨")

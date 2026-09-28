@@ -231,6 +231,25 @@ _USAGE_ALIASES: Dict[str, str] = {
     "办公室": "office", "博物馆": "museum", "大厅": "hall",
 }
 
+# 安装方式 / 室内外 的词**不是"用途"**。实测（2026-09-28 第四次）：客户说
+# "fixed for indoor and rental for outdoor"，purpose 被写成 "rental" ——
+#   · 客户可见标签变成 "Screen 1 (indoor / rental)"，客户以为需求收错了；
+#   · 逐屏检索句里也带上这词，把这块屏的 installation 又翻成 rental，
+#     于是室内那块被推了租赁型号、又被安装方式校验拦下 → "still being confirmed"。
+_PURPOSE_NOISE_RE = re.compile(
+    r"rental|fixed|permanent|indoor|outdoor|semi[\s_-]?outdoor|"
+    r"租赁|固装|固定|室内|室外|户内|户外|临时",
+    re.IGNORECASE,
+)
+
+
+def sanitize_purpose(value: Any) -> Optional[str]:
+    """把"其实是安装方式 / 室内外"的 purpose 值丢掉（其余原样返回）。"""
+    text = str(value or "").strip()
+    if not text or _PURPOSE_NOISE_RE.search(text):
+        return None
+    return text
+
 
 class RequirementProfile(BaseModel):
     """结构化客户需求档案。"""
@@ -367,7 +386,7 @@ class RequirementProfile(BaseModel):
 
         put("display_type", slots.get("display_type"))
         put("environment", slots.get("environment"))
-        put("purpose", slots.get("purpose"))
+        put("purpose", sanitize_purpose(slots.get("purpose")))
         put("content_type", slots.get("content_type"))
         put("installation", slots.get("installation"))
         put("price_preference", slots.get("price_preference"))
@@ -1158,4 +1177,5 @@ __all__ = [
     "fact_class",
     "is_customer_explicit",
     "merge_profiles",
+    "sanitize_purpose",
 ]
