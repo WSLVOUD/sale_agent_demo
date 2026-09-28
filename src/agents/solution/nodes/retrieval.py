@@ -119,17 +119,10 @@ def retrieval_node(state: SolutionState) -> SolutionState:
         understanding.language, understanding.slots, query[:120],
     )
 
-    # Phase 6：需求档案 —— 以"客户原话的确定性解析"为准；
-    # legacy requirement（LLM 提取）只补 purpose（场景原话），
-    # 其它工程参数一律不采用，避免 AI 自行补全/覆盖客户确认的事实。
+    # 计划 update_v2.9.x 第三阶段：Solution 不再往档案里写任何需求字段。
+    # （以前这里会用 legacy requirement 里的 purpose 补档案 —— 那是第二套需求来源，
+    #  档案的真值只由 RequirementExtractor / ParameterInference 维护。）
     merged_profile = understanding.profile
-    if merged_profile is not None and not merged_profile.purpose and requirement:
-        from ....models.requirement import RequirementProfile
-
-        legacy_profile = RequirementProfile.from_legacy(requirement)
-        if legacy_profile.purpose:
-            merged_profile.purpose = legacy_profile.purpose
-            merged_profile.sources["purpose"] = "confirmed"
     if merged_profile is not None:
         logger.info(
             "Requirement profile: completeness=%.2f sufficient=%s missing=%s",

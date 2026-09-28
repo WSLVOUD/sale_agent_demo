@@ -504,6 +504,19 @@ def detect_intent(message: str, use_llm: bool = False) -> str:
 def parameter_inference_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """事实 → 技术参数（纯 Python，不调用 LLM）。"""
     requirement = dict(state.get("requirement", {}) or {})
+    # 计划 update_v2.9.x 第二阶段/第八阶段：工程推断的唯一真值是 RequirementProfile。
+    # 旧 requirement 字典只用于补齐档案里没有的字段（例如 fast path 注入的约束），
+    # 同名字段一律以档案为准，避免"两套需求互相覆盖"。
+    _profile = state.get("requirement_profile")
+    if _profile is not None:
+        try:
+            from ..models.legacy_adapter import profile_to_legacy
+
+            for _key, _value in profile_to_legacy(_profile).items():
+                if _value not in (None, "", [], {}):
+                    requirement[_key] = _value
+        except Exception as _exc:  # pragma: no cover - 防御式
+            logger.warning("parameter_inference: 档案投影失败，沿用旧字典：%s", _exc)
     messages = state.get("messages", []) or []
 
     last_user = ""

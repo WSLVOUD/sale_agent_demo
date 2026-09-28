@@ -66,7 +66,7 @@ python -m eval.retrieval_eval --limit 12     → model_recall@10 0.9333、MRR 0.
 | 混合检索（RAG：Dense + Sparse + BM25 + RRF） | ✅ 已完成 |
 | 质量评估反射（Reflection Quality Gate） | ✅ 已完成 |
 | 三层路由（Fast / Normal / Agent Path） | ✅ 已完成 |
-| 增强记忆（EnhancedMemoryStore + CustomerProfile + Summary） | ✅ 已完成 |
+| 会话记忆（`memory/store.py`：FIFO 50 条 + 结构化档案 + 项目多屏） | ✅ 已完成 |
 | 可观测性（PerfTracker + 可选 Langfuse） | ✅ 已完成 |
 | 评估体系（Golden Dataset + 自动评测） | ✅ 已完成 |
 | Model 级产品数据与语料（87 Model / 35 Series：56 LED + 21 LCD + 10 IFP） | ✅ 已完成 |
@@ -86,7 +86,7 @@ python -m eval.retrieval_eval --limit 12     → model_recall@10 0.9333、MRR 0.
 | **观看距离确定性推导 + 点间距物理窗口 v2.2** | ✅ 已完成 |
 | **追问节奏：客户说"不知道"先换下一问，最后一轮再问** | ✅ v2.2.5 |
 | **服务口径一致性（安装 / 说明书 / 质保不自相矛盾）** | ✅ v2.2.5 |
-| **Memory 持久化（SQLite）** | 🚧 规划中 |
+| Memory 存储形态 | 进程内（`OrderedDict`）；SQLite 持久化**不在当前计划内** |
 
 ### 快速开始
 
@@ -99,10 +99,10 @@ uvicorn src.api:app --port 8000
 
 打开 `http://localhost:8000` 即可对话；接口与配置详见文末「API 端点」「核心配置项」。
 
-### 测试（一棵树：全量 591 条，约 1.5 分钟）
+### 测试（一棵树：全量 810 条，约 2~4 分钟）
 
 ```bash
-python -m pytest -q                          # 全量 591 条（约 1.5 分钟）
+python -m pytest -q                          # 全量 810 条（约 2~4 分钟）
 python -m pytest tests/test_vision_pipeline.py -q   # 单跑某个文件
 ```
 
@@ -635,6 +635,21 @@ intent_recognition (意图识别)
                                                回复 + 推荐结果
 ```
 
+> **职责边界（计划 update_v2.9.x）**：Solution **不再理解客户需求**。
+>
+> | 节点 | 现在只做 |
+> |---|---|
+> | `understand` | 纯 Adapter：读 `RequirementProfile` → 用确定性 Gate 给出 `info_sufficient` / `missing_info`；没有档案就标记 `REQUIREMENT_NOT_READY`（不再调 LLM / 不再解析 JSON / 不再写旧 `requirement`） |
+> | `infer_parameters` | 直接把工程推断委托给 `rag.parameter_inference`（唯一权威规则表） |
+> | `recommendation_gate` | 只用 `check_recommendation_ready(profile)` 决定 `ready` → `retrieve` 还是 `clarify` |
+> | `clarify` | 有档案 → 用 Gate 的问句；没有档案 → 把缺失槽位翻成人话问一句 |
+> | `retrieval` / `recommend` / `reflection` | 保持不变（检索 → 确定性选型 → 质量评估） |
+>
+> 已删除的旧链：`infer_display_type`（IFP 否则 LED）、`_build_requirement_prompt` /
+> `_parse_requirement_response`（Solution 内部 LLM 需求提取）、
+> 以及 `clarify` 里"按面积推视距/尺寸、按室内外推亮度、按点间距推分辨率"等与
+> `parameter_inference` 重复的启发式。产品类型只由 `ProductTypeRouter` 决定。
+
 ---
 
 ## 检索流程（Hybrid Retrieval）
@@ -690,29 +705,25 @@ $$
 
 ## 记忆系统（Memory）
 
-### EnhancedMemoryStore — 三层记忆架构
+### 现行实现（`src/memory/`）
 
 ```
-┌─────────────────────────────────────────────┐
-│              Session Memory                  │
-├─────────────────────────────────────────────┤
-│  Short-term Memory (短期记忆)                 │
-│  - 最近 50 条对话消息                        │
-│  - FIFO 自动截断                             │
-├─────────────────────────────────────────────┤
-│  Structured Profile (结构化客户画像)         │
-│  - 预算、场景、屏幕类型、室内/室外            │
-│  - 租赁/固装、感兴趣/拒绝产品                │
-│  - 待确认问题、已提出异议                    │
-├─────────────────────────────────────────────┤
-│  Conversation Summary (长期摘要)              │
-│  - 自动压缩历史对话                          │
-│  - LLM 生成关键要点摘要                      │
-│  - 不覆盖结构化事实                          │
-└─────────────────────────────────────────────┘
+src/memory/
+├── store.py           # 唯一会话存储（MemoryStore 单例）
+│                      · 消息 FIFO（最近 50 条，超出自动截断）
+│                      · requirement_profile（唯一需求档案，JSON 形态）
+│                      · recommendation / project_items / display_type_decision
+├── history_window.py  # 交给 LLM 的历史窗口（条数 + 字符数双重截断）
+└── __init__.py
 ```
 
-> ⚠️ **注意**：当前 Memory 为进程内存储（`OrderedDict`），服务重启后会话数据丢失。SQLite 持久化功能正在规划中。
+> ⚠️ **注意**：Memory 为进程内存储（`OrderedDict`），服务重启后会话数据丢失；
+> SQLite 持久化**不在当前计划内**。
+>
+> 说明（计划 update_v2.9.x）：历史上的 `EnhancedMemoryStore`（三层记忆 + 摘要）
+> 已确认**没有任何业务调用方**，模块已删除；短期记忆 / 需求档案 / 项目多屏
+> 全部由 `store.py` 承担。对话状态（问过什么、承接计数）在
+> `src/dialogue/conversation_state.py`，与 Memory 同一生命周期但职责分离。
 
 ---
 
@@ -739,7 +750,6 @@ led-rag-system/
 │   │   └── case_video_02.mp4      # 案例视频 2
 │   └── buisness_card/              # 名片图片目录
 │       └── business_card.png       # 销售人员名片
-│   └── led_rag_system.db             # (规划中) SQLite 持久化数据
 │
 ├── models/                           # 本地模型文件
 │   └── BAAI--bge-m3/snapshots/master/  # BGE-M3 Embedding 模型
@@ -795,8 +805,8 @@ led-rag-system/
 │   │   └── product.py             # Pydantic 产品数据 Schema（LED/LCD/IFP）
 │   │
 │   ├── memory/
-│   │   ├── store.py               # MemoryStore 单例（Session FIFO，50 条上限）
-│   │   └── enhanced.py            # EnhancedMemoryStore（三层记忆架构）
+│   │   ├── store.py               # MemoryStore 单例（Session FIFO，50 条上限 + 需求档案）
+│   │   └── history_window.py      # 交给 LLM 的历史窗口
 │   │
 │   ├── tools/                     # Agent 可用工具
 │   │   ├── search_tool.py         # 混合检索工具（供 Agent 调用）
@@ -839,7 +849,8 @@ led-rag-system/
 │
 ├── conftest.py                    # 测试环境变量 + fixtures（放在 rootdir）
 │
-└── tests/                         # 全量测试（约 591 条，约 1.5 分钟）
+└── tests/                         # 全量测试（810 条，约 2~4 分钟）
+    ├── architecture/              # 架构护栏（唯一需求模型 / 边界 / 职责约束）
     ├── dialogue/                  # 对话决策（承接 / 重复提问 / 单一回复 / Turn Action / others 语境）
     ├── input/                     # 输入层 Turn 引擎（去重 / 聚合 / 会话锁 / 幂等 / 生成期间补发）
     ├── memory/ replay/ vision/    # 会话记忆窗口 / 真实日志 Replay / 图片载荷
@@ -988,8 +999,8 @@ RESPONSE_LANGUAGE_POLICY=en          # en=始终英语（默认）；auto=跟随
 | Phase 10 | Memory 分层（requirements / history 分离） | ✅ 完成 |
 | Phase 11 | 性能优化（Embedding/向量库缓存） | ✅ 完成 |
 | Phase 12 | 可观测性（PerfTracker + 可选 Langfuse） | ✅ 完成 |
-| Phase 13 | 测试套件 | ✅ 完成（660 条通过，4 条按需跳过：非中英文场景需 LLM） |
-| Phase 14 | Memory 持久化（SQLite） | 🚧 规划中 |
+| Phase 13 | 测试套件 | ✅ 完成（当前全量 **810 条通过**） |
+| Phase 14 | Memory 持久化（SQLite） | ❌ 不在当前计划内（Memory 维持进程内存储） |
 | Phase 15 | 首次客户固定工作流（First Contact） | ✅ 完成 |
 
 > 之后又完成了一轮 **v2.0 工程化升级**（详见上方「最近更新」与

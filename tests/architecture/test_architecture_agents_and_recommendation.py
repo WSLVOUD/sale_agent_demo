@@ -50,27 +50,31 @@ def _importers_of(symbol: str, *, exclude: tuple = ()):
 
 class TestSalesAndSolutionShareOneRequirementSystem:
 
-    def test_solution_reuses_the_shared_extractor(self):
+    def test_solution_does_not_extract_requirements_itself(self):
+        """计划 update_v2.9.x 第三/四阶段：Solution 不再理解需求。
+
+        （本条取代上一版"Solution 复用统一抽取器"的旧断言 —— 现在连复用都不允许：
+        需求只由 Sales 侧的 RequirementExtractor 产出一次。）
+        """
         text = _read("src/agents/solution/nodes/requirement.py")
-        assert "RequirementExtractor" in text or "get_requirement_extractor" in text
-        assert "RequirementProfile" in text
-        assert "profile_to_solution_requirement" in text, "旧字段只允许作为投影"
+        for token in ("RequirementExtractor", "get_requirement_extractor", "get_llm", "llm.invoke"):
+            assert token not in text, f"Solution 不该再自己理解需求（{token}）"
+        assert "RequirementProfile" in text, "只能读档案"
 
     def test_solution_does_not_define_a_second_requirement_model(self):
         text = _read("src/agents/solution/nodes/requirement.py")
         assert not re.search(r"^class \w*Requirement(Profile)?\b", text, re.M)
 
-    def test_profile_path_comes_before_the_legacy_fallback(self):
-        """主路径先看档案；旧的自然语言抽取只做兜底。"""
+    def test_understand_node_is_a_pure_adapter(self):
+        """understand_node 只做：读档案 → Gate 状态 → 返回（不再拼 prompt / 解析 JSON）。"""
         text = _read("src/agents/solution/nodes/requirement.py")
         start = text.index("def understand_node(")
         end = text.index("\ndef ", start + 1)
         body = text[start:end]
         assert "requirement_profile" in body
-        assert "_build_requirement_prompt(" in body
-        assert body.index("requirement_profile") < body.index("_build_requirement_prompt("), (
-            "understand_node 里应当先走统一档案，再考虑旧的自然语言兜底"
-        )
+        assert "check_recommendation_ready" in body, "状态判断用确定性 Gate"
+        for token in ("_build_requirement_prompt", "_parse_requirement_response", "json.loads"):
+            assert token not in body, f"understand_node 不该再有旧需求解析（{token}）"
 
 
 class TestSingleRecommendationEntry:
@@ -121,11 +125,13 @@ class TestRecommendedDoesNotReParseRequirements:
 
 
 class TestLegacyRequirementWritesAreMarkedCompatible:
-    """Phase 12-6：legacy requirement 的写入只允许留在兼容分支，并且要标出来。"""
+    """计划 update_v2.9.x 第五/九阶段：Solution 侧的 legacy 需求写入已全部删除。"""
 
-    def test_solution_node_writes_are_marked(self):
+    def test_solution_nodes_do_not_write_the_legacy_requirement(self):
+        """Solution 的需求节点不再往旧字典里写东西（只有 runner 的投影与兼容消费者）。"""
         text = _read("src/agents/solution/nodes/requirement.py")
-        assert text.count("LEGACY-COMPAT") >= 2, "legacy requirement 的写入处必须标注"
+        writes = re.findall(r'"requirement"\s*:', text)
+        assert writes == [], f"Solution 节点不该再写 legacy requirement：{writes}"
 
     def test_legacy_dict_readers_are_confined(self):
         """旧字典的读者只允许是兼容消费者（others 的自由问答 + runner 的收尾整理）。"""
