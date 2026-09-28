@@ -111,11 +111,6 @@ NATIVE_SYSTEM_PROMPT = (
     "- explain why you are asking\n"
     "- follow a fixed sentence structure\n"
     "\n"
-    "Length: normally 3 to 4 short sentences — a natural reaction to what the\n"
-    "customer just said, one sentence of useful context or reasoning, and the\n"
-    "question. Do not answer with a single bare line.\n"
-    "Only shorten this when the customer only needs a one-word confirmation.\n"
-    "\n"
     # 计划 v2.8 §十一/§十九：用"语义任务范围"控制长度，而不是 token 截断
     "The response shape below tells you exactly what this turn allows:\n"
     "- complete the current business action\n"
@@ -176,6 +171,36 @@ POLISH_SYSTEM_PROMPT = (
     "Ask at most one question, and never use internal system terms.\n"
     "Output language: {language_rule}\n"
 )
+
+
+# ── 客户口径（2026-09-28）：长度上限只在"问需求"的轮次生效 ────────────────
+# 推荐/交付轮（RECOMMEND / DIRECT_ANSWER / FREE_QUESTION…）要完整交付：
+# 型号 + 实测参数 + 排布/箱体计算，多屏时**每一块屏**都要给全 —— 句数上限会把
+# 第二块屏的内容砍掉（实测：Screen 2 只剩 "this one is still being confirmed"）。
+_NATIVE_LENGTH_ASK = (
+    "Length: normally 3 to 4 short sentences — a natural reaction to what the\n"
+    "customer just said, one sentence of useful context or reasoning, and the\n"
+    "question. Do not answer with a single bare line.\n"
+    "Only shorten this when the customer only needs a one-word confirmation.\n"
+)
+_NATIVE_LENGTH_DELIVER = (
+    "Length: there is no sentence limit this turn — you are delivering the\n"
+    "recommendation, so every fact the customer needs must be complete (full model\n"
+    "code, key specs, and the calculated layout/cabinet figures for EVERY screen in\n"
+    "the project). Never truncate a sentence or drop a screen to stay short.\n"
+    "Do not pad, repeat, or add facts that are not in the business context.\n"
+)
+# 纯交付动作（推荐 / 回答客户问题 / 自由问答）：不设句数上限。
+# 仍然要问下一项的 ANSWER_AND_ASK、以及澄清 / 确认，保持"短问句"口径。
+_DELIVERY_ACTIONS = frozenset({"RECOMMEND", "DIRECT_ANSWER", "FREE_QUESTION"})
+
+
+def native_length_rule(context: ResponseContext) -> str:
+    """这一轮的长短口径：问需求 → 3~4 句；推荐/交付 → 不设句数上限。"""
+    action = str(getattr(context.response_shape, "action", "") or context.action or "").strip().upper()
+    if action in _DELIVERY_ACTIONS:
+        return _NATIVE_LENGTH_DELIVER
+    return _NATIVE_LENGTH_ASK
 
 
 def _language_rule(context: ResponseContext) -> str:
@@ -377,6 +402,7 @@ def _generate_native(context: ResponseContext, llm: Any) -> str:
     try:
         prompt = (
             NATIVE_SYSTEM_PROMPT.format(language_rule=_fallback_language_rule(context))
+            + "\n" + native_length_rule(context) + "\n"
             + "\n\n--- Business context ---\n"
             + context.prompt_block()
             + "\n\n--- Your reply ---\n"

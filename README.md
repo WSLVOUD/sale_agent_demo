@@ -103,6 +103,46 @@ python -m eval.retrieval_eval      → series@5 1.0 / model@10 0.9333 / MRR 0.67
 > （"一个LED显示屏"识别失败、客户说 LED 却被判 LCD）；② 点间距已知后仍会重复询问
 > 观看距离（跨槽位规则漏了挂起状态）。
 
+### 七、多屏链路：逐屏硬约束 + 推荐不再截断（2026-09-28）
+
+```text
+问题 1（室内固装被推租赁款 / 室外租赁那块没有型号）
+
+    客户: permanent for indoor and rental for outdoor
+    AI  : Screen 1 (indoor / other): … the quick-install rental design covers the
+          outdoor rental while the same cabinet works permanently indoors …
+          Screen 2 (outdoor / other): this one is still being confirmed …
+
+    根因：多屏是"每块屏各跑一次推荐"，但那一轮仍然把**客户整句**交给 Solution；
+    understand_query 把句子级槽位当客户明说的事实，覆盖这块屏自己的档案：
+        extract_slots("permanent for indoor and rental for outdoor")
+        = {'environment': 'indoor', 'purpose': 'rental', 'installation': 'rental'}
+    → 室内固装那块变成 indoor+rental → TW11-IR-P3.9（租赁款）；
+      室外租赁那块变成 indoor → 室内型号又被环境校验拦下 → "still being confirmed"。
+
+    修法：MultiScreenManager._screen_query_text() 把**这块屏自己的档案**拼成一句
+    需求（环境 / 安装方式 / 点间距 / 尺寸 / 视距 / 用途）再交给 Solution；
+    _model_matches_screen() 除环境外**再校验安装方式**（fixed / rental）——
+    室内固装那块现在出 TW11-3216-P4.0，室外租赁那块出 TW11-OR-P3.9。
+
+问题 2（推荐话术被长度上限截断）
+
+    Solution 推荐提示词写死 "(2-3 sentences max)" / "max 90 words"，NATIVE 系统
+    提示词写死 "3 to 4 short sentences" → 多屏"有几块屏就要给几块屏"的完整推荐
+    会被砍。现在：推荐/交付轮（RECOMMEND / DIRECT_ANSWER / FREE_QUESTION）
+    不设句数上限（native_length_rule()），推荐提示词也只要求"不注水、不重复"，
+    型号 + 实测参数 + 两种排布（箱体数 / 实际尺寸 / 模组数）必须完整给到客户。
+    问需求的轮次保持"3~4 句 + 一个问题"的短问句口径不变。
+
+验收（2026-09-28）
+python -m pytest -q                    → 825 passed（新增 15 条多屏回归）
+tests/test_multi_screen_per_screen_facts.py 覆盖：逐屏需求句、安装方式校验、
+    室内固装 / 室外租赁各出一个型号、推荐提示词无句数 / 字数上限
+python -m eval.recommendation_eval     → Slot 0.9914 / Hard 0.9896 / ProductType 1.0
+python -m eval.calculator_eval         → 1.0（14/14）
+python -m eval.retrieval_eval          → 硬约束违规 0
+```
+
 ---
 
 ## 项目状态

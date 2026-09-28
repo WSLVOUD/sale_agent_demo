@@ -378,10 +378,87 @@ class MultiScreenManager:
         memory_store.set_project_items(session_id, items)
 
     @staticmethod
+    def _screen_query_text(profile_data: Dict[str, Any], fallback: str = "") -> str:
+        """把**这一块屏**的档案拼成一句需求（多屏推荐专用）。
+
+        实测 bug（2026-09-28）：客户说 "permanent for indoor and rental for
+        outdoor"，多屏是"每块屏各跑一次推荐"，但每块屏那一轮仍然把**客户整句**
+        交给 Solution；``understand_query`` 把句子级槽位当成客户明说的事实，
+        覆盖了这块屏自己的档案：
+
+            extract_slots("permanent for indoor and rental for outdoor")
+            = {'environment': 'indoor', 'purpose': 'rental', 'installation': 'rental'}
+
+        → 室内固装那块被推了租赁款 TW11-IR-P3.9；室外租赁那块被当成室内、
+          又被环境校验拦下 → "still being confirmed"。
+
+        所以只拼这块屏自己的硬事实（环境 / 安装方式 / 点间距 / 尺寸 / 视距 / 用途），
+        让 Solution 侧的硬约束与这块屏的档案一致。
+        """
+        data = dict(profile_data or {})
+        parts: List[str] = []
+
+        environment = str(data.get("environment") or "").strip().lower()
+        if environment == "semi_outdoor":
+            parts.append("semi outdoor")
+        elif environment in ("indoor", "outdoor"):
+            parts.append(environment)
+
+        installation = str(data.get("installation") or "").strip().lower()
+        if installation == "rental":
+            parts.append("rental")
+        elif installation == "fixed":
+            parts.append("fixed installation")
+
+        display_type = str(data.get("display_type") or "").strip().upper()
+        parts.append(f"{display_type} display" if display_type in ("LED", "LCD", "IFP") else "display")
+
+        purpose = str(data.get("purpose") or "").strip()
+        if purpose:
+            parts.append(purpose)
+
+        pitch = data.get("pixel_pitch_mm")
+        if pitch not in (None, "", [], {}):
+            try:
+                parts.append(f"pixel pitch {float(pitch):g}mm")
+            except (TypeError, ValueError):
+                pass
+
+        width = data.get("target_width_m")
+        height = data.get("target_height_m")
+        try:
+            if width and height:
+                parts.append(f"{float(width):g}m x {float(height):g}m")
+            elif width:
+                parts.append(f"{float(width):g}m wide")
+            elif height:
+                parts.append(f"{float(height):g}m high")
+        except (TypeError, ValueError):
+            pass
+
+        distance = data.get("viewing_distance_m")
+        if distance not in (None, "", [], {}):
+            try:
+                parts.append(f"viewing distance {float(distance):g}m")
+            except (TypeError, ValueError):
+                pass
+
+        text = " ".join(part for part in parts if part).strip()
+        return text or str(fallback or "")
+
+    @staticmethod
     def _model_matches_screen(model_name: str, profile_data: Dict[str, Any]) -> bool:
-        """型号的使用环境是否和这块屏一致（避免"室外屏推室内型号"）。"""
-        environment = str((profile_data or {}).get("environment") or "").strip().lower()
-        if environment not in ("indoor", "outdoor"):
+        """型号是否和这块屏一致（环境和安装方式都要一致）。
+
+        只校验环境是不够的：室内固装那块被推了**租赁款** TW11-IR-P3.9
+        （环境是 indoor，校验通过）——所以还要比 fixed / rental。
+        """
+        data = profile_data or {}
+        environment = str(data.get("environment") or "").strip().lower()
+        installation = str(data.get("installation") or "").strip().lower()
+        check_environment = environment in ("indoor", "outdoor")
+        check_installation = installation in ("fixed", "rental")
+        if not check_environment and not check_installation:
             return True
         try:
             from ..config import config
@@ -390,9 +467,16 @@ class MultiScreenManager:
             record = canonical_model_index(config.DATA_DIR).get(model_name)
             if record is None:
                 return True
-            if environment == "indoor":
-                return bool(getattr(record, "indoor", False))
-            return bool(getattr(record, "outdoor", False))
+            if check_environment:
+                if environment == "indoor" and not bool(getattr(record, "indoor", False)):
+                    return False
+                if environment == "outdoor" and not bool(getattr(record, "outdoor", False)):
+                    return False
+            if check_installation:
+                record_installation = str(getattr(record, "installation", "") or "").strip().lower()
+                if record_installation in ("fixed", "rental") and record_installation != installation:
+                    return False
+            return True
         except Exception:  # pragma: no cover - 防御式
             return True
 
@@ -441,8 +525,12 @@ class MultiScreenManager:
                     blocks.append(self._screen_pending_block(index, profile_data, language))
                     continue
                 try:
+                    # 【修复串台】单块屏只拿"这块屏自己的需求句"去推荐：
+                    # 客户那句话可能同时描述了两块屏（"permanent for indoor and
+                    # rental for outdoor"），整句会让句子级槽位覆盖这块屏的档案。
+                    screen_message = self._screen_query_text(profile_data, message)
                     outcome = self.solution_agent.run(
-                        message=message,
+                        message=screen_message,
                         history=history,
                         session_id=session_id,
                         profile=RequirementProfile.model_validate(profile_data),
@@ -465,8 +553,9 @@ class MultiScreenManager:
                 # 也不能把不同环境的型号写给客户。
                 if not self._model_matches_screen(model_name, profile_data):
                     logger.warning(
-                        "[%s] 屏 %d 环境=%s 但推荐出 %s（环境不符）→ 跳过",
-                        session_id, index + 1, profile_data.get("environment"), model_name,
+                        "[%s] 屏 %d 环境=%s 安装=%s 但推荐出 %s（环境/安装方式不符）→ 跳过",
+                        session_id, index + 1, profile_data.get("environment"),
+                        profile_data.get("installation"), model_name,
                     )
                     blocks.append(self._screen_pending_block(index, profile_data, language))
                     continue

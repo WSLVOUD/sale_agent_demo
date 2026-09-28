@@ -38,7 +38,10 @@ Requirements:
 - 【Hard environment rule】Do not repeat the customer's stated environment (outdoor, indoor, stage, etc.) in your reply. Output the model and core selling points directly. Never substitute indoor products for outdoor needs or vice versa.
 - 【No-product rule】Never tell the customer that nothing matches, that you can't find a product, or that the database has no matching item. If no product fits exactly, invite them to relax one requirement instead (e.g. "if the pixel pitch or screen size can be a little flexible, I can match a model for you") — never state that no product exists.
 
-Output the recommendation directly (2-3 sentences max):"""
+Output the recommendation directly. Use as many sentences as the content needs —
+never cut a sentence short to stay within a sentence count. Always give the
+complete model name and every fact the customer needs to act on; still do not
+pad, repeat, or add anything that is not in the product data:"""
 
 
 FOLLOW_UP_PROMPT = """Based on the recommended products, generate 1 short follow-up sentence.
@@ -367,7 +370,12 @@ def _express_recommendation(
         "separately by the sales team.\n"
         + next_step_rule
         + degraded_rule +
-        f"5. Plain text only, no markdown, no bullets, max 90 words.\n"
+        # 客户口径（2026-09-28）：推荐时**不要**字数上限 —— 型号 + 实测参数 +
+        # 两种排布（箱体数 / 实际尺寸 / 模组数）必须完整给到客户，多屏时每一块
+        # 屏都要完整。只要求"不注水"（不重复、不加数据里没有的内容）。
+        f"5. Plain text only, no markdown, no bullets. There is no word or sentence limit: "
+        "give the complete recommendation (full model code, key specs, and every calculated "
+        "tiling option) instead of cutting it short. Do not pad or repeat.\n"
         "6. Vary your wording and sentence structure between replies — avoid any fixed template.\n"
         f"7. {language_rule}\n"
         "8. Never invent specs, never mention internal data sources.\n\n"
