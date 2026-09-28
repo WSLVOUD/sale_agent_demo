@@ -129,7 +129,9 @@ _SEMI_OUTDOOR_KEYWORDS = ("半户外", "半室外", "遮阳", "semi-outdoor", "h
 _RENTAL_KEYWORDS = (
     "租赁", "租用", "短租", "临时", "快闪", "巡演", "演出", "演出用",
     "演唱会", "音乐会", "舞台", "活动", "巡展", "车展", "赛事",
-    "rental", "rent", "hire", "mieten", "louer", "location", "alquiler", "locação",
+    # "reantal" / "renatl"：客户实测笔误（"fixed for indoor and reantal for outdoor"）
+    "rental", "reantal", "renatl", "rent", "hire", "mieten", "louer", "location",
+    "alquiler", "locação",
     "аренда", "レンタル", "租赁屏",
 )
 _FIXED_KEYWORDS = (

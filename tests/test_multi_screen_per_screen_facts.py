@@ -533,3 +533,212 @@ class TestScreenBriefTellsTheModelWhichScreenThisIs:
         assert len(seen) == 2, seen
         assert "screen 1 of 2" in seen[0].lower(), seen[0]
         assert "screen 2 of 2" in seen[1].lower(), seen[1]
+
+
+class TestPhantomThirdScreen:
+    """客户实测（2026-09-28 第三次）：客户只要两块屏，回复里多出一块 "Screen 3"。
+
+        客户: i change my mind, i need two screens   ← 只是说"要两块屏"
+        客户: i need a outdoor and indoor / p4 for indoor and p5 for outdoor / …
+        AI  : Screen 1 (indoor) … Screen 2 (outdoor) … Screen 3: TW31-COB-P0.7H …
+
+    根因：`detect_new_item` 把 "two screens" 当成"另一块屏"的信号，而当时当前这块
+    还没有任何屏体需求（没有环境/用途/尺寸/点间距）—— 归档出一块空需求，
+    后来被 `_share_common_facts` 填上安装方式/点间距（共有项不含环境），于是变成
+    客户看到的第三块屏（标签连环境都没有）。
+    """
+
+    def test_screen_facts_definition(self):
+        from src.rag.multi_screen import MultiScreenManager
+
+        assert MultiScreenManager._describes_a_screen({"environment": "indoor"}) is True
+        assert MultiScreenManager._describes_a_screen({"target_width_m": 3.0}) is True
+        assert MultiScreenManager._describes_a_screen({"pixel_pitch_mm": 4.0}) is True
+        assert MultiScreenManager._describes_a_screen(
+            {"display_type": "LED", "installation": "fixed", "pixel_pitch_mm": None}
+        ) is False
+        assert MultiScreenManager._describes_a_screen({}) is False
+
+    def test_two_screens_intent_does_not_open_a_new_item(self):
+        from src.memory.store import memory
+        from src.models.requirement import RequirementProfile
+        from src.rag.multi_screen import MultiScreenManager
+
+        session_id = "phantom-two-screens"
+        memory.clear(session_id)
+        # 当前这块只有"共有项"（客户还没说环境/尺寸）—— 正是实测踩到的那种状态
+        profile = RequirementProfile.model_validate(
+            {"display_type": "LED", "has_recommendation": False}
+        )
+        memory.set_requirement_profile(session_id, profile)
+        memory.set_project_items(session_id, [{"profile": profile.model_dump()}])
+        memory.set_active_item_index(session_id, 0)
+
+        manager = MultiScreenManager(
+            store=memory,
+            profile_lookup=lambda sid: RequirementProfile.model_validate(
+                memory.get_requirement_profile(sid)
+            ),
+            solution_agent=None,
+        )
+        reason = manager._maybe_start_new_item(
+            session_id, "i change my mind, i need two screens"
+        )
+
+        assert reason == "", "客户只是说'要两块屏'，不该新开条目"
+        assert len(memory.get_project_items(session_id)) == 1
+        assert memory.get_active_item_index(session_id) == 0
+
+    def test_quantity_statement_is_not_a_new_item_even_with_a_full_profile(self):
+        """整块档案都齐了，客户说"i need two screens"仍然只是在报数量。"""
+        from src.rag.project_items import detect_new_item
+
+        for message in (
+            "i change my mind, i need two screens",
+            "we need 2 screens",
+            "我要两块屏",
+        ):
+            assert detect_new_item(message, _indoor_fixed_profile()) == (False, ""), message
+
+    def test_a_second_screen_statement_still_opens_a_new_item(self):
+        from src.rag.project_items import detect_new_item
+
+        should_start, reason = detect_new_item(
+            "another screen for the entrance", _indoor_fixed_profile()
+        )
+        assert should_start is True and reason, (should_start, reason)
+
+    def test_new_item_still_opens_once_a_real_screen_exists(self):
+        from src.memory.store import memory
+        from src.models.requirement import RequirementProfile
+        from src.rag.multi_screen import MultiScreenManager
+
+        session_id = "phantom-real-second-screen"
+        memory.clear(session_id)
+        profile = _indoor_fixed_profile()
+        memory.set_requirement_profile(session_id, profile)
+        memory.set_project_items(session_id, [{"profile": profile.model_dump()}])
+        memory.set_active_item_index(session_id, 0)
+
+        manager = MultiScreenManager(
+            store=memory,
+            profile_lookup=lambda sid: RequirementProfile.model_validate(
+                memory.get_requirement_profile(sid)
+            ),
+            solution_agent=None,
+        )
+        reason = manager._maybe_start_new_item(
+            session_id, "another screen for the entrance"
+        )
+
+        assert reason, "第一块屏已经描述清楚了 → 客户说'再来一块'要能开新条目"
+        assert len(memory.get_project_items(session_id)) == 2
+
+    def test_recommend_skips_an_item_with_no_screen_facts(self):
+        from src.memory.store import memory
+        from src.models.requirement import RequirementProfile
+        from src.rag.multi_screen import MultiScreenManager
+
+        session_id = "phantom-skip"
+        memory.clear(session_id)
+        indoor = _indoor_fixed_profile()
+        outdoor = _outdoor_rental_profile()
+        phantom = {
+            "display_type": "LED",
+            "installation": "fixed",
+            "sources": {"display_type": "default", "installation": "explicit"},
+        }
+        memory.set_project_items(
+            session_id,
+            [
+                {"profile": indoor.model_dump()},
+                {"profile": outdoor.model_dump()},
+                {"profile": phantom},
+            ],
+        )
+        memory.set_active_item_index(session_id, 2)
+        memory.set_requirement_profile(session_id, phantom)
+
+        stub = _CanonicalStubSolution()
+        manager = MultiScreenManager(
+            store=memory,
+            profile_lookup=lambda sid: RequirementProfile.model_validate(
+                memory.get_requirement_profile(sid)
+            ),
+            history_lookup=lambda sid: [],
+            solution_agent=stub,
+        )
+        reply = manager._recommend_all_screens(session_id, "can u recommend to me")
+
+        assert reply, reply
+        assert len(stub.models) == 2, stub.models
+        assert "Screen 3" not in reply, reply
+        assert "0.78" not in reply, reply
+
+
+class TestMultiScreenReplyStaysShort:
+    """客户口径（2026-09-28 第三次）：两块屏的推荐要短，但不能短到写不完。"""
+
+    def test_brief_sets_a_word_budget_and_format(self):
+        from src.rag.multi_screen import MultiScreenManager
+
+        brief = MultiScreenManager._screen_brief(
+            0, _indoor_fixed_profile().model_dump(), 2
+        ).lower()
+
+        assert "50-70 words" in brief, brief
+        assert "no closing commentary" in brief, brief
+        assert "tiling options" in brief, brief
+
+    def test_composer_drops_fact_free_closing_commentary(self):
+        from src.rag.multi_screen import MultiScreenManager
+
+        indoor = _indoor_fixed_profile().model_dump()
+        outdoor = _outdoor_rental_profile().model_dump()
+        first = (
+            "For your indoor wall the TW11-3216-P4.0 is the closest fit. "
+            "Horizontal: 5 x 11 = 55 cabinets, actual 3.2m x 5.28m, 330 modules. "
+            "Both options fit your 3m x 5m indoor wall, so you can choose based on "
+            "which proportions work better for your installation."
+        )
+        second = (
+            "For your outdoor wall the TW11-OR-P3.9 is the closest fit. "
+            "Horizontal: 10 x 20 = 200 cabinets, actual 5.0m x 10.0m, 800 modules. "
+            "Both layouts work for this wall, so the choice comes down to taste."
+        )
+        reply = MultiScreenManager._compose_screen_blocks(
+            [(0, indoor, first), (1, outdoor, second)], "en"
+        )
+
+        assert "Both options fit" not in reply, reply
+        assert "Both layouts work" not in reply, reply
+        assert "5 x 11 = 55 cabinets" in reply, reply
+        assert "10 x 20 = 200 cabinets" in reply, reply
+
+    def test_filler_trim_never_empties_a_block(self):
+        from src.rag.multi_screen import MultiScreenManager
+
+        indoor = _indoor_fixed_profile().model_dump()
+        only_filler = "Both options work well for this wall, so you can choose either one."
+        reply = MultiScreenManager._compose_screen_blocks(
+            [(0, indoor, only_filler)], "en"
+        )
+
+        assert "Both options work well" in reply, "整段只有这一句时不能删空"
+
+
+class TestInstallationTypoTolerance:
+    """实测笔误："fixed for indoor and reantal for outdoor" —— 室外那块要租赁。"""
+
+    def test_reantal_is_read_as_rental(self):
+        from src.rag.query_understanding import extract_slots
+
+        slots = extract_slots("fixed for indoor and reantal for outdoor")
+        assert slots.get("installation") == "rental", slots
+
+    def test_splitter_assigns_rental_to_the_outdoor_screen(self):
+        from src.rag.project_items import split_multi_screen_specs
+
+        specs = split_multi_screen_specs("fixed for indoor and reantal for outdoor")
+        by_env = {spec["environment"]: spec.get("installation") for spec in specs}
+        assert by_env == {"indoor": "fixed", "outdoor": "rental"}, specs

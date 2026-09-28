@@ -44,6 +44,36 @@ _ASK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 一条需求里"能说明这是一块真实的屏"的字段：客户说了环境 / 用途 / 尺寸 / 点间距，
+# 才算描述了一块屏。只有 display_type / installation 之类共有项不算 ——
+# 实测（2026-09-28 第三次）：客户说"i need two screens"（只是说数量）时被当成
+# "另一块屏"，多开了一条空需求，最后多推出一块根本不存在的 "Screen 3"。
+_SCREEN_FACT_KEYS = (
+    "environment", "purpose", "target_width_m", "target_height_m", "pixel_pitch_mm",
+)
+
+# "没有事实"的收尾评论句（"Both options fit your wall, so you can choose…"）：
+# 带排布数字的（"5 x 11 = 55 cabinets" / "330 modules"）不算，问句 / 请求也不算；
+# 只带客户自己的尺寸（"your 3m x 5m wall"）不算事实 —— 那是在复述客户的话。
+_FILLER_SENTENCE_RE = re.compile(
+    r"^\s*(?:both|either)\s+(?:options?|layouts?|configurations?|ways?|setups?)\b",
+    re.IGNORECASE,
+)
+_FILLER_FACT_RE = re.compile(
+    r"\d+\s*[x×*]\s*\d+|\b\d+\s*(?:cabinets?|modules?)\b", re.IGNORECASE
+)
+
+
+def _is_filler_sentence(unit: str) -> bool:
+    body = str(unit or "").strip()
+    if not body or not _FILLER_SENTENCE_RE.match(body):
+        return False
+    if _FILLER_FACT_RE.search(body):
+        return False
+    if _ASK_RE.search(body):
+        return False
+    return len(body.split()) <= 40
+
 
 def _sentence_spans(text: str) -> List[Tuple[int, int, str]]:
     """句子 + 它在原文里的位置（用于删句子但保留其它排版）。"""
@@ -304,6 +334,17 @@ class MultiScreenManager:
         if not should_start:
             return ""
 
+        # 客户口径（2026-09-28 第三次实测）：客户说"我要两块屏 / two screens"时，
+        # 如果当前这块还**没有描述过任何屏幕**（没有环境 / 用途 / 尺寸 / 点间距），
+        # 那就没有"上一块屏"可归档 —— 客户只是在说数量，不是"再来一块"。
+        # 不加这道闸门会多开一条空需求，最后多推出一块不存在的 "Screen 3"。
+        if not self._describes_a_screen(profile.model_dump()):
+            logger.info(
+                "[%s] Multi-item: 当前这块还没有屏体需求（%s）→ 不新开条目",
+                session_id, reason,
+            )
+            return ""
+
         # 归档第 N 块屏（保留需求档案，最后汇总要用）
         while len(items) <= index:
             items.append({})
@@ -451,6 +492,16 @@ class MultiScreenManager:
         memory_store.set_project_items(session_id, items)
 
     @staticmethod
+    def _describes_a_screen(profile_data: Dict[str, Any]) -> bool:
+        """这条需求是不是已经"描述了一块屏"（客户说了环境 / 用途 / 尺寸 / 点间距）。
+
+        只有 display_type / installation 这类共有项不算 —— 客户说"我要两块屏"
+        不代表已经描述了第二块屏（详见 `_SCREEN_FACT_KEYS` 的说明）。
+        """
+        data = profile_data or {}
+        return any(data.get(key) not in (None, "", [], {}) for key in _SCREEN_FACT_KEYS)
+
+    @staticmethod
     def _screen_brief(index: int, profile_data: Dict[str, Any], total: int) -> str:
         """告诉 LLM"这一段只写哪一块屏"（多屏逐屏推荐专用）。
 
@@ -491,6 +542,19 @@ class MultiScreenManager:
         return "\n".join(
             [
                 head,
+                "- Keep this paragraph SHORT: about 50-70 words, at most 4 sentences. "
+                "Shape: one sentence naming <MODEL> (with pixel pitch, brightness, cabinet "
+                "size and modules per cabinet) as the closest fit, then the two tiling "
+                "options, one compact sentence each: \"Horizontal: <cols>x<rows> = <n> "
+                "cabinets, actual <w>m x <h>m, <modules> modules. Vertical (rotated 90 "
+                "degrees): …\".",
+                "- Include only: the model, why it fits (pitch / brightness), the cabinet, "
+                "and both tiling options. No closing commentary about how both options fit "
+                "or how to choose between them, no restating the customer's own "
+                "requirements, no repeating the same reason twice.",
+                "- Use plain short sentences and skip extra selling prose (for example "
+                "\"which gives a clean, modular build\" or \"keeping the image sharp and "
+                "detailed\") — one short reason for the fit is enough.",
                 f"- Describe this screen only. Never call it {other} and never repeat "
                 "another screen's size or environment (each screen is handled in its own "
                 "paragraph).",
@@ -530,6 +594,7 @@ class MultiScreenManager:
             cleaned.append((label, text))
 
         cleaned = cls._keep_single_ask(cleaned)
+        cleaned = cls._trim_filler(cleaned)
         blocks: List[str] = []
         for label, text in cleaned:
             if text:
@@ -537,6 +602,29 @@ class MultiScreenManager:
             else:
                 blocks.append(label.strip())
         return "\n\n".join(block for block in blocks if block)
+
+    @staticmethod
+    def _trim_filler(blocks: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+        """删掉"没有事实"的收尾评论句（客户口径：两块屏要短，别念废话）。
+
+        实测（2026-09-28 第三次）：
+            "Both options fit your 3m x 5m indoor wall, so you can choose based on
+             which proportions and cabinet count work better for your installation."
+        这种句子不含任何数字 / 箱体 / 尺寸事实，删掉不影响客户判断；
+        带数字的排布句（"4 x 6 = 24 cabinets"）一律保留。
+        """
+        result: List[Tuple[str, str]] = []
+        for label, text in blocks:
+            drop = [
+                (start, end)
+                for start, end, unit in _sentence_spans(text)
+                if _is_filler_sentence(unit)
+            ]
+            trimmed = _delete_spans(text, drop) if drop else text
+            if not trimmed.strip():
+                trimmed = text
+            result.append((label, trimmed))
+        return result
 
     @staticmethod
     def _keep_single_ask(
@@ -717,6 +805,15 @@ class MultiScreenManager:
             profile_data = item.get("profile") or {}
             model_name = str(item.get("model") or "").strip()
             text = str(item.get("reply") or "").strip()
+            if not model_name and not self._describes_a_screen(profile_data):
+                # 幻影条目：既没有屏体事实也没有推荐结果 —— 它不是一块屏。
+                # 实测（2026-09-28 第三次）：这样一条空需求最后变成客户看到的
+                # "Screen 3"，还带了一个 0.78mm 的室内型号（客户只要两块屏）。
+                logger.info(
+                    "[%s] Multi-item: 跳过没有屏体需求的空条目（第 %d 条）",
+                    session_id, index + 1,
+                )
+                continue
             if not model_name:
                 if not profile_data:
                     # 这一块还没有需求档案（例如刚开出来还没填）也要占一段，

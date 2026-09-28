@@ -151,11 +151,42 @@ python -m eval.retrieval_eval      → series@5 1.0 / model@10 0.9333 / MRR 0.67
       （环境/安装/尺寸）"、不要写成另一块屏、不要重复招呼、不要复用上一块的收尾句；
       经 solution_agent.run(multi_screen_brief=…) → SolutionState → 推荐提示词。
 
+问题 4（客户只要两块屏，却多出 "Screen 3"；而且两块屏的推荐太长）
+
+    客户: i change my mind, i need two screens → 后面才给 indoor / outdoor 两块屏的规格
+    AI  : Screen 1 (indoor) … Screen 2 (outdoor) … Screen 3: TW31-COB-P0.7H …
+          （第三块连环境标签都没有，还带了一个 0.78mm 的室内型号）
+
+    根因：detect_new_item 把 "two screens" 这种**报数量**的说法当成"另一块屏"，
+    而当时当前这块还没有任何屏体需求（没有环境/用途/尺寸/点间距）→ 归档出一条
+    空需求；后来 _share_common_facts 把安装方式/点间距（共有项，**不含环境**）
+    填了进去，于是它看起来像一块屏，最后被当成第三块推荐出来。
+
+    修法：
+    · project_items.detect_new_item()：只报数量（"two screens" / "我要两块屏"）且
+      没有"另一块/another/also/门口"这类说法时，**不是**"另一块屏"；
+      MultiScreenManager._maybe_start_new_item() 再加一道闸门 —— 当前这块还没有
+      屏体需求时不新开条目（没有"上一块屏"可归档）。
+    · MultiScreenManager._describes_a_screen()：一条需求要有环境/用途/尺寸/点间距
+      才算"一块屏"；逐屏推荐时跳过既没有屏体事实、也没有推荐结果的空条目 ——
+      客户不会再看到凭空的 "Screen 3"。
+
+    长度（客户口径：两块屏要短，但不能短到写不完）：
+    · _screen_brief() 给出明确预算与模板：每块屏 50~70 词、最多 4 句，只写
+      "型号（点间距/亮度/箱体/模组数）+ 两种排布（箱体数、实际尺寸、模组数）"，
+      不要收尾评论、不要复述客户的话、不要堆卖点；
+    · 收口器 _trim_filler() 再删掉"没有排布数字"的收尾评论句
+      （"Both options fit your wall, so you can choose…"），带数字的排布句一律保留。
+    · 顺带认了客户笔误："fixed for indoor and reantal for outdoor" 里的 reantal
+      现在按 rental 认（此前室外那块被记成固装，型号也推荐错了）。
+
 验收（2026-09-28）
-python -m pytest -q                    → 834 passed（新增 24 条多屏回归）
+python -m pytest -q                    → 845 passed（多屏回归 35 条）
 tests/test_multi_screen_per_screen_facts.py 覆盖：逐屏需求句、安装方式校验、
     室内固装 / 室外租赁各出一个型号、推荐提示词无句数 / 字数上限、超长回复在
-    句子边界收尾、多屏回复收口（招呼一次 / 收尾一个 / 各块不串场景）
+    句子边界收尾、多屏回复收口（招呼一次 / 收尾一个 / 各块不串场景）、
+    幻影第三块屏（报数量不新开条目 + 空条目不入回复）、两块屏推荐的长度预算、
+    租赁笔误
 python -m eval.recommendation_eval     → Slot 0.9914 / Hard 0.9896 / ProductType 1.0
 python -m eval.calculator_eval         → 1.0（14/14）
 python -m eval.retrieval_eval          → 硬约束违规 0

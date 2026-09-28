@@ -40,6 +40,24 @@ _NEW_ITEM_PATTERNS = (
 
 _NEW_ITEM_RE = re.compile("|".join(_NEW_ITEM_PATTERNS), re.IGNORECASE)
 
+# 只报数量："i need two screens" / "我要两块屏" —— 这是**数量**，不是"另一块屏"。
+# 真正带规格的多屏句（"two screens: one indoor, one outdoor"）由
+# `split_multi_screen_specs` 按规格拆，不需要走"开新条目"这条路径。
+# 实测（2026-09-28 第三次）：这句话被当成"另一块屏"，多开了一条空需求，
+# 最后多推出一块不存在的 "Screen 3"。
+_QUANTITY_ONLY_RE = re.compile(
+    r"\b(?:i\s+)?(?:would\s+like|want|need|will\s+take|like)?\s*"
+    r"(?:a|an|the)?\s*(?:two|three|2|3)\s*(?:more\s+|additional\s+)?"
+    r"(?:x\s*)?(?:screens?|displays?|leds?|lcds?|panels?|units?|sets?)\b",
+    re.IGNORECASE,
+)
+_QUANTITY_ONLY_CJK_RE = re.compile(r"(?:我要|想要|需要|再加|再来)?\s*(?:两|2|三|3)\s*(?:块|个|台)")
+# "另一块屏"的显式说法 —— 有这些词就说明客户在描述**新的那一块**，不是只报数量
+_EXPLICIT_ANOTHER_RE = re.compile(
+    r"\banother\b|\bsecond\b|\bone\s+more\b|\balso\b|另外|再(?:来|要|加|做|装)|第二块|另一个位置|还要",
+    re.IGNORECASE,
+)
+
 
 # 「另一个位置」的方位词：只有出现这些词，环境/屏类型冲突才当成"第二块屏"
 _LOCATION_HINT_RE = re.compile(
@@ -108,6 +126,14 @@ def detect_new_item(
         return False, ""
 
     if _NEW_ITEM_RE.search(text):
+        # "我要两块屏"只是报数量 —— 第二块屏的规格还没说，不能就此开一条空需求
+        quantity_only = bool(_QUANTITY_ONLY_RE.search(text) or _QUANTITY_ONLY_CJK_RE.search(text))
+        if (
+            quantity_only
+            and not _EXPLICIT_ANOTHER_RE.search(text)
+            and not _LOCATION_HINT_RE.search(text)
+        ):
+            return False, ""
         return True, "explicit_multi_item"
 
     if not already_recommended or profile is None:
@@ -206,7 +232,9 @@ _ENV_CHUNK_RE = re.compile(
 
 _INSTALL_TOKENS: Tuple[Tuple["re.Pattern[str]", str], ...] = (
     (re.compile(r"permanent|fixed|固定|固装|长期|墙上", re.IGNORECASE), "fixed"),
-    (re.compile(r"rental|rent|租赁|快装|快拆|便携|带走|可搬|临时|活动", re.IGNORECASE), "rental"),
+    # 客户常见笔误也认（实测："fixed for indoor and reantal for outdoor" 里
+    # reantal 没被认成租赁 → 室外那块被记成固装，型号也推荐错了）
+    (re.compile(r"rental|reantal|renatl|rent|租赁|快装|快拆|便携|带走|可搬|临时|活动", re.IGNORECASE), "rental"),
 )
 
 # 点间距：P3 / 3mm / 点间距3 / 3 毫米
