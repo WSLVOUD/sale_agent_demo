@@ -36,13 +36,16 @@ def _advertising():
 
 
 class TestAdvertisingMachinesAreInTheJson:
-    def test_all_seven_new_series_are_present(self):
+    def test_all_seven_new_series_are_present_merged(self):
+        """合并自 7 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_all_seven_new_series_are_present ──
         ids = {item["product_id"] for item in _advertising()}
 
         for series in NEW_SERIES:
             assert any(model.startswith(series) for model in ids), (series, sorted(ids))
 
-    def test_every_new_product_is_marked_as_advertising_machine(self):
+        # ── test_every_new_product_is_marked_as_advertising_machine ──
         ads = _advertising()
 
         assert len(ads) == 26, len(ads)
@@ -52,7 +55,7 @@ class TestAdvertisingMachinesAreInTheJson:
             assert "digital-signage" in item["features"], item["product_id"]
             assert "广告机" in item["features"], item["product_id"]
 
-    def test_old_products_are_not_relabelled(self):
+        # ── test_old_products_are_not_relabelled ──
         others = [i for i in _products() if i.get("category") != "advertising_machine"]
 
         assert len(others) == 21, len(others)
@@ -63,18 +66,18 @@ class TestAdvertisingMachinesAreInTheJson:
             "P55TM", "P65TM", "P75TM", "P86TM", "P98TM", "P110TM",
         }
 
-    def test_outdoor_model_keeps_its_environment(self):
+        # ── test_outdoor_model_keeps_its_environment ──
         outdoor = next(i for i in _products() if i["product_id"] == "DS-O-75")
 
         assert outdoor["environment"] == ["outdoor"], outdoor
         assert "IP55-waterproof" in outdoor["features"], outdoor["features"]
 
-    def test_floor_standing_models_are_marked_floor_standing(self):
+        # ── test_floor_standing_models_are_marked_floor_standing ──
         for model in ("DS-T55-55", "DS-TB55-55", "DS-P-55", "DS-D55", "DS-M-55"):
             item = next(i for i in _products() if i["product_id"] == model)
             assert item["installation"] == ["floor_standing"], (model, item["installation"])
 
-    def test_missing_facts_are_left_empty_not_invented(self):
+        # ── test_missing_facts_are_left_empty_not_invented ──
         """DS-T55 / DS-TB55 资料里没给对比度 / 24x7 / 寿命 → 不许编。"""
         for model in ("DS-T55-43", "DS-T55-55", "DS-TB55-43", "DS-TB55-55"):
             item = next(i for i in _products() if i["product_id"] == model)
@@ -82,14 +85,17 @@ class TestAdvertisingMachinesAreInTheJson:
             assert "operation_hours" not in item, (model, item.get("operation_hours"))
             assert "service_life_hours" not in item, (model, item.get("service_life_hours"))
 
-    def test_double_sided_series_has_a_data_note(self):
+        # ── test_double_sided_series_has_a_data_note ──
         item = next(i for i in _products() if i["product_id"] == "DS-D55")
 
         assert "Model" in item["notes"], item["notes"]  # 备注说明资料里没有型号行
 
 
 class TestAdvertisingMachinesReachTheRetrievalCorpus:
-    def test_corpus_carries_the_advertising_machine_label(self):
+    def test_corpus_carries_the_advertising_machine_label_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_corpus_carries_the_advertising_machine_label ──
         from src.config import config
         from src.rag.corpus import build_retrieval_corpus
 
@@ -102,7 +108,7 @@ class TestAdvertisingMachinesReachTheRetrievalCorpus:
         assert "广告机" in sample.page_content, sample.page_content[:200]
         assert "advertising_machine" in sample.page_content, sample.page_content[:200]
 
-    def test_corpus_counts_add_up(self):
+        # ── test_corpus_counts_add_up ──
         from src.config import config
         from src.rag.corpus import build_retrieval_corpus, corpus_summary
 

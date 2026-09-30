@@ -32,30 +32,32 @@ DATA_URL = f"data:image/png;base64,{B64}"
 
 class TestNormalizeImagePayloads:
 
-    def test_frontend_object_with_data_and_mime(self):
+    def test_frontend_object_with_data_and_mime_merged(self):
+        """合并自 7 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_frontend_object_with_data_and_mime ──
         assert normalize_image_payloads([{"data": B64, "mime_type": "image/png"}]) == [DATA_URL]
 
-    def test_frontend_object_with_url(self):
+        # ── test_frontend_object_with_url ──
         assert normalize_image_payloads([{"url": "https://example.com/a.jpg"}]) == [
             "https://example.com/a.jpg"
         ]
 
-    def test_plain_string_and_data_url(self):
+        # ── test_plain_string_and_data_url ──
         assert normalize_image_payloads([DATA_URL]) == [DATA_URL]
         assert normalize_image_payloads(["data:image/jpeg;base64," + B64]) == [
             "data:image/jpeg;base64," + B64
         ]
 
-    def test_truncated_data_url_prefix_is_repaired(self):
+        # ── test_truncated_data_url_prefix_is_repaired ──
         assert normalize_image_payloads([f"image/png;base64,{B64}"]) == [DATA_URL]
 
-    def test_duplicates_are_collapsed_and_empty_dropped(self):
-        # 没给 mime_type 时按 jpeg 兜底
+        # ── test_duplicates_are_collapsed_and_empty_dropped ──
         assert normalize_image_payloads([{"data": B64}, {"data": B64}, None, ""]) == [
             f"data:image/jpeg;base64,{B64}"
         ]
 
-    def test_object_with_attributes(self):
+        # ── test_object_with_attributes ──
         class _Image:
             url = "https://example.com/b.png"
             data = ""
@@ -63,7 +65,7 @@ class TestNormalizeImagePayloads:
 
         assert normalize_image_payloads([_Image()]) == ["https://example.com/b.png"]
 
-    def test_messages_carry_normalised_images(self):
+        # ── test_messages_carry_normalised_images ──
         """前端在 messages[].images 里发的对象，也要在入口层变成字符串。"""
         messages = collect_messages(
             session_id="img-1",
@@ -95,10 +97,13 @@ class TestVisionClientAcceptsObjects:
         out = _to_data_url(payload)
         assert out.startswith(("data:image/", "http"))
 
-    def test_check_image_payload_accepts_objects(self):
+    def test_check_image_payload_accepts_objects_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_check_image_payload_accepts_objects ──
         info = check_image_payload({"data": B64, "mime_type": "image/png"})
         assert info["mime_type"] == "image/png"
 
-    def test_empty_object_still_rejected(self):
+        # ── test_empty_object_still_rejected ──
         with pytest.raises(VisionError):
             _to_data_url({})

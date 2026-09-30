@@ -54,7 +54,10 @@ class TestMessageAggregation:
             debounce_seconds=debounce, max_window_seconds=window, now=clock
         ), clock
 
-    def test_consecutive_messages_become_one_turn(self):
+    def test_consecutive_messages_become_one_turn_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_consecutive_messages_become_one_turn ──
         aggregator, clock = self._aggregator()
         session = "agg-1"
         assert aggregator.add(session, {"message_id": "m1", "text": "3*5"}) is None
@@ -69,7 +72,7 @@ class TestMessageAggregation:
         assert turn.text == "3*5 indoor P3"
         assert aggregator.flush(session) is None    # 只发一次
 
-    def test_max_window_forces_flush(self):
+        # ── test_max_window_forces_flush ──
         """客户一直不停（间隔都小于 debounce）→ 到 1800ms 上限必须发出。"""
         aggregator, clock = self._aggregator()
         session = "agg-2"
@@ -83,7 +86,7 @@ class TestMessageAggregation:
         assert turn is not None
         assert turn.text == "hello there again"
 
-    def test_single_message_only_waits_the_debounce(self):
+        # ── test_single_message_only_waits_the_debounce ──
         """§16.2：单条消息最多多等 debounce（600ms），不会等到 max window。"""
         aggregator, clock = self._aggregator()
         session = "agg-3"
@@ -92,7 +95,7 @@ class TestMessageAggregation:
         turn = aggregator.flush(session)
         assert turn is not None and turn.text.startswith("I need an indoor LED screen")
 
-    def test_defaults_match_the_plan(self):
+        # ── test_defaults_match_the_plan ──
         from src.input.message_aggregator import (
             DEFAULT_DEBOUNCE_SECONDS,
             DEFAULT_MAX_WINDOW_SECONDS,
@@ -105,7 +108,10 @@ class TestMessageAggregation:
 # ── §16.3 / §16.4 / §16.5：SpeechAct + Dialogue Policy ────────────────────
 class TestSpeechActAndPolicy:
 
-    def test_answer_requirement_is_recognized(self):
+    def test_answer_requirement_is_recognized_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_answer_requirement_is_recognized ──
         profile = _profile(display_type="LED", environment="indoor")
         profile.last_asked_slot = "pixel_pitch"
         speech = detect_speech_act("P3", profile=profile, last_asked_slot="pixel_pitch")
@@ -117,7 +123,7 @@ class TestSpeechActAndPolicy:
         assert action.action == ASK_ONLY
         assert action.target_slot and action.target_slot != "environment"
 
-    def test_price_question_is_answered_only(self):
+        # ── test_price_question_is_answered_only ──
         profile = _profile(display_type="LED")
         speech = detect_speech_act("How much is it?", profile=profile)
         assert speech.speech_act == PRICE_QUESTION
@@ -125,7 +131,7 @@ class TestSpeechActAndPolicy:
         assert action.action == ANSWER_ONLY
         assert should_append_requirement_question("How much is it?", profile) is False
 
-    def test_delivery_question_is_answered_only(self):
+        # ── test_delivery_question_is_answered_only ──
         profile = _profile(display_type="LED")
         for message in ("How long is delivery?", "你的交付日期是多久？"):
             speech = detect_speech_act(message, profile=profile)
@@ -133,7 +139,7 @@ class TestSpeechActAndPolicy:
             assert decide_action(speech, profile=profile).action == ANSWER_ONLY, message
             assert should_append_requirement_question(message, profile) is False, message
 
-    def test_multi_intent(self):
+        # ── test_multi_intent ──
         profile = _profile(display_type="LED")
         profile.last_asked_slot = "pixel_pitch"
         speech = detect_speech_act(
@@ -148,7 +154,7 @@ class TestSpeechActAndPolicy:
             "P3. Also, how long is delivery?", profile
         ) is False
 
-    def test_product_question_can_still_ask_a_needed_field(self):
+        # ── test_product_question_can_still_ask_a_needed_field ──
         """问产品规格、而回答它确实缺硬性条件（尺寸）→ 允许有理由地追问。"""
         profile = _profile(display_type="LED", environment="indoor", installation="fixed")
         profile.last_asked_slot = "environment"
@@ -187,7 +193,10 @@ class TestPitchExplanationEndToEnd:
 # ── §16.8：Unsupported Fact ───────────────────────────────────────────────
 class TestUnsupportedFact:
 
-    def test_invented_viewing_distance_is_blocked(self):
+    def test_invented_viewing_distance_is_blocked_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_invented_viewing_distance_is_blocked ──
         from src.dialogue import build_grounded_facts
 
         facts = build_grounded_facts(profile=_profile(display_type="LED", environment="indoor"))
@@ -197,7 +206,7 @@ class TestUnsupportedFact:
         )
         assert "ungrounded_numeric" in bad.issues
 
-    def test_inferred_distance_is_allowed(self):
+        # ── test_inferred_distance_is_allowed ──
         from src.dialogue import build_grounded_facts
 
         profile = _profile(display_type="LED")
@@ -214,7 +223,10 @@ class TestUnsupportedFact:
 # ── §15：LLM 调用统计 ────────────────────────────────────────────────────
 class TestLLMCallTracking:
 
-    def test_tracker_counts_calls_in_a_turn(self):
+    def test_tracker_counts_calls_in_a_turn_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_tracker_counts_calls_in_a_turn ──
         from src.observability.llm_tracker import LLMCallTracker
 
         tracker = LLMCallTracker()
@@ -230,7 +242,7 @@ class TestLLMCallTracking:
         assert stats.session_id == "s-track"
         assert stats.records[0].model == "deepseek-chat"
 
-    def test_llm_entry_point_is_tracked(self):
+        # ── test_llm_entry_point_is_tracked ──
         """真正的调用入口（get_llm 返回的实例）也要被统计到。"""
         from src.core.llm import get_llm
         from src.observability.llm_tracker import get_llm_tracker
@@ -251,7 +263,7 @@ class TestLLMCallTracking:
         assert stats.calls == 1
         assert stats.records[0].model
 
-    def test_finish_turn_attaches_stats_and_logs(self):
+        # ── test_finish_turn_attaches_stats_and_logs ──
         from src.observability.llm_tracker import get_llm_tracker
         from src.orchestrator import DualAgentOrchestrator
 
@@ -267,7 +279,7 @@ class TestLLMCallTracking:
         assert result["_turn"]["message_count"] == 2
         assert result["_turn"]["aggregated"] is True
 
-    def test_perf_summary_reports_tracked_calls(self):
+        # ── test_perf_summary_reports_tracked_calls ──
         from src.observability.llm_tracker import get_llm_tracker
         from src.observability.perf import PerfTracker
 

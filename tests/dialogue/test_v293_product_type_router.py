@@ -18,19 +18,22 @@ def _route(message: str, **kwargs):
 
 class TestFirstLayerRouting:
 
-    def test_1_explicit_led(self):
+    def test_1_explicit_led_merged(self):
+        """合并自 9 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_1_explicit_led ──
         decision = _route("I need an LED display.")
         assert decision.display_type == "LED"
         assert decision.status == "CONFIRMED"
         assert decision.source == "CUSTOMER"
         assert decision.locked is True
 
-    def test_2_explicit_lcd(self):
+        # ── test_2_explicit_lcd ──
         decision = _route("I need an LCD display.")
         assert decision.display_type == "LCD"
         assert decision.locked is True
 
-    def test_3_and_4_ifp_features_belong_to_lcd(self):
+        # ── test_3_and_4_ifp_features_belong_to_lcd ──
         for message in (
             "I need an interactive display.",
             "I need a touch screen for meetings.",
@@ -40,35 +43,35 @@ class TestFirstLayerRouting:
             assert decision.subtype == "IFP", message
             assert decision.ask_customer is True, "推断出的类型要向客户确认"
 
-    def test_5_plain_display_is_unknown_and_asks(self):
+        # ── test_5_plain_display_is_unknown_and_asks ──
         decision = _route("I need a display.")
         assert decision.display_type == "UNKNOWN"
         assert decision.ask_customer is True
         assert decision.confidence == 0.0, "信息不足时不硬猜"
 
-    def test_6_outdoor_advertising_is_led(self):
+        # ── test_6_outdoor_advertising_is_led ──
         decision = _route("I need a display for outdoor advertising.")
         assert decision.display_type == "LED"
         assert decision.source == "INFERENCE"
         assert decision.ask_customer is True
 
-    def test_7_meeting_room_gets_a_suggestion_to_confirm(self):
+        # ── test_7_meeting_room_gets_a_suggestion_to_confirm ──
         decision = _route("I need a screen for a meeting room.")
         assert decision.display_type in ("LED", "LCD")
         assert decision.status == "INFERRED"
         assert decision.ask_customer is True, "AI 建议必须让客户确认"
 
-    def test_8_meeting_room_plus_writing_is_lcd_ifp(self):
+        # ── test_8_meeting_room_plus_writing_is_lcd_ifp ──
         decision = _route("I need a screen for a meeting room and we need to write on it.")
         assert decision.display_type == "LCD"
         assert decision.subtype == "IFP"
 
-    def test_9_huge_screen_with_far_viewing_prefers_led(self):
+        # ── test_9_huge_screen_with_far_viewing_prefers_led ──
         decision = _route("I need a huge display for a meeting room, viewing distance is 10m.")
         assert decision.display_type == "LED"
         assert decision.ask_customer is True
 
-    def test_14_customer_asking_what_led_is_gets_an_explanation(self):
+        # ── test_14_customer_asking_what_led_is_gets_an_explanation ──
         for message in ("What is LED?", "What is the difference between LED and LCD?"):
             decision = _route(message)
             assert decision.needs_explanation is True, message
@@ -78,7 +81,10 @@ class TestFirstLayerRouting:
 
 class TestVisionAndConfirmation:
 
-    def test_10_11_vision_result_is_inferred_and_confirmed(self):
+    def test_10_11_vision_result_is_inferred_and_confirmed_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_10_11_vision_result_is_inferred_and_confirmed ──
         for vision_type in ("LED", "LCD"):
             decision = _route("is this the right kind of screen?", vision_display_type=vision_type)
             assert decision.display_type == vision_type
@@ -86,19 +92,19 @@ class TestVisionAndConfirmation:
             assert decision.status == "INFERRED"
             assert decision.ask_customer is True
 
-    def test_12_vision_unknown_keeps_asking(self):
+        # ── test_12_vision_unknown_keeps_asking ──
         decision = _route("is this the right kind of screen?", vision_display_type="")
         assert decision.display_type == "UNKNOWN"
         assert decision.ask_customer is True
 
-    def test_13_customer_accepts_ai_judgement(self):
+        # ── test_13_customer_accepts_ai_judgement ──
         inferred = _route("I need a screen for outdoor advertising.")  # LED / INFERRED
         adopted = _route("I don't know", current=inferred)
         assert adopted.display_type == "LED"
         assert adopted.status == "CONFIRMED"
         assert adopted.locked is True
 
-    def test_15_customer_lets_us_choose(self):
+        # ── test_15_customer_lets_us_choose ──
         decision = _route("you decide for me, we need something for a meeting room")
         assert decision.display_type in ("LED", "LCD")
         assert decision.ask_customer in (True, False)  # 建议 + 确认，或直接采用
@@ -106,21 +112,24 @@ class TestVisionAndConfirmation:
 
 class TestLockingAndSwitching:
 
-    def test_16_locked_led_is_not_changed_by_scene(self):
+    def test_16_locked_led_is_not_changed_by_scene_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_16_locked_led_is_not_changed_by_scene ──
         led = _route("I want LED.")
         assert led.locked is True
         later = _route("it is for a meeting room, indoor", current=led)
         assert later.display_type == "LED", "已确认类型不能被场景改掉"
         assert later.locked is True
 
-    def test_17_explicit_change_is_allowed(self):
+        # ── test_17_explicit_change_is_allowed ──
         led = _route("I want LED.")
         switched = _route("Actually, I want LCD.", current=led)
         assert switched.display_type == "LCD"
         assert switched.source == "CUSTOMER"
         assert switched.locked is True
 
-    def test_state_machine_fields_are_present(self):
+        # ── test_state_machine_fields_are_present ──
         decision = _route("I need an LCD video wall.").to_dict()
         for key in (
             "display_type",
@@ -135,7 +144,10 @@ class TestLockingAndSwitching:
 
 class TestLegacyIsolation:
 
-    def test_orchestrator_blocks_requirement_questions_before_type_confirmation(self):
+    def test_orchestrator_blocks_requirement_questions_before_type_confirmation_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_orchestrator_blocks_requirement_questions_before_type_confirmation ──
         """收口层强约束（计划 v2.9.3 §五/§六）：类型没确认前，任何路径都不许问需求细节。
 
         实测：客户只发 "i need a display"，AI 却回了 LED 的需求问题
@@ -186,7 +198,7 @@ class TestLegacyIsolation:
         finally:
             memory.clear(session_id)
 
-    def test_first_layer_never_returns_ifp_as_a_type(self):
+        # ── test_first_layer_never_returns_ifp_as_a_type ──
         """计划 §四/§十四：第一层只有 LED / LCD / UNKNOWN，IFP 是 LCD 的子类型。"""
         from src.dialogue.product_type_router import (
             LCD,
@@ -207,7 +219,7 @@ class TestLegacyIsolation:
             if decision.subtype == SUBTYPE_IFP:
                 assert decision.display_type == LCD, message
 
-    def test_final_fallback_is_led_only_as_last_resort(self):
+        # ── test_final_fallback_is_led_only_as_last_resort ──
         from src.dialogue.product_type_router import final_fallback
 
         fallback = final_fallback()

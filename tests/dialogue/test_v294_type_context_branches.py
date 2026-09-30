@@ -78,7 +78,10 @@ class TestDecisionSurvivesTheTurn:
 class TestConfirmAdoptAndDeny:
     """四类回应（客户口径 ①~④）在路由器上各自的行为。"""
 
-    def test_ok_locks_the_type_we_proposed(self):
+    def test_ok_locks_the_type_we_proposed_merged(self):
+        """合并自 11 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_ok_locks_the_type_we_proposed ──
         proposal = _vision_proposal("LED")
         decision = _route("ok", current=proposal)
 
@@ -87,7 +90,7 @@ class TestConfirmAdoptAndDeny:
         assert decision.locked is True
         assert decision.ask_customer is False
 
-    def test_ignoring_the_question_adopts_the_ai_reading(self):
+        # ── test_ignoring_the_question_adopts_the_ai_reading ──
         """② 客户没正面回答（去聊别的）→ 直接采用 AI 判断，不再追问。"""
         proposal = _vision_proposal("LED")
         decision = _route("it is for our conference room", current=proposal)
@@ -98,7 +101,7 @@ class TestConfirmAdoptAndDeny:
         assert decision.ask_customer is False
         assert decision.subtype == ""
 
-    def test_adoption_also_works_from_the_profile_context(self):
+        # ── test_adoption_also_works_from_the_profile_context ──
         """联合上下文：即使上一轮决策丢了，档案里"图片识别出的类型"也能兜住。"""
         from src.models.requirement import RequirementProfile
 
@@ -113,7 +116,7 @@ class TestConfirmAdoptAndDeny:
         assert decision.status == "CONFIRMED"
         assert decision.locked is True
 
-    def test_denial_without_a_type_asks_for_the_other_one(self):
+        # ── test_denial_without_a_type_asks_for_the_other_one ──
         """④ 客户只说"不对" → 问"那是不是要另一种"，不是重新抛菜单。"""
         proposal = _vision_proposal("LED")
         decision = _route("no", current=proposal)
@@ -123,7 +126,7 @@ class TestConfirmAdoptAndDeny:
         assert decision.ask_customer is True
         assert decision.alternative is True, "要标记这是「另一种」的问法"
 
-    def test_denial_then_yes_locks_the_other_type(self):
+        # ── test_denial_then_yes_locks_the_other_type ──
         proposal = _vision_proposal("LED")
         asked = _route("no", current=proposal)
         confirmed = _route("yes", current=asked)
@@ -132,7 +135,7 @@ class TestConfirmAdoptAndDeny:
         assert confirmed.status == "CONFIRMED"
         assert confirmed.locked is True
 
-    def test_denial_that_names_a_type_switches_directly(self):
+        # ── test_denial_that_names_a_type_switches_directly ──
         """③ 客户说不对 + 说清是什么 → 直接按客户说的走。"""
         proposal = _vision_proposal("LED")
         decision = _route("no, we need an LCD video wall", current=proposal)
@@ -141,7 +144,7 @@ class TestConfirmAdoptAndDeny:
         assert decision.status == "CONFIRMED"
         assert decision.locked is True
 
-    def test_denial_of_another_field_is_not_a_type_denial(self):
+        # ── test_denial_of_another_field_is_not_a_type_denial ──
         """客户纠正的是**别的字段**（"不对，是室外的"）→ 不能当成否认产品类型。"""
         proposal = _vision_proposal("LED")
         decision = _route("no, it is outdoor", current=proposal)
@@ -149,7 +152,7 @@ class TestConfirmAdoptAndDeny:
         assert decision.display_type == "LED", decision.to_dict()
         assert decision.alternative is False, "这是纠正环境，不是否认 LED"
 
-    def test_denial_plus_ifp_features_goes_to_ifp(self):
+        # ── test_denial_plus_ifp_features_goes_to_ifp ──
         """客户说"不对，而且我们要在上面写字"→ IFP（LCD 子类型），不是普通 LCD。"""
         proposal = _vision_proposal("LED")
         decision = _route("no, we also need to write on it", current=proposal)
@@ -157,7 +160,7 @@ class TestConfirmAdoptAndDeny:
         assert decision.display_type == "LCD"
         assert decision.subtype == "IFP"
 
-    def test_confirmed_type_is_never_asked_again(self):
+        # ── test_confirmed_type_is_never_asked_again ──
         """确认过的类型不再重新判断、也不再问一遍（防重复提问）。"""
         confirmed = _route("I want LED.")
         later = _route("it is for a meeting room, indoor", current=confirmed)
@@ -166,7 +169,7 @@ class TestConfirmAdoptAndDeny:
         assert later.status == "CONFIRMED"
         assert later.ask_customer is False
 
-    def test_customer_can_change_a_confirmed_type_without_magic_words(self):
+        # ── test_customer_can_change_a_confirmed_type_without_magic_words ──
         """③ 客户明确改口（"不对，我们要 LCD"）→ 按客户说的切，不该要求他说 actually。"""
         confirmed = _route("I want LED.")
         switched = _route("no, we need an LCD video wall", current=confirmed)
@@ -175,7 +178,7 @@ class TestConfirmAdoptAndDeny:
         assert switched.status == "CONFIRMED"
         assert switched.locked is True
 
-    def test_merely_mentioning_the_other_type_does_not_switch(self):
+        # ── test_merely_mentioning_the_other_type_does_not_switch ──
         """只是**提到**另一种类型（问句）→ 不能自己改类型（锁定仍然有效）。"""
         confirmed = _route("I want LED.")
         kept = _route("does it also come as an LCD?", current=confirmed)

@@ -33,7 +33,10 @@ CHURCH_SLOTS = {
 
 class TestProfileSlotMap:
 
-    def test_all_answer_slots_are_visible(self):
+    def test_all_answer_slots_are_visible_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_all_answer_slots_are_visible ──
         profile = RequirementProfile.from_slots(CHURCH_SLOTS, explicit_keys=set(CHURCH_SLOTS))
         slots = profile_slot_map(profile)
         assert slots["price_preference"] == "quality"
@@ -44,19 +47,22 @@ class TestProfileSlotMap:
         assert slots["size"], "尺寸（宽/高）也要映射进 scoreboard"
         assert slots["pixel_pitch"] if "pixel_pitch" in slots else True
 
-    def test_empty_and_meta_fields_are_skipped(self):
+        # ── test_empty_and_meta_fields_are_skipped ──
         slots = profile_slot_map(RequirementProfile.from_slots({}, explicit_keys=set()))
         for name in ("sources", "conflicts", "conflict_slots", "ask_counts", "field_decisions"):
             assert name not in slots, name
         assert all(value not in (None, "", [], {}) for value in slots.values())
 
-    def test_none_profile_is_safe(self):
+        # ── test_none_profile_is_safe ──
         assert profile_slot_map(None) == {}
 
 
 class TestOrchestratorOnlyDelegates:
 
-    def test_mapping_table_lives_in_dialogue_layer(self):
+    def test_mapping_table_lives_in_dialogue_layer_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_mapping_table_lives_in_dialogue_layer ──
         source = io.open(
             os.path.join(project_root, "src", "orchestrator.py"), encoding="utf-8"
         ).read()
@@ -66,7 +72,7 @@ class TestOrchestratorOnlyDelegates:
         assert "from .dialogue import" in source
         assert "FIELD_TO_SLOT" not in source
 
-    def test_every_mapped_field_is_a_real_profile_field(self):
+        # ── test_every_mapped_field_is_a_real_profile_field ──
         profile = RequirementProfile.from_slots(CHURCH_SLOTS, explicit_keys=set(CHURCH_SLOTS))
         dumped = set(profile.model_dump().keys())
         for field in FIELD_TO_SLOT:

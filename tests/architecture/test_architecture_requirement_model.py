@@ -42,11 +42,14 @@ def _scan_src(pattern: str):
 
 class TestSingleRequirementModel:
 
-    def test_requirement_profile_is_defined_in_exactly_one_place(self):
+    def test_requirement_profile_is_defined_in_exactly_one_place_merged(self):
+        """合并自 6 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_requirement_profile_is_defined_in_exactly_one_place ──
         defining = _scan_src(r"^class RequirementProfile\b")
         assert defining == ["src/models/requirement.py"], defining
 
-    def test_requirement_producers_return_the_single_model(self):
+        # ── test_requirement_producers_return_the_single_model ──
         """生产者（抽取器 / 查询理解 / 图片并入）都必须落到 RequirementProfile。"""
         for rel in (
             "src/core/requirement_extractor.py",
@@ -58,7 +61,7 @@ class TestSingleRequirementModel:
             assert "models.requirement import" in _read(rel), rel
             assert "RequirementProfile" in _read(rel), rel
 
-    def test_decision_path_only_consumes_the_single_model(self):
+        # ── test_decision_path_only_consumes_the_single_model ──
         """Gate / 推荐 / 校验 / 会话切换都只认 RequirementProfile。"""
         for rel in (
             "src/rag/recommendation_engine.py",
@@ -79,7 +82,7 @@ class TestSingleRequirementModel:
         assert "models.requirement import" in gate
         assert "RequirementBook" not in gate and "requirement_book" not in gate
 
-    def test_requirement_book_is_a_registry_not_a_second_model(self):
+        # ── test_requirement_book_is_a_registry_not_a_second_model ──
         """需求簿只登记"哪个品类有一条需求"，不参与需求判定。"""
         book_module = _read("src/dialogue/turn_understanding.py")
         # 登记簿的数据只有：产品域 + 状态 + 槽位快照
@@ -91,7 +94,7 @@ class TestSingleRequirementModel:
                  if not p.endswith("turn_understanding.py")]
         assert users == ["src/agents/sales/nodes/classify.py", "src/memory/store.py"], users
 
-    def test_legacy_projection_is_read_only(self):
+        # ── test_legacy_projection_is_read_only ──
         """legacy 投影（profile → 旧 dict）不得反向改动 RequirementProfile。"""
         from src.models.legacy_adapter import profile_to_legacy, profile_to_solution_requirement
         from src.models.requirement import RequirementProfile
@@ -109,7 +112,7 @@ class TestSingleRequirementModel:
         assert isinstance(solution_legacy, dict)
         assert profile.model_dump() == before, "投影不能改原档案"
 
-    def test_session_persists_the_profile_in_one_json_form(self):
+        # ── test_session_persists_the_profile_in_one_json_form ──
         """会话里的档案只有一份：dict 形态持久化，可无损还原成 RequirementProfile。"""
         from src.memory.store import memory
         from src.models.requirement import RequirementProfile

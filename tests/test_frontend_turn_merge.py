@@ -43,33 +43,36 @@ def _html() -> str:
 
 class TestFrontendMessageAggregation:
 
-    def test_follow_up_is_not_held_until_the_previous_reply(self):
+    def test_follow_up_is_not_held_until_the_previous_reply_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_follow_up_is_not_held_until_the_previous_reply ──
         js = _js()
         assert "setTimeout(() => this.flushTurn(), 800)" not in js, (
             "客户补发的消息不能等上一轮回复完再发 —— 必须立刻发出去，"
             "由后端并入正在生成的那一轮（否则客户会收到两条回复）"
         )
 
-    def test_debounce_still_batches_quick_messages(self):
+        # ── test_debounce_still_batches_quick_messages ──
         """同一个 turn 的静默聚合仍然保留（600ms 静默 / 1800ms 上限）。"""
         js = _js()
         assert "turnDebounceMs" in js
         assert "scheduleTurnFlush" in js
         assert "messages: parts.map" in js, "一次请求要带上这一轮的多条消息"
 
-    def test_tracks_inflight_requests_so_typing_indicator_is_correct(self):
+        # ── test_tracks_inflight_requests_so_typing_indicator_is_correct ──
         js = _js()
         assert "inflightCount" in js, "可能同时有两条请求在飞"
         assert "if (!this.inflightCount) this.hideTyping()" in js
         # 打字指示器只能有一个（两条请求在飞时不能叠两个）
         assert "if (document.getElementById('typing-indicator')) return;" in js
 
-    def test_merged_response_still_never_renders_a_second_bubble(self):
+        # ── test_merged_response_still_never_renders_a_second_bubble ──
         """被并入的那一条响应带 duplicate=true → 前端不再渲染第二个气泡。"""
         js = _js()
         assert "data.duplicate" in js
         assert "if (!data.response_count)" in js
 
-    def test_cache_buster_bumped_for_the_changed_js(self):
+        # ── test_cache_buster_bumped_for_the_changed_js ──
         html = _html()
         assert "app.js?v=4" in html, "改了 app.js 要升版本号，否则浏览器用旧 JS"

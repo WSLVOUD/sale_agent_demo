@@ -39,7 +39,10 @@ def _lcd_state(subtype: str = "", pending_question: str = "", pending_slot: str 
 
 class TestLcdEntry:
 
-    def test_lcd_confirmed_turn_is_a_natural_ack_not_an_led_question(self):
+    def test_lcd_confirmed_turn_is_a_natural_ack_not_an_led_question_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_lcd_confirmed_turn_is_a_natural_ack_not_an_led_question ──
         """LED 的需求问题（室内外 / 点间距…）不能顺延到 LCD 上。"""
         from src.agents.sales.nodes.script_generator import script_generator
 
@@ -57,7 +60,7 @@ class TestLcdEntry:
         assert out.get("lcd_entry", {}).get("status") == "REQUIREMENT_CHAIN_PENDING"
         assert not out.get("should_generate_solution"), "LCD 需求链留白，本轮不该推产品"
 
-    def test_lcd_entry_keeps_the_ifp_subtype(self):
+        # ── test_lcd_entry_keeps_the_ifp_subtype ──
         """§十四：IFP 是 LCD 的子类型 —— 入口要按 IFP 称呼，但仍走 LCD_ENTRY。"""
         from src.agents.sales.nodes.script_generator import script_generator
 
@@ -68,7 +71,7 @@ class TestLcdEntry:
         assert out.get("lcd_entry", {}).get("subtype") == "IFP"
         assert out.get("lcd_entry", {}).get("product_domain") == "LCD"
 
-    def test_lcd_policy_now_delegates_to_the_single_decision_entry(self):
+        # ── test_lcd_policy_now_delegates_to_the_single_decision_entry ──
         """计划《LCD_IFP_需求链路工程化整改计划》Phase 5：需求链已实现。
 
         入口层（LCDPolicy）只做委托 —— 决策只有一处实现：lcd_decision。
@@ -92,7 +95,7 @@ class TestLcdEntry:
         assert policy.can_recommend(None) is False
         assert policy.recommend(None) == []
 
-    def test_led_entry_is_not_affected_by_the_lcd_branch(self):
+        # ── test_led_entry_is_not_affected_by_the_lcd_branch ──
         """LED 链路保持不动（计划 §十四）：LED 已确认时不该出现 LCD 入口留痕。"""
         from src.agents.sales.nodes.script_generator import script_generator
 

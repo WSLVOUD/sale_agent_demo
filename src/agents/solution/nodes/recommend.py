@@ -6,7 +6,7 @@ import re
 from ..state import SolutionState
 from ....core.llm import get_llm
 from ....rag.rerank import is_display_candidate, get_product_category, has_environment_conflict, is_ifp_product
-from ....utils.ifp_intent import has_ifp_intent, user_messages_text
+from ....utils.ifp_intent import user_messages_text
 
 logger = logging.getLogger(__name__)
 

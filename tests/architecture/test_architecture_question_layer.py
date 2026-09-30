@@ -64,26 +64,29 @@ class TestSlotUniverseIsSingleSourced:
 
 class TestQuestionLayerBoundaries:
 
-    def test_question_layer_never_writes_the_response(self):
+    def test_question_layer_never_writes_the_response_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_question_layer_never_writes_the_response ──
         for rel in QUESTION_LAYER_MODULES:
             code = _code_only(_read(rel))
             assert 'state["response"]' not in code, f"{rel} 不许生成客户可见回复"
 
-    def test_question_layer_never_decides_recommendation(self):
+        # ── test_question_layer_never_decides_recommendation ──
         forbidden = ("recommendation_engine", "recommendation_coordinator", "RecommendationService")
         for rel in QUESTION_LAYER_MODULES:
             code = _code_only(_read(rel))
             for token in forbidden:
                 assert token not in code, f"{rel} 不许自己决定推荐（{token}）"
 
-    def test_question_layer_does_not_mutate_the_profile(self):
+        # ── test_question_layer_does_not_mutate_the_profile ──
         """判断"该不该问"必须只读档案，不允许回头改需求。"""
         for rel in QUESTION_LAYER_MODULES:
             code = _code_only(_read(rel))
             writes = re.findall(r"profile\.\w+\s*=[^=]", code)
             assert writes == [], f"{rel} 修改了 RequirementProfile：{writes}"
 
-    def test_response_generator_does_not_pick_the_slot(self):
+        # ── test_response_generator_does_not_pick_the_slot ──
         """ResponseGenerator 只表达，不再重选 slot。"""
         code = _code_only(_read("src/dialogue/response_generator.py"))
         for token in ("pass1_pending", "shuffled_slots", "field_action"):

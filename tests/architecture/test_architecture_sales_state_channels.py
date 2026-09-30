@@ -64,7 +64,10 @@ def _state_keys_used(package_dir: str) -> set:
 
 
 class TestSalesStateDeclaresEveryUsedKey:
-    def test_sales_nodes_only_use_declared_state_keys(self):
+    def test_sales_nodes_only_use_declared_state_keys_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_sales_nodes_only_use_declared_state_keys ──
         from src.agents.sales.state import SalesState
 
         declared = set(SalesState.__annotations__.keys())
@@ -77,7 +80,7 @@ class TestSalesStateDeclaresEveryUsedKey:
             f"（放进 src/agents/sales/state.py 的 schema 里）：{missing}"
         )
 
-    def test_solution_state_declares_every_used_key(self):
+        # ── test_solution_state_declares_every_used_key ──
         from src.agents.solution.state import SolutionState
 
         declared = set(SolutionState.__annotations__.keys())
@@ -90,7 +93,7 @@ class TestSalesStateDeclaresEveryUsedKey:
             f"{missing}"
         )
 
-    def test_lcd_action_is_a_first_class_channel(self):
+        # ── test_lcd_action_is_a_first_class_channel ──
         """LCD 决策结果必须是图上的正式通道（否则逐轮问句会再次被丢掉）。"""
         from src.agents.sales.state import SalesState
 

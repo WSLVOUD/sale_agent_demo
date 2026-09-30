@@ -43,7 +43,10 @@ CUSTOMER_TEXT = (
 
 
 class TestFactFreeCommentaryIsDropped:
-    def test_closing_layout_commentary_is_removed(self):
+    def test_closing_layout_commentary_is_removed_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_closing_layout_commentary_is_removed ──
         from src.utils.text import strip_fact_free_commentary
 
         cleaned = strip_fact_free_commentary(CUSTOMER_TEXT)
@@ -51,7 +54,7 @@ class TestFactFreeCommentaryIsDropped:
         assert "the choice mainly comes down to" not in cleaned, cleaned
         assert "Both options use the same" not in cleaned, cleaned
 
-    def test_layout_figures_are_kept(self):
+        # ── test_layout_figures_are_kept ──
         from src.utils.text import strip_fact_free_commentary
 
         cleaned = strip_fact_free_commentary(CUSTOMER_TEXT)
@@ -61,7 +64,7 @@ class TestFactFreeCommentaryIsDropped:
         assert "TW11-3216-P3.0" in cleaned, cleaned
         assert cleaned.rstrip().endswith("?"), cleaned[-80:]
 
-    def test_question_and_request_sentences_are_never_dropped(self):
+        # ── test_question_and_request_sentences_are_never_dropped ──
         from src.utils.text import strip_fact_free_commentary
 
         ask = "Both options work well — shall I prepare the quotation?"
@@ -69,7 +72,7 @@ class TestFactFreeCommentaryIsDropped:
         assert "shall I prepare the quotation" in strip_fact_free_commentary(ask)
         assert "Please share the exact dimensions" in strip_fact_free_commentary(request)
 
-    def test_sentence_with_layout_numbers_is_not_treated_as_commentary(self):
+        # ── test_sentence_with_layout_numbers_is_not_treated_as_commentary ──
         from src.utils.text import is_fact_free_commentary
 
         assert is_fact_free_commentary("Both options fit the wall, so you can choose either.") is True
@@ -77,7 +80,7 @@ class TestFactFreeCommentaryIsDropped:
             "Both options use the same cabinet count: 6 x 10 = 60 cabinets."
         ) is False
 
-    def test_all_commentary_input_keeps_the_original(self):
+        # ── test_all_commentary_input_keeps_the_original ──
         from src.utils.text import strip_fact_free_commentary
 
         only = "Both options work for this wall, so you can choose whichever you prefer."
@@ -85,7 +88,10 @@ class TestFactFreeCommentaryIsDropped:
 
 
 class TestOrchestratorAppliesTheTrimOnDelivery:
-    def test_postprocess_final_drops_commentary_when_delivering(self):
+    def test_postprocess_final_drops_commentary_when_delivering_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_postprocess_final_drops_commentary_when_delivering ──
         from src.dialogue.response_coordinator import ResponseCoordinator
 
         result = {"products": [{"model": "TW11-3216-P3.0"}]}
@@ -96,7 +102,7 @@ class TestOrchestratorAppliesTheTrimOnDelivery:
         assert "the choice mainly comes down to" not in out, out
         assert "5 columns x 11 rows = 55 cabinets" in out, out
 
-    def test_postprocess_final_drops_the_requirement_echo_prefix(self):
+        # ── test_postprocess_final_drops_the_requirement_echo_prefix ──
         from src.dialogue.response_coordinator import ResponseCoordinator
 
         result = {"products": [{"model": "TW11-3216-P3.0"}]}
@@ -113,7 +119,10 @@ class TestOrchestratorAppliesTheTrimOnDelivery:
 
 
 class TestRequirementEchoPrefix:
-    def test_prefix_is_dropped_when_the_model_follows(self):
+    def test_prefix_is_dropped_when_the_model_follows_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_prefix_is_dropped_when_the_model_follows ──
         from src.utils.text import strip_requirement_echo_prefix
 
         text = "For your 3m x 5m indoor church screen, the TW11-3216-P3.0 is the best fit."
@@ -121,19 +130,19 @@ class TestRequirementEchoPrefix:
 
         assert out == "The TW11-3216-P3.0 is the best fit.", out
 
-    def test_prefix_is_kept_when_the_rest_has_no_model(self):
+        # ── test_prefix_is_kept_when_the_rest_has_no_model ──
         from src.utils.text import strip_requirement_echo_prefix
 
         text = "Since your wall is 3m x 5m, we can lay it out two ways."
         assert strip_requirement_echo_prefix(text) == text
 
-    def test_sentence_without_prefix_is_untouched(self):
+        # ── test_sentence_without_prefix_is_untouched ──
         from src.utils.text import strip_requirement_echo_prefix
 
         text = "TW11-3216-P3.0 is the closest fit for your wall."
         assert strip_requirement_echo_prefix(text) == text
 
-    def test_clause_holding_the_model_is_never_cut(self):
+        # ── test_clause_holding_the_model_is_never_cut ──
         from src.utils.text import strip_requirement_echo_prefix
 
         text = "For the TW11-3216 series, we can also quote the TW21-3216-P2.5."

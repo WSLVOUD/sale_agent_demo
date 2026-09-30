@@ -24,17 +24,20 @@ def _profile(**slots) -> RequirementProfile:
 
 class TestEnvironmentAnswerSticks:
 
-    def test_keyword_answer_is_confirmed(self):
+    def test_keyword_answer_is_confirmed_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_keyword_answer_is_confirmed ──
         profile = RequirementExtractor().extract("indoor", use_llm=False)
         assert profile.environment == "indoor"
         assert profile.sources.get("environment") == "explicit"
 
-    def test_chinese_answer_is_confirmed(self):
+        # ── test_chinese_answer_is_confirmed ──
         profile = RequirementExtractor().extract("室内", use_llm=False)
         assert profile.environment == "indoor"
         assert profile.sources.get("environment") == "explicit"
 
-    def test_semantic_answer_with_evidence_is_confirmed(self):
+        # ── test_semantic_answer_with_evidence_is_confirmed ──
         """规则没命中关键词、但语义模型读出环境且带客户原话证据 → 也算客户明说。"""
         profile = RequirementExtractor().extract(
             "we will put it up in our sanctuary",
@@ -47,7 +50,7 @@ class TestEnvironmentAnswerSticks:
         assert profile.environment == "indoor"
         assert profile.sources.get("environment") == "explicit"
 
-    def test_short_answer_to_the_question_is_accepted_without_evidence(self):
+        # ── test_short_answer_to_the_question_is_accepted_without_evidence ──
         """客户就是在回答"室内还是室外"这一问 → 短回答没有证据片段也采信。"""
         previous = RequirementProfile()
         previous.last_asked_slot = "environment"
@@ -60,7 +63,7 @@ class TestEnvironmentAnswerSticks:
         assert profile.environment == "indoor"
         assert profile.sources.get("environment") == "explicit"
 
-    def test_unrelated_answer_is_still_dropped(self):
+        # ── test_unrelated_answer_is_still_dropped ──
         """不是回答这一项、又没有证据 → 仍然要丢掉（防幻觉不能被放开）。"""
         profile = RequirementExtractor().extract(
             "we will put it up in our sanctuary",
@@ -72,13 +75,16 @@ class TestEnvironmentAnswerSticks:
 
 class TestGateDoesNotAskAgain:
 
-    def test_confirmed_environment_is_never_asked_again(self):
+    def test_confirmed_environment_is_never_asked_again_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_confirmed_environment_is_never_asked_again ──
         profile = _profile(environment="indoor", installation="fixed", purpose="stage")
         decision = check_recommendation_ready(profile)
         assert decision.next_slot != "environment"
         assert "environment" not in decision.missing
 
-    def test_answered_environment_is_not_asked_again_even_if_source_is_weak(self):
+        # ── test_answered_environment_is_not_asked_again_even_if_source_is_weak ──
         """历史档案来源不够硬（inferred），但客户已经答过这一项 → 不再问。"""
         profile = _profile(environment="indoor", installation="fixed", purpose="stage")
         profile.sources["environment"] = "inferred"
@@ -87,14 +93,14 @@ class TestGateDoesNotAskAgain:
         assert decision.next_slot != "environment"
         assert "environment" not in decision.missing
 
-    def test_never_asked_inferred_environment_is_confirmed_once(self):
+        # ── test_never_asked_inferred_environment_is_confirmed_once ──
         """客户从没说过、系统只是猜的 → 还是要跟客户确认一次（这条口径不变）。"""
         profile = _profile(environment="indoor", installation="fixed", purpose="stage")
         profile.sources["environment"] = "inferred"
         decision = check_recommendation_ready(profile)
         assert decision.next_slot == "environment" or "environment" in decision.missing
 
-    def test_explicit_answer_then_gate_does_not_ask(self):
+        # ── test_explicit_answer_then_gate_does_not_ask ──
         """整条链：客户用"室内"回答 → 档案是客户确认 → Gate 不再问室内外。"""
         profile = RequirementExtractor().extract("室内", use_llm=False)
         profile = profile.merge(_profile(

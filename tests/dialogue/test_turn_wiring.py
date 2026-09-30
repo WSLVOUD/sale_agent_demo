@@ -69,7 +69,10 @@ class TestTurnWiring:
         finally:
             memory.clear(session_id)
 
-    def test_pending_question_reaches_final_response(self):
+    def test_pending_question_reaches_final_response_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_pending_question_reaches_final_response ──
         result = self._run(
             "wire-1",
             _StubSales(
@@ -81,7 +84,7 @@ class TestTurnWiring:
         assert result["question_count"] == 1
         assert result["final_response"]["question_slot"] == "environment"
 
-    def test_policy_action_is_reported_not_the_route_name(self):
+        # ── test_policy_action_is_reported_not_the_route_name ──
         result = self._run(
             "wire-2",
             _StubSales(
@@ -93,7 +96,7 @@ class TestTurnWiring:
         assert result["action"] == "ask_only", "应报 Dialogue Policy 的动作，而不是 next_action=ask"
         assert result["_turn"]["action"] == "ask_only"
 
-    def test_speech_act_is_recorded(self):
+        # ── test_speech_act_is_recorded ──
         result = self._run(
             "wire-3",
             _StubSales(response="Sure.", pending_question="Q?", pending_slot="size"),
@@ -101,7 +104,7 @@ class TestTurnWiring:
         assert result["_turn"]["speech_act"] == "NEW_REQUIREMENT"
         assert result["conversation_state"]["current_speech_act"] == "NEW_REQUIREMENT"
 
-    def test_decision_audit_has_before_and_after(self):
+        # ── test_decision_audit_has_before_and_after ──
         result = self._run(
             "wire-4",
             _StubSales(
@@ -118,7 +121,7 @@ class TestTurnWiring:
         assert audit["conversation_state_before"]["last_question_slot"] in ("", "environment")
         assert audit["conversation_state_after"]["last_question_slot"] == "environment"
 
-    def test_live_llm_calls_helper_exists(self):
+        # ── test_live_llm_calls_helper_exists ──
         """§27：PERF 那行在 end_turn 之前打，不能永远显示 llm_calls=0。"""
         from src.observability.perf import PerfTracker
 

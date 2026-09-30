@@ -196,7 +196,10 @@ class TestLcdFactsMerge:
             )
         return VisionRequirement(**payload)
 
-    def test_lcd_facts_land_in_the_profile_and_are_queued_for_confirmation(self):
+    def test_lcd_facts_land_in_the_profile_and_are_queued_for_confirmation_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_lcd_facts_land_in_the_profile_and_are_queued_for_confirmation ──
         profile = RequirementProfile()
         profile, stats = apply_vision_to_profile(profile, self._lcd_vision(splicing=True))
 
@@ -205,7 +208,7 @@ class TestLcdFactsMerge:
         assert profile.vision_assertions.get("lcd_is_splicing") is True
         assert "lcd_is_splicing" in stats.get("lcd_fields", [])
 
-    def test_splicing_and_camera_conflict_keeps_only_splicing(self):
+        # ── test_splicing_and_camera_conflict_keeps_only_splicing ──
         """客户口径：拼接和摄像头不会同时成立 → 只问"是否拼接"。"""
         profile = RequirementProfile()
         profile, _stats = apply_vision_to_profile(
@@ -216,7 +219,7 @@ class TestLcdFactsMerge:
         assert profile.lcd_camera_observed is None, "冲突时丢掉摄像头"
         assert "lcd_camera_observed" not in profile.vision_confirmation_pending
 
-    def test_camera_is_kept_when_it_is_not_a_spliced_wall(self):
+        # ── test_camera_is_kept_when_it_is_not_a_spliced_wall ──
         profile = RequirementProfile()
         profile, _stats = apply_vision_to_profile(
             profile, self._lcd_vision(splicing=False, camera=True)
@@ -225,7 +228,7 @@ class TestLcdFactsMerge:
         assert profile.lcd_camera_observed is True
         assert "lcd_camera_observed" in profile.vision_confirmation_pending
 
-    def test_customer_text_beats_the_image(self):
+        # ── test_customer_text_beats_the_image ──
         """图文同时来 → 以客户文字为准（客户说单体屏，图片看成拼接 → 留客户的）。"""
         profile = RequirementProfile(
             display_type="LCD", lcd_is_splicing=False, sources={"lcd_is_splicing": "explicit"}
@@ -235,7 +238,7 @@ class TestLcdFactsMerge:
         assert profile.lcd_is_splicing is False, "客户明说的值不能被图片改掉"
         assert stats["conflict_count"] >= 1
 
-    def test_led_vision_result_does_not_touch_lcd_fields(self):
+        # ── test_led_vision_result_does_not_touch_lcd_fields ──
         """LED 那一路的结果里没有这两个字段 → LCD 字段保持为空（行为不变）。"""
         led = VisionRequirement(
             display_type=VisionField(value="LED", confidence=0.9, source=VISION_EXPLICIT),
@@ -260,12 +263,15 @@ class TestCustomerConfirmation:
         )
         return profile
 
-    def test_confirmation_asks_about_what_was_recognised(self):
+    def test_confirmation_asks_about_what_was_recognised_merged(self):
+        """合并自 7 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_confirmation_asks_about_what_was_recognised ──
         prompt = prompt_from_profile(self._merged(), language="en")
 
         assert "spliced" in prompt.lower() or "video wall" in prompt.lower(), prompt
 
-    def test_customer_confirms(self):
+        # ── test_customer_confirms ──
         profile = self._merged()
 
         stats = vi.resolve_vision_confirmation(profile, "yes, that's right")
@@ -274,7 +280,7 @@ class TestCustomerConfirmation:
         assert profile.vision_confirmation_pending == []
         assert (profile.sources or {}).get("lcd_is_splicing") == "confirmed"
 
-    def test_customer_delegates_to_the_ai(self):
+        # ── test_customer_delegates_to_the_ai ──
         """客户说"你定" → 按识别结果走。"""
         profile = self._merged()
 
@@ -284,7 +290,7 @@ class TestCustomerConfirmation:
         assert profile.vision_confirmation_pending == []
         assert (profile.sources or {}).get("lcd_is_splicing") == "vision_accepted"
 
-    def test_customer_silent_also_adopts_the_recognition(self):
+        # ── test_customer_silent_also_adopts_the_recognition ──
         """客户没正面回答 → 也按识别结果走。"""
         profile = self._merged()
 
@@ -293,7 +299,7 @@ class TestCustomerConfirmation:
         assert stats["accepted"], stats
         assert profile.vision_confirmation_pending == []
 
-    def test_customer_says_no_without_detail_asks_what_is_wrong(self):
+        # ── test_customer_says_no_without_detail_asks_what_is_wrong ──
         """客户说"不对"但没说哪里不对 → 不能当成没反对，要问他哪里不对。"""
         profile = self._merged()
 
@@ -307,7 +313,7 @@ class TestCustomerConfirmation:
         assert "which part" in prompt.lower(), prompt
         assert "spliced" in prompt.lower() or "video wall" in prompt.lower(), prompt
 
-    def test_correction_is_recorded_and_wins(self):
+        # ── test_correction_is_recorded_and_wins ──
         """客户给出正确的值 → 记一条纠正，客户值优先。"""
         profile = self._merged()
         profile.lcd_is_splicing = False
@@ -318,7 +324,7 @@ class TestCustomerConfirmation:
         assert stats["corrected"] == ["lcd_is_splicing"], stats
         assert any("image said True" in note for note in profile.vision_corrections)
 
-    def test_no_with_a_specific_correction_does_not_hold_up_the_other_fields(self):
+        # ── test_no_with_a_specific_correction_does_not_hold_up_the_other_fields ──
         """客户一边说 no 一边指出了哪里不对 → 只有没被反对的那项算"已核对过"。
 
         回归用例：不能因为句子里有 "no" 就把**所有**图片字段都挂起来反复问 ——

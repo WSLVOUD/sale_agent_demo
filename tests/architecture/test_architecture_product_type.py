@@ -42,13 +42,16 @@ def _scan_src(pattern: str):
 
 class TestSingleProductTypeSource:
 
-    def test_vocabulary_is_defined_in_one_place_only(self):
+    def test_vocabulary_is_defined_in_one_place_only_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_vocabulary_is_defined_in_one_place_only ──
         defining = _scan_src(r"^LED = \"LED\"")
         assert defining == ["src/dialogue/turn_kind.py"], (
             f"产品类型词汇只能有一处定义，实际：{defining}"
         )
 
-    def test_router_reuses_the_shared_vocabulary(self):
+        # ── test_router_reuses_the_shared_vocabulary ──
         from src.dialogue import product_type_router as router
         from src.dialogue import turn_kind
 
@@ -58,14 +61,17 @@ class TestSingleProductTypeSource:
         assert router.SUBTYPE_IFP == turn_kind.IFP
         assert router.SUBTYPE_PLAIN_LCD == turn_kind.LCD
 
-    def test_only_one_decision_entry(self):
+        # ── test_only_one_decision_entry ──
         entries = _scan_src(r"^def route_display_type\b")
         assert entries == ["src/dialogue/product_type_router.py"], entries
 
 
 class TestEntryNameMappingIsNotASecondDecisionSource:
 
-    def test_route_product_domain_returns_entry_names_only(self):
+    def test_route_product_domain_returns_entry_names_only_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_route_product_domain_returns_entry_names_only ──
         from src.dialogue.product_router import ALL_ENTRIES, route_product_domain
 
         for domain in ("LED", "LCD", "IFP", "MULTI", "UNKNOWN", "", None, "led"):
@@ -73,7 +79,7 @@ class TestEntryNameMappingIsNotASecondDecisionSource:
             assert entry in ALL_ENTRIES, (domain, entry)
         assert route_product_domain("LCD", comparison=True) in ALL_ENTRIES
 
-    def test_compatibility_facade_keeps_its_public_surface(self):
+        # ── test_compatibility_facade_keeps_its_public_surface ──
         """兼容门面对外符号不变（有调用方依赖，Phase 2 不动它）。"""
         from src.dialogue import product_router
 

@@ -28,25 +28,28 @@ from src.orchestrator import DualAgentOrchestrator  # noqa: E402
 class TestContinuationBudget:
     """纯函数：这一轮"只承接"还是"可以问需求"。"""
 
-    def test_requirement_related_turn_asks_next_question(self):
+    def test_requirement_related_turn_asks_next_question_merged(self):
+        """合并自 6 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_requirement_related_turn_asks_next_question ──
         """与需求有关 → 接住 + 追问，不是"只承接"（哪怕没回答上一问）。"""
         decision = decide_continuation(has_question=True, off_topic=False, ack_streak=0)
         assert decision.suppress_question is False
         assert decision.reason == "requirement_related"
         assert decision.next_streak == 0
 
-    def test_requirement_related_turn_resets_the_counter(self):
+        # ── test_requirement_related_turn_resets_the_counter ──
         decision = decide_continuation(has_question=True, off_topic=False, ack_streak=3)
         assert decision.suppress_question is False
         assert decision.next_streak == 0
 
-    def test_first_off_topic_turn_only_acks(self):
+        # ── test_first_off_topic_turn_only_acks ──
         decision = decide_continuation(has_question=True, off_topic=True, ack_streak=0)
         assert decision.suppress_question is True
         assert decision.reason == "customer_off_topic_chat_first"
         assert decision.next_streak == 1
 
-    def test_second_off_topic_turn_acks_and_asks(self):
+        # ── test_second_off_topic_turn_acks_and_asks ──
         """第二条闲聊 → 承接额度用完 → 接住 + 提问（同一条消息）。"""
         decision = decide_continuation(
             has_question=True, off_topic=True, ack_streak=MAX_ACK_STREAK
@@ -55,7 +58,7 @@ class TestContinuationBudget:
         assert decision.reason == "ack_budget_exhausted"
         assert decision.next_streak == 0
 
-    def test_budget_is_one_chat_then_the_question(self):
+        # ── test_budget_is_one_chat_then_the_question ──
         assert MAX_ACK_STREAK == 1
         first = decide_continuation(has_question=True, off_topic=True, ack_streak=0)
         second = decide_continuation(
@@ -64,7 +67,7 @@ class TestContinuationBudget:
         assert first.suppress_question is True, "第一条闲聊：只承接"
         assert second.suppress_question is False, "第二条闲聊：接住 + 提问"
 
-    def test_off_topic_without_question_still_counts(self):
+        # ── test_off_topic_without_question_still_counts ──
         decision = decide_continuation(has_question=False, off_topic=True, ack_streak=0)
         assert decision.suppress_question is False
         assert decision.reason == "no_question_this_turn"
@@ -127,7 +130,10 @@ class TestNoConsecutiveQuestions:
         finally:
             memory.clear(session_id)
 
-    def test_requirement_messages_always_get_a_question(self):
+    def test_requirement_messages_always_get_a_question_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_requirement_messages_always_get_a_question ──
         """客户说的都是需求相关的话 → 每轮"接住 + 追问"，绝不只寒暄。"""
         results = self._run(
             "ack-req",
@@ -141,7 +147,7 @@ class TestNoConsecutiveQuestions:
             assert "suppressed_question" not in result
             assert result["ack_streak"] == 0
 
-    def test_second_off_topic_turn_acks_and_asks_in_one_message(self):
+        # ── test_second_off_topic_turn_acks_and_asks_in_one_message ──
         results = self._run(
             "ack-offtopic",
             ["i need a led display", "haha i am in nairobi", "nice weather today"],
@@ -161,7 +167,7 @@ class TestNoConsecutiveQuestions:
         assert results[2]["continuation"]["reason"] == "ack_budget_exhausted"
         assert results[2]["ack_streak"] == 0
 
-    def test_customer_returning_to_requirements_resets_the_counter(self):
+        # ── test_customer_returning_to_requirements_resets_the_counter ──
         """闲聊一句之后客户又聊需求 → 立刻恢复正常节奏，计数清零。"""
         memory.clear("ack-mixed")
         memory.mark_first_contact_done("ack-mixed")

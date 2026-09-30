@@ -90,7 +90,10 @@ class TestFollowUpStateRestore:
         global STATE
         STATE = _FakeSessionState()
 
-    def test_superseded_run_does_not_pollute_the_question_state(self):
+    def test_superseded_run_does_not_pollute_the_question_state_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_superseded_run_does_not_pollute_the_question_state ──
         runner = _PlanningRunner()
         executor = _executor(runner)
         results = {}
@@ -119,7 +122,7 @@ class TestFollowUpStateRestore:
         # 两条消息都进了这一轮的输入
         assert "3 * 5" in runner.calls[-1] and "i need a display" in runner.calls[-1]
 
-    def test_two_separate_turns_can_move_on(self):
+        # ── test_two_separate_turns_can_move_on ──
         """客户没答出来 → 问题可以跳转（硬性条件也一样）。
 
         "不连续提问"由 continuation_budget 控制：客户没答时先承接（最多 1 条），
@@ -160,7 +163,7 @@ class TestFollowUpStateRestore:
         )
         assert getattr(second, "slot", "") != "environment", "允许跳转，不重复问"
 
-    def test_soft_question_still_steps_aside(self):
+        # ── test_soft_question_still_steps_aside ──
         """软问题（使用场景 / 价位取向）不追问，避免问卷感。"""
         from src.dialogue import (
             get_conversation_state,

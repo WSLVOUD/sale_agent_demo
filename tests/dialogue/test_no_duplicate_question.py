@@ -20,7 +20,10 @@ from src.models.requirement import RequirementProfile  # noqa: E402
 
 class TestQuestionRegistryStateMachine:
 
-    def test_state_machine_unknown_asked_answered(self):
+    def test_state_machine_unknown_asked_answered_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_state_machine_unknown_asked_answered ──
         registry = AskedQuestionRegistry()
         assert registry.get("pixel_pitch") is None
         registry.note_asked("pixel_pitch", turn_index=5)
@@ -33,13 +36,13 @@ class TestQuestionRegistryStateMachine:
         assert record.answer_turn == 6
         assert UNKNOWN != record.state
 
-    def test_answered_slot_is_skipped(self):
+        # ── test_answered_slot_is_skipped ──
         registry = AskedQuestionRegistry()
         registry.note_answered("environment")
         assert registry.should_skip("environment") is True
         assert registry.should_skip("pixel_pitch") is False
 
-    def test_registry_blocks_reasking_even_without_profile(self):
+        # ── test_registry_blocks_reasking_even_without_profile ──
         """§22：档案被重建也不会重复问（登记簿是第二道保险）。"""
         from src.rag.query_understanding import extract_slots
 
@@ -61,7 +64,10 @@ class TestQuestionRegistryStateMachine:
 
 class TestPitchAndDistanceAreNotReasked:
 
-    def test_case5_pitch_known_means_no_distance_question(self):
+    def test_case5_pitch_known_means_no_distance_question_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_case5_pitch_known_means_no_distance_question ──
         """§26 Case 5：客户已经给了能推导的 P 值 → 不再问观看距离。"""
         slots = {"environment": "indoor", "pixel_pitch_mm": 3.0}
         profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
@@ -72,7 +78,7 @@ class TestPitchAndDistanceAreNotReasked:
         )
         assert getattr(plan, "slot", "") != "viewing_distance"
 
-    def test_distance_known_means_no_pitch_question(self):
+        # ── test_distance_known_means_no_pitch_question ──
         slots = {"environment": "indoor", "viewing_distance_m": 5.0}
         profile = RequirementProfile.from_slots(slots, explicit_keys=set(slots))
         session_id = "no-dup-3"

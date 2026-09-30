@@ -1,18 +1,20 @@
 """
 Phase 0：需求理解与推荐基线评估。
 
-分三层评估，互不依赖，可单独运行：
+分层评估，互不依赖，可单独运行：
 
   1. slots  —— Requirement Slot Accuracy
-              用当前生产的规则提取器（ParameterInference）解析 Query，
+              用当前生产的槽位提取器（query_understanding / extract_slots）解析 Query，
               与 Golden Dataset 的 ``slots`` 逐字段比较，并给出逐槽位命中率。
 
-  2. route  —— 三层路由准确率
-              用 ``classify_complexity`` 判断 fast / normal / agent 是否与期望一致。
-
-  3. recommend —— Top-1 / Top-3 推荐准确率（可选）
+  2. recommend —— Top-1 / Top-3 推荐准确率（可选）
               需要 Phase 8 的 ``src.rag.recommendation_engine``；
               若尚未实现则标记为 skipped，不计入总分。
+
+注（整改计划 §六/§十七）：原来还有一项 ``route``——用 ``classify_complexity`` 比
+fast / normal / agent 三层路由。那套路由在生产路径上**零调用**（只被本脚本使用），
+而且里面还有第二套"关键词判 LCD / IFP"，与"IFP 判断必须统一"冲突，已随旧链一并删除。
+所以这里不再评测 route，其余（slots / 硬约束 / 字段混淆 / 产品类型 / 推荐引擎）照常评测。
 
 可选 ``--agent``：调用完整 Solution Agent（需要 LLM 网络），端到端测 Top-1/Top-3。
 
@@ -147,23 +149,9 @@ def _product_type_check(query: str, expected: Dict[str, Any]) -> Dict[str, Any]:
     return {"expected": want, "predicted": got, "correct": got == want}
 
 
-def _history_constraints(history: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """从对话历史中累积约束，用于多轮用例的路由判断。"""
-    from src.rag.parameter_inference import ParameterInference
-
-    extractor = ParameterInference()
-    merged: Dict[str, Any] = {}
-    for msg in history or []:
-        if msg.get("role") not in ("user", "human"):
-            continue
-        merged.update(extractor.extract_constraints(str(msg.get("content", ""))))
-    return merged
-
-
 def evaluate_case(case: Dict[str, Any]) -> Dict[str, Any]:
-    """评估单条用例的 slots / route。"""
+    """评估单条用例的 slots / 硬约束 / 产品类型（route 已随旧路由删除）。"""
     from src.rag.query_understanding import understand_query
-    from src.rag.router import classify_complexity
 
     query = case["query"]
     history = case.get("history") or []
@@ -174,10 +162,6 @@ def evaluate_case(case: Dict[str, Any]) -> Dict[str, Any]:
     constraints = dict(understanding.slots)
     expected = _expected_slots(case)
     slot_rate, slot_details = slot_match_rate(expected, predicted)
-
-    decision = classify_complexity(query, existing_requirements=constraints)
-    predicted_route = decision.route.value
-    route_ok = predicted_route == case.get("route")
 
     # 硬约束抓取率（计划 update_v2.9.10 第一/七阶段）：
     #   hard    = 客户**明确说的**约束 → 必须抓到
@@ -234,10 +218,6 @@ def evaluate_case(case: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "slot_match_rate": round(slot_rate, 4),
         "slot_details": slot_details,
-        "expected_route": case.get("route"),
-        "predicted_route": predicted_route,
-        "route_correct": route_ok,
-        "route_reason": decision.reason,
         "hard_checks": hard_checks,
         "hard_capture_rate": (
             round(sum(hard_checks.values()) / len(hard_checks), 4) if hard_checks else None
@@ -453,14 +433,6 @@ def summarize_slots(case_results: List[Dict[str, Any]]) -> Dict[str, Any]:
             mean([c["derived_capture_rate"] for c in case_results
                   if c.get("derived_capture_rate") is not None]), 4
         ),
-        # 旧的 fast / normal / agent 三层路由：只作历史对比字段（计划第一阶段 任务 3）
-        "legacy_route_accuracy": round(
-            mean([1.0 if c["route_correct"] else 0.0 for c in case_results]), 4
-        ),
-        "route_accuracy": round(  # 兼容旧调用方；含义同 legacy_route_accuracy
-            mean([1.0 if c["route_correct"] else 0.0 for c in case_results]), 4
-        ),
-        "route_confusion": _route_confusion(case_results),
     }
 
 
@@ -510,14 +482,6 @@ def _per_field_confusion(case_results: List[Dict[str, Any]]) -> Dict[str, Dict[s
     return result
 
 
-def _route_confusion(case_results: List[Dict[str, Any]]) -> Dict[str, int]:
-    confusion: Dict[str, int] = {}
-    for case in case_results:
-        key = f"{case['expected_route']}->{case['predicted_route']}"
-        confusion[key] = confusion.get(key, 0) + 1
-    return dict(sorted(confusion.items(), key=lambda kv: -kv[1]))
-
-
 def _product_type_accuracy(case_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """产品类型路由准确率（计划 §24 的 Product Type Accuracy）。"""
     checked = [
@@ -556,7 +520,6 @@ def main() -> int:
     for case in case_results:
         print(
             f"{case['id']} slots={case['slot_match_rate']:.2f} "
-            f"route={case['predicted_route']}({'ok' if case['route_correct'] else 'x'}) "
             f"hard_capture={case['hard_capture_rate']}"
         )
 
@@ -580,11 +543,10 @@ def main() -> int:
     }
     path = write_report(report, args.out)
 
-    print("\n===== 需求理解 / 路由基线 =====")
+    print("\n===== 需求理解 / 推荐基线 =====")
     print(f"  Requirement Slot Accuracy: {summary['requirement_slot_accuracy']}")
     print(f"  Hard Constraint Capture  : {summary['hard_constraint_capture_rate']}  （仅客户明确说的约束）")
     print(f"  Derived Capture          : {summary['derived_capture_rate']}  （推断/默认字段，仅供参考）")
-    print(f"  Legacy Route Accuracy    : {summary['legacy_route_accuracy']}  （fast/normal/agent，仅历史对比）")
     print(f"  Product Type Accuracy    : {summary['product_type_accuracy']['accuracy']}  "
           f"（{summary['product_type_accuracy']['cases']} 条客户点名的用例，唯一决策入口=ProductTypeRouter）")
     print("  Per-field TP/FP/FN:")
@@ -594,7 +556,6 @@ def main() -> int:
             f"fp_derived={row.get('fp_derived', 0):3d} acc={row['accuracy']} recall={row['recall']}"
         )
     print(f"  逐槽位命中率: {summary['per_slot_accuracy']}")
-    print(f"  路由混淆: {summary['route_confusion']}")
     print(f"  推荐引擎: {engine_result['status']} ({engine_result.get('reason', '')})")
     print(f"\n报告已写入: {path}")
     return 0

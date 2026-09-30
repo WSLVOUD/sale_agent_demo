@@ -149,7 +149,10 @@ class TestLcdOwnsTheTurnAction:
 
 
 class TestLedSideIsUntouched:
-    def test_led_turn_never_carries_an_lcd_action(self):
+    def test_led_turn_never_carries_an_lcd_action_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_led_turn_never_carries_an_lcd_action ──
         profile = RequirementProfile.model_validate(
             {
                 "display_type": "LED",
@@ -169,7 +172,7 @@ class TestLedSideIsUntouched:
         assert action.get("source") != "lcd_chain", action
         assert not out.get("lcd_action"), "LED 会话不该有 LCD 决策结果"
 
-    def test_lcd_domain_stays_empty_for_led(self):
+        # ── test_lcd_domain_stays_empty_for_led ──
         profile = RequirementProfile.model_validate({"display_type": "LED"})
         state = _lcd_state(profile)
         state["display_type_decision"] = {"display_type": "LED", "status": "CONFIRMED", "locked": True}

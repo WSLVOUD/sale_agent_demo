@@ -53,14 +53,17 @@ RENTAL_PITCHES = [1.95, 2.6, 2.976, 3.91, 4.81]
 # ── Environment（计划 §8 / §13）───────────────────────────────────────────
 class TestEnvironmentQuestion:
 
-    def test_environment_is_first_missing_question(self):
+    def test_environment_is_first_missing_question_merged(self):
+        """合并自 6 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_environment_is_first_missing_question ──
         profile = _profile(display_type="LED")
         plan = next_question_plan(profile, session_id="env-1")
         assert plan is not None
         assert plan.slot == "environment"
         assert plan.reason == "environment_hard_gate"
 
-    def test_inferred_environment_skips_environment_question(self):
+        # ── test_inferred_environment_skips_environment_question ──
         """明显场景（教堂）推断出室内 → 不再问室内外（业务规则保留）。"""
         profile = RequirementExtractor().extract("It's for a church", use_llm=False)
         assert profile.environment == "indoor"
@@ -68,19 +71,19 @@ class TestEnvironmentQuestion:
         plan = next_question_plan(profile, session_id="env-2")
         assert plan is None or plan.slot != "environment"
 
-    def test_confirmed_environment_skips_environment_question(self):
+        # ── test_confirmed_environment_skips_environment_question ──
         profile = _profile(display_type="LED", environment="indoor")
         plan = next_question_plan(profile, session_id="env-3")
         assert plan is None or plan.slot != "environment"
 
-    def test_environment_gate_beats_random_pool(self):
+        # ── test_environment_gate_beats_random_pool ──
         """哪怕其它槽位都还空着，第一问也必须是室内外。"""
         profile = _profile(display_type="LED", target_width_mm=3000, target_height_mm=5000)
         for session in ("env-4a", "env-4b", "env-4c"):
             plan = next_question_plan(profile, session_id=session)
             assert plan is not None and plan.slot == "environment", session
 
-    def test_environment_moves_on_when_customer_answers_something_else(self):
+        # ── test_environment_moves_on_when_customer_answers_something_else ──
         """客户回 "3*5"（没答室内外）→ 可以不重复问室内外（每个问题都可以跳转）。
 
         客户口径（2026-09-21）：硬性条件也可以跳转，只在推荐/算方案时必须满足；
@@ -98,7 +101,7 @@ class TestEnvironmentQuestion:
         assert second.slot != "environment", "没答出来 → 可以先跳转"
         assert second.easier is False
 
-    def test_environment_returns_in_hard_recap_with_plain_wording(self):
+        # ── test_environment_returns_in_hard_recap_with_plain_wording ──
         """其它问题都问完 → 室内外作为硬性条件复问回来（直问，不用降门槛说法）。"""
         from src.dialogue import ASK_POOL, HARD_SLOTS
 
@@ -117,7 +120,10 @@ class TestEnvironmentQuestion:
 # ── Single Question（计划 §3 / §13）───────────────────────────────────────
 class TestSingleQuestionGuard:
 
-    def test_one_customer_turn_one_question(self):
+    def test_one_customer_turn_one_question_merged(self):
+        """合并自 6 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_one_customer_turn_one_question ──
         guard = FinalResponseGuard()
         result = guard.finalize(
             "Is this indoor or outdoor? What sort of application will it be used in?"
@@ -126,7 +132,7 @@ class TestSingleQuestionGuard:
         assert "multiple_questions_collapsed" in result.issues
         assert len(result.questions_dropped) == 1
 
-    def test_multiple_internal_questions_only_one_output(self):
+        # ── test_multiple_internal_questions_only_one_output ──
         """内部两个节点各带一个问题 → 只保留优先级高的（硬性 Gate）。"""
         guard = FinalResponseGuard()
         result = guard.finalize(
@@ -141,7 +147,7 @@ class TestSingleQuestionGuard:
         assert "indoors or outdoors" in result.text, "应保留硬性 Gate 的那一个问题"
         assert "budget" not in result.text
 
-    def test_response_coordinator_enforces_single_question(self):
+        # ── test_response_coordinator_enforces_single_question ──
         coordinator = ResponseCoordinator()
         text = coordinator.finalize(
             "Is this indoor or outdoor? And what size do you need?",
@@ -151,7 +157,7 @@ class TestSingleQuestionGuard:
         assert text.count("?") == 1
         assert coordinator.last_guard is not None
 
-    def test_internal_terms_never_reach_the_customer(self):
+        # ── test_internal_terms_never_reach_the_customer ──
         guard = FinalResponseGuard()
         result = guard.finalize(
             "Your RequirementProfile says the size is missing. What size do you need?"
@@ -160,7 +166,7 @@ class TestSingleQuestionGuard:
         assert "internal_term_sentence_dropped" in result.issues
         assert result.text.count("?") == 1
 
-    def test_extra_bubbles_cannot_add_a_second_question(self):
+        # ── test_extra_bubbles_cannot_add_a_second_question ──
         """实测 bug：主回复问"室内还是室外"，附加气泡又问"用在什么场景" —— 两个气泡两个问题。
 
         现在附加气泡也要过 Guard：主回复已经带问题了，附加气泡里的问题就不再发。
@@ -175,7 +181,7 @@ class TestSingleQuestionGuard:
         assert len(kept) == 1
         assert kept[0] == "By the way, we ship from Shenzhen."
 
-    def test_coordinator_guards_extras(self):
+        # ── test_coordinator_guards_extras ──
         coordinator = ResponseCoordinator()
         kept = coordinator.guard_extras(
             "Is this indoors or outdoors?",
@@ -187,7 +193,10 @@ class TestSingleQuestionGuard:
 # ── Pitch Resolution（计划 §4 / §13）──────────────────────────────────────
 class TestPitchResolution:
 
-    def test_exact_pitch(self):
+    def test_exact_pitch_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_exact_pitch ──
         profile = _profile(environment="indoor", pixel_pitch_mm=3.0)
         resolution = resolve_pitch(
             profile, _FakeModel("TW11-3216-P3.0", 3.076), available_pitches=[2.5, 3.076, 4.0]
@@ -196,7 +205,7 @@ class TestPitchResolution:
         assert resolution.requested_text == "P3" and resolution.resolved_text == "P3"
         assert resolution.needs_explanation is False
 
-    def test_nearest_available_pitch(self):
+        # ── test_nearest_available_pitch ──
         profile = _profile(environment="indoor", installation="rental", pixel_pitch_mm=3.0)
         resolution = resolve_pitch(
             profile, _FakeModel("TW11-IR-P2.9", 2.976), available_pitches=RENTAL_PITCHES
@@ -204,7 +213,7 @@ class TestPitchResolution:
         assert resolution.match_type == NEAREST_AVAILABLE
         assert resolution.needs_explanation is True
 
-    def test_pitch_mismatch_has_reason(self):
+        # ── test_pitch_mismatch_has_reason ──
         profile = _profile(environment="indoor", installation="rental", pixel_pitch_mm=3.0)
         resolution = resolve_pitch(
             profile, _FakeModel("TW11-IR-P2.9", 2.976), available_pitches=RENTAL_PITCHES
@@ -213,7 +222,7 @@ class TestPitchResolution:
         explanation = resolution.explain()
         assert "P2.9" in explanation and "P3" in explanation
 
-    def test_pitch_far_from_request_is_flagged(self):
+        # ── test_pitch_far_from_request_is_flagged ──
         profile = _profile(environment="indoor", installation="rental", pixel_pitch_mm=3.0)
         resolution = resolve_pitch(
             profile, _FakeModel("TW11-IR-P4.8", 4.81), available_pitches=RENTAL_PITCHES
@@ -221,7 +230,7 @@ class TestPitchResolution:
         assert resolution.match_type == OUTSIDE_VALID_WINDOW
         assert resolution.needs_explanation is True
 
-    def test_requested_pitch_not_equal_resolved_pitch_without_explanation(self):
+        # ── test_requested_pitch_not_equal_resolved_pitch_without_explanation ──
         """最终话术里：requested 与 resolved 不一致时必须给出解释。"""
         pitch_resolution = {
             "requested_pitch_text": "P3",
@@ -271,7 +280,10 @@ class TestGroundedFacts:
         fact = GroundedFact(field="environment", value="indoor", source=source)
         assert fact.grounded is True
 
-    def test_unknown_business_fact_blocked(self):
+    def test_unknown_business_fact_blocked_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_unknown_business_fact_blocked ──
         """Context 里没有"安装方式"事实 → LLM 不能说"这是租赁款、安装快"。"""
         result = validate_response(
             "This rental model is quick to install and ideal for church events.",
@@ -280,7 +292,7 @@ class TestGroundedFacts:
         assert "rental" in result.ungrounded_facts
         assert "ungrounded_business_fact" in result.issues
 
-    def test_grounded_installation_is_allowed(self):
+        # ── test_grounded_installation_is_allowed ──
         facts = self._facts() + [
             GroundedFact(field="installation", value="fixed", source=SOURCE_CUSTOMER)
         ]
@@ -290,8 +302,7 @@ class TestGroundedFacts:
         )
         assert "installation" not in result.ungrounded_facts
 
-    def test_build_grounded_facts_marks_sources(self):
-        # 用真实抽取链路：客户只说了场景（church）→ 环境由场景推断
+        # ── test_build_grounded_facts_marks_sources ──
         profile = RequirementExtractor().extract(
             "It's for a church, about 5m away, the wall is 4m x 2m",
             use_llm=False,
@@ -304,7 +315,7 @@ class TestGroundedFacts:
         assert by_field.get("environment") == SOURCE_INFERRED_FROM_SCENE
         assert by_field.get("cabinet_count") == SOURCE_CALCULATED_FROM_DIMENSIONS
 
-    def test_pitch_inferred_from_distance_is_marked(self):
+        # ── test_pitch_inferred_from_distance_is_marked ──
         """视距 → 点间距的推断结果要标来源（计划 §9.2：推断也要进结构化状态）。"""
         profile = _profile(display_type="LED", viewing_distance_m=5)
         profile.pixel_pitch_mm = 3.0
@@ -313,7 +324,7 @@ class TestGroundedFacts:
         assert by_field.get("viewing_distance") == SOURCE_CUSTOMER
         assert by_field.get("pixel_pitch") == "inferred_from_distance"
 
-    def test_grounded_facts_are_visible_to_the_llm_context(self):
+        # ── test_grounded_facts_are_visible_to_the_llm_context ──
         context = build_context(
             action="ASK",
             customer_message="indoor church 4x2m",
@@ -337,7 +348,10 @@ class TestNumericConsistency:
         GroundedFact(field="actual_screen_width_mm", value=3840, source=SOURCE_CALCULATED_FROM_DIMENSIONS),
     ]
 
-    def test_screen_dimensions_consistent(self):
+    def test_screen_dimensions_consistent_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_screen_dimensions_consistent ──
         result = validate_response(
             "That's 24 cabinets, giving an actual width of 3840 mm.",
             grounded_facts=self.FACTS,
@@ -345,7 +359,7 @@ class TestNumericConsistency:
         )
         assert result.ungrounded_numbers == []
 
-    def test_screen_dimension_invented_is_blocked(self):
+        # ── test_screen_dimension_invented_is_blocked ──
         result = validate_response(
             "The actual width would be 5120 mm.",
             grounded_facts=self.FACTS,
@@ -354,14 +368,14 @@ class TestNumericConsistency:
         assert result.ungrounded_numbers
         assert "ungrounded_numeric" in result.issues
 
-    def test_cabinet_and_module_counts_consistent(self):
+        # ── test_cabinet_and_module_counts_consistent ──
         result = validate_response(
             "24 cabinets and 144 modules in total.",
             grounded_facts=self.FACTS,
         )
         assert "ungrounded_numeric" not in result.issues
 
-    def test_pitch_consistent(self):
+        # ── test_pitch_consistent ──
         facts = self.FACTS + [
             GroundedFact(
                 field="pixel_pitch", value="P3", source=SOURCE_RECOMMENDED_BY_ENGINE

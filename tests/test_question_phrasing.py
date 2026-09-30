@@ -45,20 +45,23 @@ class TestQuestionVariants:
         ("purpose", ("use", "application", "used")),
     ]
 
-    def test_slot_has_multiple_phrasings(self):
+    def test_slot_has_multiple_phrasings_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_slot_has_multiple_phrasings ──
         """每个槽位都要有 ≥2 种说法（不能只有一句固定话术）"""
         assert_all_cases(sorted(QUESTION_VARIANTS), _has_variants, label="slot")
 
-    def test_content_stays_the_same(self):
+        # ── test_content_stays_the_same ──
         """同一槽位的所有说法都必须问到同一件事"""
         assert_all_cases(self.CONTENT_CASES, _keeps_the_content, label="slot")
 
-    def test_seed_rotates_phrasing(self):
+        # ── test_seed_rotates_phrasing ──
         """同槽位不同 seed 得到不同措辞，且只在有限集合内轮换"""
         seen = {question_for("viewing_distance", "en", seed) for seed in range(20)}
         assert 2 <= len(seen) <= len(QUESTION_VARIANTS["viewing_distance"]["en"])
 
-    def test_purpose_question_has_no_examples(self):
+        # ── test_purpose_question_has_no_examples ──
         """客户口径：问场景/环境时**不举例**，直接问问题。
 
         实测反馈：追问"用在什么场景"时列了"会议室/教室/商场/广告"的例子，
@@ -81,7 +84,7 @@ class TestQuestionVariants:
             for word in banned:
                 assert word not in text.lower(), (text, word)
 
-    def test_chinese_variants(self):
+        # ── test_chinese_variants ──
         texts = {question_for("installation", "zh", seed) for seed in range(9)}
         assert len(texts) >= 2
         assert all("固装" in t or "固定" in t for t in texts)
@@ -107,7 +110,10 @@ class TestPlannerKeepsSlotVariesText:
 
 class TestGateQuestionVaries:
 
-    def test_gate_question_varies_by_seed(self):
+    def test_gate_question_varies_by_seed_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_gate_question_varies_by_seed ──
         profile = RequirementProfile.from_slots(
             {"environment": "indoor", "purpose": "conference"},
             explicit_keys={"environment", "purpose"},
@@ -119,7 +125,7 @@ class TestGateQuestionVaries:
         assert all(texts), "未就绪时必须给出追问"
         assert len(texts) >= 2
 
-    def test_missing_fields_do_not_depend_on_seed(self):
+        # ── test_missing_fields_do_not_depend_on_seed ──
         profile = RequirementProfile.from_slots(
             {"environment": "indoor", "purpose": "conference"},
             explicit_keys={"environment", "purpose"},
@@ -138,22 +144,25 @@ class TestGateQuestionVaries:
 class TestInstallationQuestionIsNaturalAndRotates:
     """实测反馈：追问安装方式的话术偏僵硬、而且感觉每次都一样。"""
 
-    def test_variants_are_plentiful(self):
+    def test_variants_are_plentiful_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_variants_are_plentiful ──
         texts = {question_for("installation", "en", seed) for seed in range(12)}
         assert len(texts) >= 6, texts
 
-    def test_all_variants_ask_fixed_or_rental(self):
+        # ── test_all_variants_ask_fixed_or_rental ──
         for seed in range(12):
             text = (question_for("installation", "en", seed) or "").lower()
             assert "fixed" in text or "rental" in text, (seed, text)
 
-    def test_consecutive_turns_never_repeat(self):
+        # ── test_consecutive_turns_never_repeat ──
         """轮换步长为 1 → 连续 N 轮（N = 变体数）不重复同一句。"""
         variants = QUESTION_VARIANTS["installation"]["en"]
         texts = [question_for("installation", "en", seed) for seed in range(len(variants))]
         assert len(set(texts)) == len(texts), texts
 
-    def test_variants_are_conversational(self):
+        # ── test_variants_are_conversational ──
         """不能每条都像书面条款（抽查：至少有带口语过渡的问法）。"""
         texts = [question_for("installation", "en", seed) or "" for seed in range(12)]
         assert any(

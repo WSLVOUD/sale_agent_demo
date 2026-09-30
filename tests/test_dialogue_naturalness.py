@@ -28,33 +28,36 @@ from src.dialogue.action import ASK  # noqa: E402
 
 class TestDialogueAction:
 
-    def test_customer_question_is_answered_first(self):
+    def test_customer_question_is_answered_first_merged(self):
+        """合并自 8 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_customer_question_is_answered_first ──
         decision = decide_dialogue_action(customer_question=True)
         assert decision.action == DIRECT_ANSWER
 
-    def test_customer_question_plus_missing_info_answers_then_asks(self):
+        # ── test_customer_question_plus_missing_info_answers_then_asks ──
         decision = decide_dialogue_action(customer_question=True, has_pending_question=True)
         assert decision.action == ANSWER_AND_ASK
 
-    def test_recommend_when_requested(self):
+        # ── test_recommend_when_requested ──
         assert decide_dialogue_action(recommend_requested=True).action == RECOMMEND
         assert decide_dialogue_action(ready_to_recommend=True).action == RECOMMEND
 
-    def test_clarify_on_conflict(self):
+        # ── test_clarify_on_conflict ──
         assert decide_dialogue_action(conflicts=True).action == CLARIFY
 
-    def test_confirm_for_vision(self):
+        # ── test_confirm_for_vision ──
         assert decide_dialogue_action(needs_confirmation=True).action == CONFIRM
 
-    def test_ask_when_missing_hard_condition(self):
+        # ── test_ask_when_missing_hard_condition ──
         decision = decide_dialogue_action(has_pending_question=True, question_slot="size")
         assert decision.action == ASK and decision.question_slot == "size"
 
-    def test_ack_only_when_nothing_to_ask(self):
+        # ── test_ack_only_when_nothing_to_ask ──
         assert decide_dialogue_action(facts_added=True).action == ACK_ONLY
         assert decide_dialogue_action().action == ACK_ONLY
 
-    def test_never_defaults_to_ack_plus_ask(self):
+        # ── test_never_defaults_to_ack_plus_ask ──
         """不能每轮都是 ACK → Connector → ASK：行为必须随输入变化。"""
         actions = {
             decide_dialogue_action(customer_question=True).action,
@@ -77,7 +80,10 @@ class TestResponseContextAndGeneration:
         payload.update(overrides)
         return build_context(**payload)
 
-    def test_context_carries_decisions_not_judgement(self):
+    def test_context_carries_decisions_not_judgement_merged(self):
+        """合并自 6 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_context_carries_decisions_not_judgement ──
         context = self._context(
             engineering_result={"resolution_fit": {"target": [3840, 2160], "actual": [3780, 2160], "fit_level": "NEAR_MATCH"}}
         )
@@ -85,7 +91,7 @@ class TestResponseContextAndGeneration:
         assert "already decided, do not change" in block
         assert "3780" in block and "NEAR_MATCH" in block
 
-    def test_structured_compose_mentions_model_and_one_question(self):
+        # ── test_structured_compose_mentions_model_and_one_question ──
         context = self._context(
             question="Shall I prepare the quotation?", why="",
         )
@@ -93,7 +99,7 @@ class TestResponseContextAndGeneration:
         assert "TW11-3216-P3.0" in text
         assert text.count("?") == 1
 
-    def test_answer_and_ask_keeps_both(self):
+        # ── test_answer_and_ask_keeps_both ──
         context = build_context(
             action=ANSWER_AND_ASK,
             answer="Delivery is usually 15 days.",
@@ -103,11 +109,11 @@ class TestResponseContextAndGeneration:
         assert text.startswith("Delivery is usually 15 days.")
         assert text.rstrip().endswith("What screen size do you need?")
 
-    def test_generator_falls_back_without_llm(self):
+        # ── test_generator_falls_back_without_llm ──
         context = self._context(question="What width and height do you need?")
         assert "TW11-3216-P3.0" in generate_response(context)
 
-    def test_generator_rejects_bad_polish(self):
+        # ── test_generator_rejects_bad_polish ──
         class _BadLLM:
             def invoke(self, _prompt):
                 class _R:
@@ -120,40 +126,43 @@ class TestResponseContextAndGeneration:
         assert text.count("?") == 1
         assert not text.lower().startswith("got it")
 
-    def test_context_to_dict(self):
+        # ── test_context_to_dict ──
         assert self._context().to_dict()["action"] == RECOMMEND
 
 
 class TestResponseValidation:
 
-    def test_generic_ack_detected(self):
+    def test_generic_ack_detected_merged(self):
+        """合并自 8 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_generic_ack_detected ──
         result = validate_response(
             "Thanks for the information. What size do you need?", allow_ack=False
         )
         assert result.has_generic_ack is True and "generic_ack" in result.issues
 
-    def test_connector_detected(self):
+        # ── test_connector_detected ──
         result = validate_response("Based on that, what is the viewing distance?")
         assert result.has_connector is True
 
-    def test_too_many_questions(self):
+        # ── test_too_many_questions ──
         result = validate_response("What is the size? And the pitch?")
         assert result.question_count == 2 and "too_many_questions" in result.issues
 
-    def test_internal_term_leak(self):
+        # ── test_internal_term_leak ──
         result = validate_response("Your RequirementProfile says size is missing.")
         assert result.internal_terms and "internal_term_leak" in result.issues
 
-    def test_price_is_blocked(self):
+        # ── test_price_is_blocked ──
         assert "mentions_price" in validate_response("It costs about $5000.").issues
 
-    def test_unsupported_parameter(self):
+        # ── test_unsupported_parameter ──
         result = validate_response(
             "This P5 model fits.", supported_parameters=["P3"]
         )
         assert result.unsupported_parameters == ["P5"]
 
-    def test_customer_question_answered(self):
+        # ── test_customer_question_answered ──
         result = validate_response(
             "Delivery usually takes 15 days.",
             customer_question=True, answer="Delivery usually takes 15 days.",
@@ -165,7 +174,7 @@ class TestResponseValidation:
         )
         assert missed.customer_question_answered is False
 
-    def test_metrics_aggregate(self):
+        # ── test_metrics_aggregate ──
         samples = [
             {"is_question": True, "validation": validate_response("Got it. Size?", allow_ack=False)},
             {"is_question": False, "validation": validate_response("Sure, what size do you need?")},

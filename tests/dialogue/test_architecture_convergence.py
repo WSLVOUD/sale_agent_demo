@@ -27,7 +27,10 @@ def _read(relative: str) -> str:
 
 class TestPhase2QuestionPlannerIsCandidateOnly:
 
-    def test_plan_next_question_is_the_first_candidate(self):
+    def test_plan_next_question_is_the_first_candidate_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_plan_next_question_is_the_first_candidate ──
         from src.agents.sales.question_planner import (
             candidate_questions,
             plan_next_question,
@@ -41,7 +44,7 @@ class TestPhase2QuestionPlannerIsCandidateOnly:
         assert plan_next_question(profile) == candidates[0]
         assert all("slot" in item and "priority" in item for item in candidates)
 
-    def test_planner_never_writes_state(self):
+        # ── test_planner_never_writes_state ──
         source = _read("src/agents/sales/question_planner.py")
         # 只看"赋值"，不看注释/文档字符串里的提及
         for forbidden in (
@@ -55,12 +58,15 @@ class TestPhase2QuestionPlannerIsCandidateOnly:
 
 class TestPhase3QuestionFlowIsStateOnly:
 
-    def test_question_flow_does_not_generate_customer_text(self):
+    def test_question_flow_does_not_generate_customer_text_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_question_flow_does_not_generate_customer_text ──
         source = _read("src/dialogue/question_flow.py")
         for forbidden in ("state[", "context.response", "generate_response"):
             assert forbidden not in source, f"QuestionFlow 不得出现 {forbidden}"
 
-    def test_plan_carries_reason_and_slot_for_the_policy(self):
+        # ── test_plan_carries_reason_and_slot_for_the_policy ──
         from src.dialogue.question_flow import next_question_plan
         from src.models.requirement import RequirementProfile
 
@@ -72,7 +78,10 @@ class TestPhase3QuestionFlowIsStateOnly:
 
 class TestPhase4QuestionSpecIsTheOnlyCarrier:
 
-    def test_legacy_fields_normalise_into_the_spec(self):
+    def test_legacy_fields_normalise_into_the_spec_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_legacy_fields_normalise_into_the_spec ──
         from src.dialogue import QuestionSpec, ResponseContext
 
         context = ResponseContext(
@@ -85,7 +94,7 @@ class TestPhase4QuestionSpecIsTheOnlyCarrier:
         assert context.question_spec.intent == "collect viewing distance"
         assert context.question_spec.text == "How far will viewers be?"
 
-    def test_explicit_spec_wins_over_legacy_fields(self):
+        # ── test_explicit_spec_wins_over_legacy_fields ──
         from src.dialogue import QuestionSpec, ResponseContext
 
         context = ResponseContext(
@@ -99,7 +108,10 @@ class TestPhase4QuestionSpecIsTheOnlyCarrier:
 
 class TestPhase5ResponseGeneratorOnlyWritesProse:
 
-    def test_offline_generation_asks_the_spec_slot_and_does_not_mutate(self):
+    def test_offline_generation_asks_the_spec_slot_and_does_not_mutate_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_offline_generation_asks_the_spec_slot_and_does_not_mutate ──
         from src.dialogue import ResponseContext, generate_response
 
         context = ResponseContext(
@@ -112,7 +124,7 @@ class TestPhase5ResponseGeneratorOnlyWritesProse:
         assert "how far" in text.lower()
         assert (context.action, context.question_slot, context.question_spec.slot) == before
 
-    def test_generator_source_never_assigns_action_or_slot(self):
+        # ── test_generator_source_never_assigns_action_or_slot ──
         source = _read("src/dialogue/response_generator.py")
         for forbidden in (
             r"context\.action\s*=(?!=)",
@@ -129,7 +141,10 @@ class TestPhase6ScriptGeneratorHasNoNewDecisionPower:
 
     SCRIPT_GENERATOR_NEXT_ACTION_WRITES = 21  # 2026-09-23 基线（计划 Phase 6/7 逐条搬到 DialoguePolicy）
 
-    def test_next_action_writes_do_not_grow(self):
+    def test_next_action_writes_do_not_grow_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_next_action_writes_do_not_grow ──
         source = _read("src/agents/sales/nodes/script_generator.py")
         writes = len(re.findall(r'state\["next_action"\]\s*=', source))
         assert writes <= self.SCRIPT_GENERATOR_NEXT_ACTION_WRITES, (
@@ -137,7 +152,7 @@ class TestPhase6ScriptGeneratorHasNoNewDecisionPower:
             f"涨到了 {writes} —— 计划 §18 禁止在这里继续堆决策，请改走 DialoguePolicy"
         )
 
-    def test_script_generator_does_not_decide_the_question_slot(self):
+        # ── test_script_generator_does_not_decide_the_question_slot ──
         source = _read("src/agents/sales/nodes/script_generator.py")
         for forbidden in ('state["pending_slot"] =', 'state["pending_question"] ='):
             assert forbidden not in source, f"script_generator 不得写 {forbidden}"
@@ -145,7 +160,10 @@ class TestPhase6ScriptGeneratorHasNoNewDecisionPower:
 
 class TestPhase7LegacyChainIsFallbackOnly:
 
-    def test_template_composer_is_only_used_as_fallback(self):
+    def test_template_composer_is_only_used_as_fallback_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_template_composer_is_only_used_as_fallback ──
         source = _read("src/agents/sales/nodes/script_generator.py")
         # 正常路径是 LLM 原生生成；模板拼装只允许出现在 _natural_reply() 的兜底里
         fallback_start = source.index("state[\"response_source\"] = \"template\"")
@@ -157,7 +175,7 @@ class TestPhase7LegacyChainIsFallbackOnly:
             "正常路径不得再调用模板拼装"
         )
 
-    def test_response_source_is_recorded(self):
+        # ── test_response_source_is_recorded ──
         source = _read("src/agents/sales/nodes/script_generator.py")
         assert 'state["response_source"] = "llm"' in source
         assert 'state["response_source"] = "template"' in source

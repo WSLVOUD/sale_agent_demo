@@ -16,7 +16,10 @@ from src.dialogue import (  # noqa: E402
 
 class TestFinalResponse:
 
-    def test_structure_has_planned_fields(self):
+    def test_structure_has_planned_fields_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_structure_has_planned_fields ──
         final = FinalResponse(text="Hello", action="acknowledge_only", turn_id="t-1")
         payload = final.to_dict()
         for key in (
@@ -32,7 +35,7 @@ class TestFinalResponse:
             assert key in payload, key
         assert payload["response_count"] == 1
 
-    def test_only_one_customer_visible_response(self):
+        # ── test_only_one_customer_visible_response ──
         coordinator = FinalResponseCoordinator()
         final = coordinator.build(
             text="Indoor or outdoor?",
@@ -47,7 +50,7 @@ class TestFinalResponse:
         assert final.action == "ask_only"
         assert final.question_count <= 1
 
-    def test_first_contact_assets_are_a_separate_channel(self):
+        # ── test_first_contact_assets_are_a_separate_channel ──
         coordinator = FinalResponseCoordinator()
         final = coordinator.build(
             text="Hello, I'm Mike from iSEMC.",
@@ -56,13 +59,13 @@ class TestFinalResponse:
         assert final.extra_channels == ["first_contact"]
         assert ONE_TURN_ONE_RESPONSE and ONE_TURN_ONE_ACTION
 
-    def test_empty_text_is_still_a_single_response(self):
+        # ── test_empty_text_is_still_a_single_response ──
         coordinator = FinalResponseCoordinator()
         final = coordinator.build(text="")
         assert final.response_count == 1
         assert final.question_count == 0
 
-    def test_facts_are_carried_with_the_response(self):
+        # ── test_facts_are_carried_with_the_response ──
         coordinator = FinalResponseCoordinator()
         final = coordinator.build(
             text="Indoor it is.",

@@ -20,7 +20,10 @@ def _understand(message: str, book=None, intent: str = ""):
 
 class TestGreetingEntry:
 
-    def test_greeting_flag_is_carried_in_the_understanding(self):
+    def test_greeting_flag_is_carried_in_the_understanding_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_greeting_flag_is_carried_in_the_understanding ──
         from src.dialogue.turn_understanding import understand_turn
 
         # 客户把招呼和需求放在一起（前端会聚合成一个回合）
@@ -33,7 +36,7 @@ class TestGreetingEntry:
         # 只有需求、没有招呼的句子不该被当成招呼
         assert understand_turn("i need a display").greeting_present is False
 
-    def test_plain_greeting_asks_which_product(self):
+        # ── test_plain_greeting_asks_which_product ──
         from src.dialogue.product_router import PRODUCT_SELECTION, route_product_domain
         from src.dialogue.turn_kind import PURE_CONVERSATION
 
@@ -43,7 +46,7 @@ class TestGreetingEntry:
         assert route_product_domain(understanding.product_domain) == PRODUCT_SELECTION
         assert understanding.has_business_signal is False
 
-    def test_greeting_with_business_signal_goes_to_led_entry(self):
+        # ── test_greeting_with_business_signal_goes_to_led_entry ──
         from src.dialogue.product_router import LED_ENTRY, route_product_domain
         from src.dialogue.turn_kind import CONVERSATION_WITH_BUSINESS_SIGNAL
 
@@ -52,7 +55,7 @@ class TestGreetingEntry:
         assert understanding.has_business_signal is True
         assert route_product_domain(understanding.product_domain) == LED_ENTRY
 
-    def test_aggregated_messages_are_understood_once(self):
+        # ── test_aggregated_messages_are_understood_once ──
         """聚合后的一个回合（Hi + How are you?）只产生一次理解结果。"""
         from src.dialogue.turn_kind import PURE_CONVERSATION
 
@@ -64,7 +67,10 @@ class TestGreetingEntry:
 
 class TestProductEntries:
 
-    def test_lcd_and_ifp_entries(self):
+    def test_lcd_and_ifp_entries_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_lcd_and_ifp_entries ──
         from src.dialogue.product_router import (
             IFP_ENTRY,
             LCD_ENTRY,
@@ -74,16 +80,21 @@ class TestProductEntries:
         lcd = _understand("Hi, I need an LCD video wall.")
         ifp = _understand("Hi, I need an interactive display for a classroom.")
         assert route_product_domain(lcd.product_domain) == LCD_ENTRY
-        assert route_product_domain(ifp.product_domain) == IFP_ENTRY
+        # 整改计划 §八"IFP 判断必须统一"：IFP 是 LCD 的子系列，**产品域只有 LED / LCD**。
+        # 交互平板的文字进的是 LCD 入口，是否需要 IFP 由 LCD Decision Center 在需求链里判
+        # （会议室/教室 → 问 handwriting → 才定 IFP）。IFP_ENTRY 仍然保留给"决策中心已经
+        # 判成 IFP"的场景，但不再由关键词理解产生。
+        assert route_product_domain(ifp.product_domain) == LCD_ENTRY
+        assert route_product_domain("IFP") == IFP_ENTRY
 
-    def test_unknown_screen_asks_for_the_type(self):
+        # ── test_unknown_screen_asks_for_the_type ──
         from src.dialogue.product_router import PRODUCT_SELECTION, route_product_domain
 
         understanding = _understand("Hi, I need a screen.")
         assert understanding.product_domain == "UNKNOWN"
         assert route_product_domain(understanding.product_domain) == PRODUCT_SELECTION
 
-    def test_comparison_question_is_not_a_requirement_chain(self):
+        # ── test_comparison_question_is_not_a_requirement_chain ──
         from src.dialogue.product_router import (
             PRODUCT_COMPARISON_ENTRY,
             route_product_domain,
@@ -99,7 +110,10 @@ class TestProductEntries:
 
 class TestRequirementBook:
 
-    def test_greeting_after_led_does_not_reset_the_led_chain(self):
+    def test_greeting_after_led_does_not_reset_the_led_chain_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_greeting_after_led_does_not_reset_the_led_chain ──
         from src.dialogue.turn_understanding import RequirementBook
 
         book = RequirementBook()
@@ -114,7 +128,7 @@ class TestRequirementBook:
         assert book.active.product_domain == "LED"
         assert book.get("LED").slots.get("environment") == "outdoor"
 
-    def test_switching_from_lcd_to_led_keeps_both(self):
+        # ── test_switching_from_lcd_to_led_keeps_both ──
         from src.dialogue.turn_understanding import RequirementBook
 
         book = RequirementBook()
@@ -125,7 +139,7 @@ class TestRequirementBook:
         # LCD 的信息不能被删掉（计划 §十四）
         assert book.get("LCD") is not None
 
-    def test_two_products_create_two_requirements(self):
+        # ── test_two_products_create_two_requirements ──
         from src.dialogue.turn_understanding import RequirementBook
 
         book = RequirementBook()
@@ -140,7 +154,10 @@ class TestRequirementBook:
 
 class TestProductPolicies:
 
-    def test_customer_greeting_always_gets_a_greeting_back(self):
+    def test_customer_greeting_always_gets_a_greeting_back_merged(self):
+        """合并自 7 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_customer_greeting_always_gets_a_greeting_back ──
         """实测反馈（2026-09-23）：客户 "hello，i need a led diplay" → 回复里没有招呼。
 
         两个原因：① `suppress_greeting`（首次接待刚结束别重复问候）把它一起挡掉了；
@@ -174,7 +191,7 @@ class TestProductPolicies:
         assert text.lower().startswith(("hi", "hello")), text
         assert text.count("?") == 1
 
-    def test_context_marks_the_greeting_as_required(self):
+        # ── test_context_marks_the_greeting_as_required ──
         from src.dialogue import build_context
 
         context = build_context(
@@ -188,7 +205,7 @@ class TestProductPolicies:
         block = context.prompt_block()
         assert "You MUST open your reply by greeting them back" in block
 
-    def test_no_em_dash_in_customer_text(self):
+        # ── test_no_em_dash_in_customer_text ──
         """客户口径：破折号一律换逗号（型号里的连字符不受影响）。"""
         from src.dialogue.response_generator import normalize_customer_punctuation
 
@@ -199,7 +216,7 @@ class TestProductPolicies:
         assert "," in normalized
         assert "TW11-3216-P3.0" in normalized
 
-    def test_greeting_is_merged_into_the_requirement_reply(self):
+        # ── test_greeting_is_merged_into_the_requirement_reply ──
         """实测 bug：客户发 "hi" + "i need a display" → 回复里招呼被丢掉。
 
         打招呼必须并进最终话术（同一个回合、同一条回复），而不是被 intent=need_query
@@ -238,7 +255,7 @@ class TestProductPolicies:
         # 客户自己打了招呼 → 即使"首次接待刚结束"，也要回应招呼（2026-09-23 实测口径）
         assert text2.lower().startswith(("hi", "hello")), text2
 
-    def test_greeting_node_asks_for_the_product_type(self):
+        # ── test_greeting_node_asks_for_the_product_type ──
         """Greeting 节点：纯招呼 → 欢迎 + 问客户要找哪种显示产品（计划 §五）。"""
         from src.agents.sales.nodes.script_generator import script_generator
 
@@ -258,7 +275,7 @@ class TestProductPolicies:
         assert "interactive flat panel" in out.get("response", "").lower()
         assert out.get("greeting_entry") == "product_selection"
 
-    def test_led_policy_uses_the_existing_chain(self):
+        # ── test_led_policy_uses_the_existing_chain ──
         from src.dialogue.product_router import LEDPolicy, policy_for
         from src.models.requirement import RequirementProfile
 
@@ -269,7 +286,7 @@ class TestProductPolicies:
         assert policy.get_missing_requirements(profile)
         assert policy.get_next_question(profile)
 
-    def test_lcd_and_ifp_share_the_same_interface_now_implemented(self):
+        # ── test_lcd_and_ifp_share_the_same_interface_now_implemented ──
         """接口形状不变；LCD / IFP 的需求链已接入（LCD_IFP 整改计划 Phase 5）。"""
         from src.dialogue.product_router import policy_for
         from src.models.requirement import RequirementProfile

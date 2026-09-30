@@ -79,7 +79,13 @@ def _profile_value(profile: Any, name: str) -> str:
 
 
 def detect_product_domain(message: str, profile: Any = None) -> str:
-    """这句话（或当前档案）属于哪个产品域。"""
+    """这句话（或当前档案）属于哪个产品域。
+
+    客户口径（整改计划 §八"IFP 判断必须统一"）：**IFP 不再由关键词判成独立产品域** ——
+    IFP 是 LCD 的子系列，最终只由 LCD Decision Center（``lcd_decision.is_ifp_requirement``）
+    决定。所以这里命中 "interactive flat panel / whiteboard" 这类词时归 **LCD**，
+    不再产出 IFP 域（否则就是第二个 IFP 判定中心）。
+    """
     text = str(message or "")
     hits = set()
     if _LED_RE.search(text):
@@ -87,13 +93,17 @@ def detect_product_domain(message: str, profile: Any = None) -> str:
     if _LCD_RE.search(text):
         hits.add(LCD)
     if _IFP_RE.search(text):
-        hits.add(IFP)
+        # 交互平板 → LCD 域（子类型由 LCD 决策中心在需求链里判）
+        hits.add(LCD)
     if len(hits) > 1:
         return MULTI
     if len(hits) == 1:
         return next(iter(hits))
     stored = _profile_value(profile, "display_type").upper()
-    if stored in (LED, LCD, IFP):
+    if stored == IFP:
+        # 档案里是 IFP（LCD 决策中心已经判过）→ 产品域仍然是 LCD
+        return LCD
+    if stored in (LED, LCD):
         return stored
     # 计划 v2.9.3 §五：**不再"没点名就默认 LED"** —— 只说 "screen/display" 就是 UNKNOWN，
     # 由 Product Type Router 推断（要确认）或问客户；LED 只在最终兜底时才用。

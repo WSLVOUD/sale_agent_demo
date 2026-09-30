@@ -47,7 +47,10 @@ class TestInstallationClaimsAreStripped:
         assert "包安装" not in cleaned
         assert "on-site installation for you" not in lowered
 
-    def test_keeps_the_true_statement(self):
+    def test_keeps_the_true_statement_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_keeps_the_true_statement ──
         reply = (
             "In general we do not provide on-site installation, it is usually "
             "cheaper to use a local installer. Yes, installation is included."
@@ -56,11 +59,11 @@ class TestInstallationClaimsAreStripped:
         assert "do not provide on-site installation" in cleaned
         assert "installation is included" not in cleaned.lower()
 
-    def test_keeps_installation_guide_mention(self):
+        # ── test_keeps_installation_guide_mention ──
         reply = "Every order includes an installation guide that ships with your goods."
         assert strip_contradictory_installation_claims(reply) == reply
 
-    def test_sanitize_only_touches_installation_kind(self):
+        # ── test_sanitize_only_touches_installation_kind ──
         reply = "Yes, installation is included."
         assert sanitize_service_reply(reply, FAQ_INSTALLATION) != reply
         assert sanitize_service_reply(reply, FAQ_WARRANTY) == reply
@@ -69,11 +72,14 @@ class TestInstallationClaimsAreStripped:
 class TestWholeReplySanitizer:
     """编排层：客户问安装 → 回复里矛盾的说法必须先被清掉，再接标准回答。"""
 
-    def test_faq_kind_detected(self):
+    def test_faq_kind_detected_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_faq_kind_detected ──
         assert detect_service_faq("Do you also install it?") == FAQ_INSTALLATION
         assert detect_service_faq("你们包安装吗") == FAQ_INSTALLATION
 
-    def test_contradiction_removed_before_attaching(self):
+        # ── test_contradiction_removed_before_attaching ──
         response = "Yes, installation is included."
         cleaned = sanitize_service_reply(response, detect_service_faq("do you install it?"))
         assert cleaned == ""

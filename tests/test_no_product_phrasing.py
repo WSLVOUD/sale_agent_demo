@@ -47,16 +47,22 @@ class TestBannedPhrasesDetected:
         "我们要不要放宽点间距？",
     ]
 
-    def test_banned(self):
+    def test_banned_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_banned ──
         assert_all_cases(self.BANNED_TEXTS, _is_banned, label="text")
 
-    def test_allowed(self):
+        # ── test_allowed ──
         assert_all_cases(self.ALLOWED_TEXTS, _is_allowed, label="text")
 
 
 class TestRelaxationAnswer:
 
-    def test_variants_rotate(self):
+    def test_variants_rotate_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_variants_rotate ──
         variants = {relaxation_answer("en", seed) for seed in range(8)}
         assert len(variants) >= 3
         # 每条都要点出"可放宽的具体参数"，措辞可以不同
@@ -67,10 +73,10 @@ class TestRelaxationAnswer:
                 for word in ("pixel pitch", "screen size", "viewing distance", "brightness", "size")
             ), text
 
-    def test_chinese(self):
+        # ── test_chinese ──
         assert "放宽" in relaxation_answer("zh", 0)
 
-    def test_mentions_concrete_parameters(self):
+        # ── test_mentions_concrete_parameters ──
         text = relaxation_answer("en", 0).lower()
         assert any(word in text for word in ("pixel pitch", "screen size", "viewing distance"))
 
@@ -97,7 +103,10 @@ class TestSanitizerRewrites:
 class TestFallbackRepliesUseRelaxation:
     """各处"取不到结果"的兜底文案都必须用放宽参数的话术。"""
 
-    def test_api_fallback(self):
+    def test_api_fallback_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_api_fallback ──
         import inspect
         import src.api as api_mod
 
@@ -105,12 +114,12 @@ class TestFallbackRepliesUseRelaxation:
         assert "No suitable model found" not in source
         assert "relaxation_answer" in source
 
-    def test_structured_product_query_summary(self):
+        # ── test_structured_product_query_summary ──
         from src.rag.structured_product_query import _build_product_summary
 
         assert not has_no_product_phrase(_build_product_summary([]))
 
-    def test_solution_runner_fallback(self):
+        # ── test_solution_runner_fallback ──
         import inspect
         import src.agents.solution.runner as runner_mod
 
@@ -118,14 +127,14 @@ class TestFallbackRepliesUseRelaxation:
         assert "No suitable model found" not in source
         assert "relaxation_answer" in source
 
-    def test_recommend_node_no_candidates_message(self):
+        # ── test_recommend_node_no_candidates_message ──
         import inspect
         import src.agents.solution.nodes.recommend as recommend_mod
 
         source = inspect.getsource(recommend_mod)
         assert "I couldn't find a model in our catalog" not in source
 
-    def test_recommend_prompt_forbids_no_product_claim(self):
+        # ── test_recommend_prompt_forbids_no_product_claim ──
         import inspect
         import src.agents.solution.nodes.recommend as recommend_mod
 
@@ -147,7 +156,10 @@ class TestStructuredProductQueryRespectsAccumulatedRequirements:
             query="P3", constraints=constraints, template_type=None, data_dir="data"
         )
 
-    def test_constraint_merge_pulls_in_accumulated_requirements(self):
+    def test_constraint_merge_pulls_in_accumulated_requirements_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_constraint_merge_pulls_in_accumulated_requirements ──
         from src.agents.solution.runner import merge_fast_path_constraints
 
         merged = merge_fast_path_constraints(
@@ -165,7 +177,7 @@ class TestStructuredProductQueryRespectsAccumulatedRequirements:
         assert merged["outdoor"] is True and merged["indoor"] is False
         assert merged["is_rental"] is True
 
-    def test_outdoor_rental_never_returns_indoor_models(self):
+        # ── test_outdoor_rental_never_returns_indoor_models ──
         result = self._query({
             "pixel_pitch": 3.0, "pixel_pitch_tolerance": 0.5,
             "outdoor": True, "indoor": False, "is_rental": True, "display_type": "LED",
@@ -173,7 +185,7 @@ class TestStructuredProductQueryRespectsAccumulatedRequirements:
         # 目录里没有"室外 + 租赁"系列 → 允许为空，但绝不能推室内型号
         assert all(p["installation"] == "rental" for p in result["products"]), result["products"]
 
-    def test_outdoor_fixed_returns_only_outdoor_and_survives_sanitizer(self):
+        # ── test_outdoor_fixed_returns_only_outdoor_and_survives_sanitizer ──
         from src.rag.rerank import sanitize_customer_response
 
         result = self._query({
@@ -185,9 +197,7 @@ class TestStructuredProductQueryRespectsAccumulatedRequirements:
         # 清洗器（outdoor=True）不会再把它整段删掉
         assert sanitize_customer_response(result["answer"], outdoor=True).strip()
 
-    def test_no_match_gives_relaxation_not_no_product(self):
-        # 2026-09-18：库里新增了室外租赁（TW11-OR 等，最大 P4.8），
-        # 所以"室外租赁 + P6"才是真正无匹配的组合。
+        # ── test_no_match_gives_relaxation_not_no_product ──
         result = self._query({"pixel_pitch": 6.0, "outdoor": True, "is_rental": True})
         assert not result["products"]
         assert result["answer"].strip()

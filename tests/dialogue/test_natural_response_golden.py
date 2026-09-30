@@ -52,7 +52,10 @@ def _context_for(case):
 
 class TestNaturalResponseGolden:
 
-    def test_every_case_keeps_the_selected_slot(self):
+    def test_every_case_keeps_the_selected_slot_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_every_case_keeps_the_selected_slot ──
         from src.dialogue import generate_response
         from src.rag.readiness import question_keywords
 
@@ -75,7 +78,7 @@ class TestNaturalResponseGolden:
                     problems.append(f"{case['id']}: 编造了 {token} → {text!r}")
         assert not problems, "\n".join(problems)
 
-    def test_every_case_passes_the_validator(self):
+        # ── test_every_case_passes_the_validator ──
         from src.dialogue import generate_response
         from src.dialogue.response_validator import validate_response
 

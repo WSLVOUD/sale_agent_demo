@@ -82,7 +82,10 @@ class TestTypeGate:
         monkeypatch.setattr("src.core.llm.get_llm", lambda *a, **k: _FakeLLM())
         yield
 
-    def test_image_inferred_led_does_not_enter_the_led_chain(self):
+    def test_image_inferred_led_does_not_enter_the_led_chain_merged(self):
+        """合并自 7 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_image_inferred_led_does_not_enter_the_led_chain ──
         """图片判成 LED 但客户还没确认 → 这一轮只问类型，不采集 LED 需求。"""
         state = _state(
             "i need a display,like this",
@@ -100,7 +103,7 @@ class TestTypeGate:
         assert not out.get("lcd_action")
         assert "pixel_pitch" not in str(out.get("pending_question") or "")
 
-    def test_confirmed_led_enters_the_chain(self):
+        # ── test_confirmed_led_enters_the_chain ──
         state = _state(
             "led",
             {"display_type": "LED", "status": "CONFIRMED", "locked": True},
@@ -111,7 +114,7 @@ class TestTypeGate:
         assert out.get("pending_slot") != "display_type", out.get("pending_slot")
         assert out.get("recommendation_gate", {}).get("gate") != "product_type"
 
-    def test_inferred_lcd_does_not_enter_the_lcd_chain(self):
+        # ── test_inferred_lcd_does_not_enter_the_lcd_chain ──
         state = _state(
             "we need screens for a meeting room",
             {"display_type": "LCD", "status": "INFERRED", "source": "inference",
@@ -123,7 +126,7 @@ class TestTypeGate:
         assert out["pending_slot"] == "display_type"
         assert not out.get("lcd_action"), "类型没确认就不许进 LCD 需求链"
 
-    def test_profile_customer_source_counts_as_confirmed(self):
+        # ── test_profile_customer_source_counts_as_confirmed ──
         profile = _profile()
         profile.sources["display_type"] = "explicit"
         state = _state(
@@ -134,7 +137,7 @@ class TestTypeGate:
 
         assert sales_req._type_confirmed(state, profile) is True
 
-    def test_vision_accepted_type_counts_as_confirmed(self):
+        # ── test_vision_accepted_type_counts_as_confirmed ──
         """客户没正面回答 → 按识别结果走，也算已定（客户口径）。"""
         profile = _profile()
         profile.sources["display_type"] = "vision_accepted"
@@ -146,7 +149,7 @@ class TestTypeGate:
 
         assert sales_req._type_confirmed(state, profile) is True
 
-    def test_vision_explicit_type_alone_is_not_enough(self):
+        # ── test_vision_explicit_type_alone_is_not_enough ──
         """图片刚看到、还没跟客户核对（vision_explicit）→ 不算确认。"""
         profile = _profile()
         profile.sources["display_type"] = "vision_explicit"
@@ -158,7 +161,7 @@ class TestTypeGate:
 
         assert sales_req._type_confirmed(state, profile) is False
 
-    def test_lcd_domain_requires_confirmation(self):
+        # ── test_lcd_domain_requires_confirmation ──
         profile = _profile()
         profile.sources["display_type"] = "vision_explicit"
 
@@ -189,7 +192,10 @@ class TestConfirmedImageFactsAreNotAskedAgain:
         profile.sources["environment"] = environment_source
         return profile
 
-    def test_vision_accepted_fact_is_not_asked_again(self):
+    def test_vision_accepted_fact_is_not_asked_again_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_vision_accepted_fact_is_not_asked_again ──
         """图片说 indoor，客户核对过没反对 → 不能再问"室内还是室外"。"""
         profile = self._monitoring_profile("vision_accepted")
 
@@ -198,7 +204,7 @@ class TestConfirmedImageFactsAreNotAskedAgain:
         assert "environment" not in action.missing_fields, action.missing_fields
         assert action.question_slot != "environment", action.question_slot
 
-    def test_vision_explicit_fact_still_needs_the_confirmation_round(self):
+        # ── test_vision_explicit_fact_still_needs_the_confirmation_round ──
         """刚识别出来、还没核对（vision_explicit）→ 仍然不算客户已经回答。"""
         profile = self._monitoring_profile("vision_explicit")
 

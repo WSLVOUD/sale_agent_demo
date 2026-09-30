@@ -43,10 +43,13 @@ def _scan_src(pattern: str):
 
 class TestOneDecisionEntry:
 
-    def test_dialogue_decision_is_defined_once(self):
+    def test_dialogue_decision_is_defined_once_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_dialogue_decision_is_defined_once ──
         assert _scan_src(r"^def decide_turn_action\b") == ["src/dialogue/turn_action.py"]
 
-    def test_expression_action_has_one_bridge(self):
+        # ── test_expression_action_has_one_bridge ──
         assert _scan_src(r"^def expression_action\b") == ["src/dialogue/action_bridge.py"]
         assert "from ....dialogue.action_bridge import expression_action" in _read(
             "src/agents/sales/nodes/script_generator.py"
@@ -55,7 +58,10 @@ class TestOneDecisionEntry:
 
 class TestQuestionPipelineHasOneOwnerPerJob:
 
-    def test_each_stage_is_defined_in_exactly_one_module(self):
+    def test_each_stage_is_defined_in_exactly_one_module_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_each_stage_is_defined_in_exactly_one_module ──
         expectations = {
             r"^def shuffled_slots\b": "src/dialogue/question_order.py",
             r"^class AskedQuestionRegistry\b": "src/dialogue/question_registry.py",
@@ -65,12 +71,12 @@ class TestQuestionPipelineHasOneOwnerPerJob:
         for pattern, expected in expectations.items():
             assert _scan_src(pattern) == [expected], pattern
 
-    def test_question_registry_is_session_state_not_memory(self):
+        # ── test_question_registry_is_session_state_not_memory ──
         """问题状态机不是 Memory（计划 §21）：不允许碰 memory/store。"""
         registry = _read("src/dialogue/question_registry.py")
         assert "memory" not in registry.replace("这不是 Memory", ""), "问题状态机不该引用记忆层"
 
-    def test_question_planner_does_not_pick_the_slot(self):
+        # ── test_question_planner_does_not_pick_the_slot ──
         """选槽位是 question_flow 的事；planner 只负责怎么问。"""
         planner = _read("src/dialogue/question_planner.py")
         assert "pass1_pending" not in planner
@@ -79,11 +85,14 @@ class TestQuestionPipelineHasOneOwnerPerJob:
 
 class TestOneQuestionRuleHasOneSource:
 
-    def test_the_budget_is_defined_once(self):
+    def test_the_budget_is_defined_once_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_the_budget_is_defined_once ──
         defining = _scan_src(r"^MAX_QUESTIONS_PER_TURN = \d+")
         assert defining == ["src/dialogue/action.py"], defining
 
-    def test_all_layers_use_the_same_budget(self):
+        # ── test_all_layers_use_the_same_budget ──
         from src.dialogue.action import MAX_QUESTIONS_PER_TURN
         from src.dialogue.final_guard import FinalResponseGuard
         from src.dialogue.final_response import FinalResponseCoordinator
@@ -93,7 +102,7 @@ class TestOneQuestionRuleHasOneSource:
         assert FinalResponseCoordinator().guard.max_questions == MAX_QUESTIONS_PER_TURN
         assert ResponseShape(allow_question=True).max_questions == MAX_QUESTIONS_PER_TURN
 
-    def test_layers_take_the_budget_from_that_one_source(self):
+        # ── test_layers_take_the_budget_from_that_one_source ──
         """不许各写各的 1：三层都必须引用同一个常量。"""
         for rel in (
             "src/dialogue/final_guard.py",

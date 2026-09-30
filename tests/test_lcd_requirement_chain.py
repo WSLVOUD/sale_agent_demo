@@ -70,7 +70,10 @@ class TestCase3VideoWallDoesNotReaskSplicing:
 
 
 class TestCase4And5ResolutionDefaults:
-    def test_75_inch_defaults_to_4k(self):
+    def test_75_inch_defaults_to_4k_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_75_inch_defaults_to_4k ──
         profile = _lcd_profile()
         profile, action = lcd_turn(profile, "We need a 75 inch LCD.")
 
@@ -79,7 +82,7 @@ class TestCase4And5ResolutionDefaults:
         assert profile.lcd_resolution_source == "size_rule_gt_65"
         assert action.question_slot != "lcd_size", "尺寸已经给了，不能再问尺寸"
 
-    def test_55_inch_defaults_to_2k(self):
+        # ── test_55_inch_defaults_to_2k ──
         profile = _lcd_profile()
         profile, _action = lcd_turn(profile, "55 inch LCD")
 
@@ -103,19 +106,22 @@ class Test65InchBoundaryIsNotAskedToCustomer:
     "库里 2K/4K 都有"的边界，按"大屏走 4K"的口径默认 4K，不再问。
     """
 
-    def test_65_defaults_to_4k_without_catalog(self):
+    def test_65_defaults_to_4k_without_catalog_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_65_defaults_to_4k_without_catalog ──
         resolution, source = resolution_for_size(65)
 
         assert resolution == "4K", resolution
         assert source == "size_default_4k_65", source
 
-    def test_65_uses_product_catalog_when_it_is_unambiguous(self):
+        # ── test_65_uses_product_catalog_when_it_is_unambiguous ──
         resolution, source = resolution_for_size(65, catalog_resolutions=["4K", "3840x2160"])
 
         assert resolution == "4K", resolution
         assert source == "product_catalog", source
 
-    def test_65_in_profile_never_asks_the_resolution_question(self):
+        # ── test_65_in_profile_never_asks_the_resolution_question ──
         profile = _lcd_profile()
         profile, action = lcd_turn(profile, "We need a 65 inch LCD for a meeting room.")
 
@@ -136,7 +142,10 @@ class TestCase7MeetingRoomDoesNotLockIfp:
 
 
 class TestCase8InteractiveWhiteboardLocksIfp:
-    def test_whiteboard_locks_handwriting_and_does_not_reask_it(self):
+    def test_whiteboard_locks_handwriting_and_does_not_reask_it_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_whiteboard_locks_handwriting_and_does_not_reask_it ──
         profile = _lcd_profile()
         profile, action = lcd_turn(profile, "We need an interactive whiteboard for a classroom.")
 
@@ -147,7 +156,7 @@ class TestCase8InteractiveWhiteboardLocksIfp:
         assert "lcd_tender" in action.missing_fields, action.missing_fields
         assert "lcd_ops" in action.missing_fields, action.missing_fields
 
-    def test_advertising_branch_never_asks_ops(self):
+        # ── test_advertising_branch_never_asks_ops ──
         profile = _lcd_profile()
         profile, action = lcd_turn(profile, "We need indoor advertising displays.")
 
@@ -155,7 +164,7 @@ class TestCase8InteractiveWhiteboardLocksIfp:
         assert "lcd_ops" not in action.missing_fields, action.missing_fields
         assert "lcd_tender" not in action.missing_fields, action.missing_fields
 
-    def test_tender_project_invites_the_documents(self):
+        # ── test_tender_project_invites_the_documents ──
         """计划 §十六：客户说"这是招投标项目"→ 锁定 tender 并引导发招标文件。"""
         profile = _lcd_profile()
         profile, action = lcd_turn(
@@ -168,7 +177,7 @@ class TestCase8InteractiveWhiteboardLocksIfp:
         assert "tender document" in action.question.lower(), action.question
         assert action.question.count("?") == 1
 
-    def test_camera_is_only_asked_when_the_context_mentions_it(self):
+        # ── test_camera_is_only_asked_when_the_context_mentions_it ──
         """课堂：不主动问摄像头；提到 remote teaching / video conference 才问。"""
         classroom = _lcd_profile()
         classroom, action = lcd_turn(
@@ -188,7 +197,7 @@ class TestCase8InteractiveWhiteboardLocksIfp:
             or online.lcd_camera_required is not None
         ), action2.missing_fields
 
-    def test_meeting_room_may_still_ask_about_the_camera(self):
+        # ── test_meeting_room_may_still_ask_about_the_camera ──
         profile = _lcd_profile()
         profile, action = lcd_turn(
             profile, "We need an interactive whiteboard for our meeting room."
@@ -249,7 +258,10 @@ class TestCase11ImageCameraIsNotARequirement:
 
 
 class TestCase12ImageTextConflict:
-    def test_outdoor_context_vs_indoor_image_asks_customer(self):
+    def test_outdoor_context_vs_indoor_image_asks_customer_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_outdoor_context_vs_indoor_image_asks_customer ──
         profile = _lcd_profile(environment="outdoor")
         recognition = ImageRecognitionResult(
             display_type="LCD", environment="indoor", confidence=0.9
@@ -264,7 +276,7 @@ class TestCase12ImageTextConflict:
         assert "camera" not in (action.question or "").lower()
         assert action.question.count("?") == 1, action.question
 
-    def test_confirmation_prompt_mentions_both_sides(self):
+        # ── test_confirmation_prompt_mentions_both_sides ──
         profile = _lcd_profile(environment="outdoor")
         recognition = ImageRecognitionResult(
             display_type="LCD", environment="indoor", confidence=0.9
@@ -344,7 +356,10 @@ class TestSingleDecisionEntry:
         assert out.get("lcd_action") is None, "LED 会话不能走 LCD 需求链"
         assert out["recommendation_gate"]["gate"] != "lcd_requirement"
 
-    def test_lcd_policy_delegates_to_the_decision_layer(self):
+    def test_lcd_policy_delegates_to_the_decision_layer_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_lcd_policy_delegates_to_the_decision_layer ──
         from src.dialogue.lcd_decision import decide_lcd_next_action
         from src.dialogue.product_router import LCDPolicy, IFPPolicy, policy_for
         from src.dialogue.turn_kind import LCD, IFP
@@ -359,7 +374,7 @@ class TestSingleDecisionEntry:
         assert IFPPolicy().get_missing_requirements(profile) == expected.missing_fields
         assert policy_for(IFP).implemented is True
 
-    def test_one_next_action_and_at_most_one_question_per_turn(self):
+        # ── test_one_next_action_and_at_most_one_question_per_turn ──
         for message in (
             "I need an LCD.",
             "Control room, indoor, 6x2 video wall.",
@@ -373,7 +388,7 @@ class TestSingleDecisionEntry:
                 "unknown", MONITORING, ADVERTISING, CONFERENCE_EDUCATION, "normal",
             ), action.lcd_category
 
-    def test_locked_customer_facts_are_never_re_asked(self):
+        # ── test_locked_customer_facts_are_never_re_asked ──
         profile = _lcd_profile(environment="indoor")
         profile.lcd_is_splicing = True
         profile.lcd_splicing_layout = "6x2"
@@ -397,7 +412,10 @@ class TestSingleDecisionEntry:
 
 
 class TestKeywordsOnlyExtractCandidates:
-    def test_keyword_alone_does_not_decide_the_branch_question(self):
+    def test_keyword_alone_does_not_decide_the_branch_question_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_keyword_alone_does_not_decide_the_branch_question ──
         """关键词只产出候选事实：单靠 "meeting" 不会直接锁 IFP / 也不会跳过问题。"""
         facts = extract_lcd_facts("meeting")
 
@@ -405,7 +423,7 @@ class TestKeywordsOnlyExtractCandidates:
         assert facts.handwriting is None, "看见 meeting 不能推断需要手写"
         assert facts.touch is None
 
-    def test_lcd_facts_never_touch_led_fields(self):
+        # ── test_lcd_facts_never_touch_led_fields ──
         facts = extract_lcd_facts("75 inch 4K LCD with touch for a video wall")
 
         assert not hasattr(facts, "pixel_pitch_mm")
@@ -413,7 +431,10 @@ class TestKeywordsOnlyExtractCandidates:
 
 
 class TestLedChainStaysFrozen:
-    def test_led_slot_order_and_gate_inputs_unchanged(self):
+    def test_led_slot_order_and_gate_inputs_unchanged_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_led_slot_order_and_gate_inputs_unchanged ──
         from src.models.requirement import SLOT_ORDER
 
         assert "pixel_pitch" not in SLOT_ORDER, "SLOT_ORDER 用槽位名（pixel_pitch → pixel_pitch_mm）"
@@ -429,7 +450,7 @@ class TestLedChainStaysFrozen:
             "target_size", "budget_level",
         ], led.missing_slots()
 
-    def test_led_policy_is_still_the_existing_chain(self):
+        # ── test_led_policy_is_still_the_existing_chain ──
         from src.dialogue.product_router import policy_for
         from src.dialogue.turn_kind import LED
 
@@ -437,7 +458,7 @@ class TestLedChainStaysFrozen:
         assert policy.implemented is True
         assert "LED" in policy.product_domain
 
-    def test_led_requirement_extraction_untouched(self):
+        # ── test_led_requirement_extraction_untouched ──
         from src.rag.query_understanding import extract_slots
 
         slots = extract_slots("indoor 3m x 5m P4 5m viewing distance")
@@ -584,7 +605,10 @@ class TestLcdAndLedChainsAreIsolated:
     （日志："Policy=ASK(environment) 与销售层准备的问句(purpose)不一致 → 以 Policy 为准"）。
     """
 
-    def test_customer_facing_slot_keeps_the_lcd_decision(self):
+    def test_customer_facing_slot_keeps_the_lcd_decision_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_customer_facing_slot_keeps_the_lcd_decision ──
         from src.dialogue.lcd_decision import lcd_turn
         from src.dialogue.response_coordinator import ResponseCoordinator
         from src.memory.store import memory
@@ -612,7 +636,7 @@ class TestLcdAndLedChainsAreIsolated:
         assert plan.question_slot == "purpose", plan.question_slot
         assert result["duplicate_check"] == "lcd_chain", result["duplicate_check"]
 
-    def test_three_turn_lcd_conversation_never_asks_an_led_question(self):
+        # ── test_three_turn_lcd_conversation_never_asks_an_led_question ──
         from src.dialogue.lcd_decision import lcd_turn
         from src.dialogue.response_coordinator import ResponseCoordinator
         from src.memory.store import memory
@@ -653,7 +677,7 @@ class TestLcdAndLedChainsAreIsolated:
         assert not (set(asked) & LED_ONLY_SLOTS), asked
         assert all(slot.startswith("lcd_") or slot == "purpose" for slot in asked), asked
 
-    def test_lcd_questions_never_ask_width_height_or_installation(self):
+        # ── test_lcd_questions_never_ask_width_height_or_installation ──
         from src.dialogue.lcd_decision import lcd_turn
 
         profile = _lcd_profile()
@@ -663,7 +687,7 @@ class TestLcdAndLedChainsAreIsolated:
         assert "width" not in question and "height" not in question, action.question
         assert "permanent" not in question and "rental" not in question, action.question
 
-    def test_answered_lcd_facts_move_the_chain_forward(self):
+        # ── test_answered_lcd_facts_move_the_chain_forward ──
         """客户答非所问（问了用途答 indoor）→ 换下一项，不把同一项再问一遍。"""
         from src.dialogue.lcd_decision import lcd_turn
 

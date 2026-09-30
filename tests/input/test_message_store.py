@@ -17,19 +17,22 @@ from src.input.message_store import (  # noqa: E402
 
 class TestInMemoryMessageStore:
 
-    def test_add_is_idempotent(self):
+    def test_add_is_idempotent_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_add_is_idempotent ──
         store = InMemoryMessageStore()
         assert store.add("m1", kind=KIND_MESSAGE_ID) is True
         assert store.add("m1", kind=KIND_MESSAGE_ID) is False
         assert store.is_seen("m1") is True
 
-    def test_forget_allows_retry(self):
+        # ── test_forget_allows_retry ──
         store = InMemoryMessageStore()
         store.add("m1")
         store.forget("m1")
         assert store.is_seen("m1") is False
 
-    def test_ttl_expires(self):
+        # ── test_ttl_expires ──
         import time
 
         store = InMemoryMessageStore()

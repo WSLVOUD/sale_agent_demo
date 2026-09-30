@@ -42,7 +42,10 @@ class TestSolutionDoesNotRebuildRequirements:
         # documents=None → 不加载 sparse/bm25 索引（只测 state 构造，不跑检索）
         return SolutionAgentRunner(vectorstore=None)
 
-    def test_no_profile_means_requirement_not_ready(self):
+    def test_no_profile_means_requirement_not_ready_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_no_profile_means_requirement_not_ready ──
         """没有 RequirementProfile → 明确标记未就绪，不再自己抽需求。"""
         runner = self._solution_runner()
         state = runner._build_initial_state(
@@ -61,7 +64,7 @@ class TestSolutionDoesNotRebuildRequirements:
         assert state.get("requirement") == {}, state.get("requirement")
         assert state.get("requirement_not_ready") is True
 
-    def test_legacy_dict_is_passed_through_without_re_derivation(self):
+        # ── test_legacy_dict_is_passed_through_without_re_derivation ──
         """调用方给了旧字典、但没有 profile → 原样带过，不做关键词推断。"""
         runner = self._solution_runner()
         legacy = {"display_type": "LED", "usage": "演唱会"}  # 以前会被推成 outdoor
@@ -79,7 +82,7 @@ class TestSolutionDoesNotRebuildRequirements:
         assert state.get("requirement") == legacy, state.get("requirement")
         assert state.get("requirement_not_ready") is True
 
-    def test_profile_path_is_unchanged(self):
+        # ── test_profile_path_is_unchanged ──
         """正常链路：有 profile → 仍然是它的只读投影。"""
         from src.models.requirement import RequirementProfile
 
@@ -103,14 +106,17 @@ class TestSolutionDoesNotRebuildRequirements:
 
 class TestNoHistoryExtractionLeft:
 
-    def test_solution_runner_has_no_history_requirement_extraction(self):
+    def test_solution_runner_has_no_history_requirement_extraction_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_solution_runner_has_no_history_requirement_extraction ──
         code = _code_only(_read("src/agents/solution/runner.py"))
         assert "_extract_requirements(" not in code, "Solution 不该再从 history 抽取需求"
         assert "outdoor_usages" not in code and "indoor_usages" not in code, (
             "中文关键词重新推断室内外应已移除"
         )
 
-    def test_production_callers_always_pass_a_profile(self):
+        # ── test_production_callers_always_pass_a_profile ──
         """所有生产调用点都必须把 profile 传进来（否则会退化成 NOT_READY）。"""
         for rel in (
             "src/agents/sales/nodes/router.py",

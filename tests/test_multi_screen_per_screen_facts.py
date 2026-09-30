@@ -103,7 +103,10 @@ class TestRootCauseDocumented:
 class TestScreenQueryTextKeepsOwnFacts:
     """修法：单块屏只拿"这一块屏自己的需求句"去推荐。"""
 
-    def test_indoor_fixed_screen_text_keeps_indoor_fixed(self):
+    def test_indoor_fixed_screen_text_keeps_indoor_fixed_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_indoor_fixed_screen_text_keeps_indoor_fixed ──
         from src.rag.multi_screen import MultiScreenManager
         from src.rag.query_understanding import extract_slots
 
@@ -116,7 +119,7 @@ class TestScreenQueryTextKeepsOwnFacts:
         assert slots.get("target_width_mm") == 3000.0, slots
         assert slots.get("target_height_mm") == 5000.0, slots
 
-    def test_outdoor_rental_screen_text_keeps_outdoor_rental(self):
+        # ── test_outdoor_rental_screen_text_keeps_outdoor_rental ──
         from src.rag.multi_screen import MultiScreenManager
         from src.rag.query_understanding import extract_slots
 
@@ -126,7 +129,7 @@ class TestScreenQueryTextKeepsOwnFacts:
         assert slots.get("environment") == "outdoor", slots
         assert slots.get("installation") == "rental", slots
 
-    def test_hard_constraints_follow_the_screen_not_the_project_sentence(self):
+        # ── test_hard_constraints_follow_the_screen_not_the_project_sentence ──
         from src.rag.hard_filter import build_hard_constraints
         from src.rag.multi_screen import MultiScreenManager
         from src.rag.query_understanding import understand_query
@@ -147,21 +150,24 @@ class TestScreenQueryTextKeepsOwnFacts:
 class TestModelMatchesScreenChecksInstallation:
     """型号校验不能只看环境：室内固装不能推租赁款，室外租赁不能推固装款。"""
 
-    def test_indoor_fixed_rejects_a_rental_model(self):
+    def test_indoor_fixed_rejects_a_rental_model_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_indoor_fixed_rejects_a_rental_model ──
         from src.rag.multi_screen import MultiScreenManager
 
         profile = {"environment": "indoor", "installation": "fixed"}
         assert MultiScreenManager._model_matches_screen("TW11-3216-P4.0", profile) is True
         assert MultiScreenManager._model_matches_screen("TW11-IR-P3.9", profile) is False
 
-    def test_outdoor_rental_rejects_a_fixed_model(self):
+        # ── test_outdoor_rental_rejects_a_fixed_model ──
         from src.rag.multi_screen import MultiScreenManager
 
         profile = {"environment": "outdoor", "installation": "rental"}
         assert MultiScreenManager._model_matches_screen("TW11-OR-P3.9", profile) is True
         assert MultiScreenManager._model_matches_screen("TW11-OD-P4", profile) is False
 
-    def test_unknown_installation_keeps_the_environment_only_check(self):
+        # ── test_unknown_installation_keeps_the_environment_only_check ──
         from src.rag.multi_screen import MultiScreenManager
 
         assert MultiScreenManager._model_matches_screen(
@@ -265,14 +271,17 @@ class TestMultiScreenRecommendationPerScreen:
         )
         return stub, reply
 
-    def test_both_screens_get_a_model(self):
+    def test_both_screens_get_a_model_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_both_screens_get_a_model ──
         stub, reply = self._run()
 
         assert reply, "多屏回复不能为空"
         assert len(stub.models) == 2, stub.models
         assert "still being confirmed" not in reply, reply
 
-    def test_indoor_screen_gets_a_fixed_model(self):
+        # ── test_indoor_screen_gets_a_fixed_model ──
         stub, reply = self._run("multi-screen-install-mix-indoor")
 
         first = _canonical_record(stub.models[0])
@@ -280,14 +289,14 @@ class TestMultiScreenRecommendationPerScreen:
         assert getattr(first, "installation", "") == "fixed", stub.models[0]
         assert reply.split("\n\n")[0].find(stub.models[0]) >= 0, reply
 
-    def test_outdoor_screen_gets_a_rental_model(self):
+        # ── test_outdoor_screen_gets_a_rental_model ──
         stub, reply = self._run("multi-screen-install-mix-outdoor")
 
         second = _canonical_record(stub.models[1])
         assert getattr(second, "outdoor", False) is True, stub.models[1]
         assert getattr(second, "installation", "") == "rental", stub.models[1]
 
-    def test_each_screen_only_sees_its_own_facts(self):
+        # ── test_each_screen_only_sees_its_own_facts ──
         stub, _reply = self._run("multi-screen-install-mix-messages")
 
         first_message, second_message = stub.seen_messages[0], stub.seen_messages[1]
@@ -438,20 +447,23 @@ class TestMultiScreenCompositionIsNotTemplated:
 
         return MultiScreenManager._compose_screen_blocks(self._blocks(), language)
 
-    def test_greeting_appears_only_once(self):
+    def test_greeting_appears_only_once_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_greeting_appears_only_once ──
         reply = self._reply()
 
         assert reply.lower().count("hi jack") == 1, reply
         assert reply.lower().count("thanks for reaching out") == 1, reply
 
-    def test_second_block_does_not_open_with_the_same_opener(self):
+        # ── test_second_block_does_not_open_with_the_same_opener ──
         reply = self._reply()
 
         second = reply.split("\n\n")[1]
         body = second.split(":", 1)[1].strip().lower()
         assert not body.startswith(("hi", "hello", "hey", "thanks", "thank you")), body[:60]
 
-    def test_only_one_ask_survives_and_it_closes_the_reply(self):
+        # ── test_only_one_ask_survives_and_it_closes_the_reply ──
         reply = self._reply()
 
         questions = reply.count("?") + reply.count("？")
@@ -460,7 +472,7 @@ class TestMultiScreenCompositionIsNotTemplated:
         assert reply.rstrip().endswith((".", "?", "!", "。", "？", "！")), reply[-80:]
         assert "please share" in reply, "保留下来的应该是最后那一个收尾请求"
 
-    def test_each_block_keeps_its_own_model_and_facts(self):
+        # ── test_each_block_keeps_its_own_model_and_facts ──
         reply = self._reply()
         first, second = reply.split("\n\n")
 
@@ -468,7 +480,7 @@ class TestMultiScreenCompositionIsNotTemplated:
         assert "TW11-OR-P3.9" in second and "10 x 20 = 200" in second, second
         assert "TW11-3216-P3.0" not in second, second
 
-    def test_single_block_keeps_its_own_greeting(self):
+        # ── test_single_block_keeps_its_own_greeting ──
         from src.rag.multi_screen import MultiScreenManager
 
         one = self._blocks()[:1]
@@ -480,7 +492,10 @@ class TestMultiScreenCompositionIsNotTemplated:
 class TestScreenBriefTellsTheModelWhichScreenThisIs:
     """第二块不能再借用第一块的场景/环境（实测：室外那块写成 "your indoor 3x5 screen"）。"""
 
-    def test_brief_names_this_screen_and_forbids_the_other(self):
+    def test_brief_names_this_screen_and_forbids_the_other_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_brief_names_this_screen_and_forbids_the_other ──
         from src.rag.multi_screen import MultiScreenManager
 
         brief = MultiScreenManager._screen_brief(
@@ -493,7 +508,7 @@ class TestScreenBriefTellsTheModelWhichScreenThisIs:
         assert "indoor" in lowered, "要点明这块屏是室外的（不要写成室内、不要提另一块屏）: " + brief
         assert "greet" in lowered, brief
 
-    def test_per_screen_recommend_passes_the_brief(self):
+        # ── test_per_screen_recommend_passes_the_brief ──
         from src.memory.store import memory
         from src.models.requirement import RequirementProfile
         from src.rag.multi_screen import MultiScreenManager
@@ -548,7 +563,10 @@ class TestPhantomThirdScreen:
     客户看到的第三块屏（标签连环境都没有）。
     """
 
-    def test_screen_facts_definition(self):
+    def test_screen_facts_definition_merged(self):
+        """合并自 6 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_screen_facts_definition ──
         from src.rag.multi_screen import MultiScreenManager
 
         assert MultiScreenManager._describes_a_screen({"environment": "indoor"}) is True
@@ -559,7 +577,7 @@ class TestPhantomThirdScreen:
         ) is False
         assert MultiScreenManager._describes_a_screen({}) is False
 
-    def test_two_screens_intent_does_not_open_a_new_item(self):
+        # ── test_two_screens_intent_does_not_open_a_new_item ──
         from src.memory.store import memory
         from src.models.requirement import RequirementProfile
         from src.rag.multi_screen import MultiScreenManager
@@ -589,7 +607,7 @@ class TestPhantomThirdScreen:
         assert len(memory.get_project_items(session_id)) == 1
         assert memory.get_active_item_index(session_id) == 0
 
-    def test_quantity_statement_is_not_a_new_item_even_with_a_full_profile(self):
+        # ── test_quantity_statement_is_not_a_new_item_even_with_a_full_profile ──
         """整块档案都齐了，客户说"i need two screens"仍然只是在报数量。"""
         from src.rag.project_items import detect_new_item
 
@@ -600,7 +618,7 @@ class TestPhantomThirdScreen:
         ):
             assert detect_new_item(message, _indoor_fixed_profile()) == (False, ""), message
 
-    def test_a_second_screen_statement_still_opens_a_new_item(self):
+        # ── test_a_second_screen_statement_still_opens_a_new_item ──
         from src.rag.project_items import detect_new_item
 
         should_start, reason = detect_new_item(
@@ -608,7 +626,7 @@ class TestPhantomThirdScreen:
         )
         assert should_start is True and reason, (should_start, reason)
 
-    def test_new_item_still_opens_once_a_real_screen_exists(self):
+        # ── test_new_item_still_opens_once_a_real_screen_exists ──
         from src.memory.store import memory
         from src.models.requirement import RequirementProfile
         from src.rag.multi_screen import MultiScreenManager
@@ -634,7 +652,7 @@ class TestPhantomThirdScreen:
         assert reason, "第一块屏已经描述清楚了 → 客户说'再来一块'要能开新条目"
         assert len(memory.get_project_items(session_id)) == 2
 
-    def test_recommend_skips_an_item_with_no_screen_facts(self):
+        # ── test_recommend_skips_an_item_with_no_screen_facts ──
         from src.memory.store import memory
         from src.models.requirement import RequirementProfile
         from src.rag.multi_screen import MultiScreenManager
@@ -679,7 +697,10 @@ class TestPhantomThirdScreen:
 class TestMultiScreenReplyStaysShort:
     """客户口径（2026-09-28 第三次）：两块屏的推荐要短，但不能短到写不完。"""
 
-    def test_brief_sets_a_word_budget_and_format(self):
+    def test_brief_sets_a_word_budget_and_format_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_brief_sets_a_word_budget_and_format ──
         from src.rag.multi_screen import MultiScreenManager
 
         brief = MultiScreenManager._screen_brief(
@@ -690,7 +711,7 @@ class TestMultiScreenReplyStaysShort:
         assert "no closing commentary" in brief, brief
         assert "tiling options" in brief, brief
 
-    def test_composer_drops_fact_free_closing_commentary(self):
+        # ── test_composer_drops_fact_free_closing_commentary ──
         from src.rag.multi_screen import MultiScreenManager
 
         indoor = _indoor_fixed_profile().model_dump()
@@ -715,7 +736,7 @@ class TestMultiScreenReplyStaysShort:
         assert "5 x 11 = 55 cabinets" in reply, reply
         assert "10 x 20 = 200 cabinets" in reply, reply
 
-    def test_filler_trim_never_empties_a_block(self):
+        # ── test_filler_trim_never_empties_a_block ──
         from src.rag.multi_screen import MultiScreenManager
 
         indoor = _indoor_fixed_profile().model_dump()
@@ -730,13 +751,16 @@ class TestMultiScreenReplyStaysShort:
 class TestInstallationTypoTolerance:
     """实测笔误："fixed for indoor and reantal for outdoor" —— 室外那块要租赁。"""
 
-    def test_reantal_is_read_as_rental(self):
+    def test_reantal_is_read_as_rental_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_reantal_is_read_as_rental ──
         from src.rag.query_understanding import extract_slots
 
         slots = extract_slots("fixed for indoor and reantal for outdoor")
         assert slots.get("installation") == "rental", slots
 
-    def test_splitter_assigns_rental_to_the_outdoor_screen(self):
+        # ── test_splitter_assigns_rental_to_the_outdoor_screen ──
         from src.rag.project_items import split_multi_screen_specs
 
         specs = split_multi_screen_specs("fixed for indoor and reantal for outdoor")
@@ -758,7 +782,10 @@ class TestPurposeNeverCarriesTheInstallationWord:
         拦下 → "still being confirmed"（永远推不出来）。
     """
 
-    def test_extract_slots_does_not_turn_rental_into_a_purpose(self):
+    def test_extract_slots_does_not_turn_rental_into_a_purpose_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_extract_slots_does_not_turn_rental_into_a_purpose ──
         from src.rag.query_understanding import extract_slots
 
         slots = extract_slots("fixed for indoor and rental for outdoor")
@@ -766,7 +793,7 @@ class TestPurposeNeverCarriesTheInstallationWord:
         assert slots.get("purpose") in (None, ""), slots
         assert slots.get("installation") == "rental", slots
 
-    def test_sanitize_purpose_drops_installation_and_environment_words(self):
+        # ── test_sanitize_purpose_drops_installation_and_environment_words ──
         from src.models.requirement import sanitize_purpose
 
         for bad in ("rental", "fixed", "indoor", "outdoor", "租赁", "rental event", "室内"):
@@ -774,7 +801,7 @@ class TestPurposeNeverCarriesTheInstallationWord:
         assert sanitize_purpose("church") == "church"
         assert sanitize_purpose(None) is None
 
-    def test_screen_label_does_not_show_the_installation_word(self):
+        # ── test_screen_label_does_not_show_the_installation_word ──
         from src.rag.project_items import screen_label
 
         label = screen_label(
@@ -783,7 +810,7 @@ class TestPurposeNeverCarriesTheInstallationWord:
         assert "rental" not in label.lower(), label
         assert "indoor" in label.lower(), label
 
-    def test_indoor_screen_message_and_constraints_stay_fixed(self):
+        # ── test_indoor_screen_message_and_constraints_stay_fixed ──
         from src.rag.hard_filter import build_hard_constraints
         from src.rag.multi_screen import MultiScreenManager
         from src.rag.query_understanding import understand_query
@@ -803,7 +830,7 @@ class TestPurposeNeverCarriesTheInstallationWord:
         assert constraints.environment == "indoor", constraints.describe()
         assert constraints.installation == "fixed", constraints.describe()
 
-    def test_indoor_fixed_screen_still_gets_a_model(self):
+        # ── test_indoor_fixed_screen_still_gets_a_model ──
         """端到端（硬约束选择）：室内固装那块必须出室内固装型号，不能是租赁款。"""
         from src.memory.store import memory
         from src.models.requirement import RequirementProfile

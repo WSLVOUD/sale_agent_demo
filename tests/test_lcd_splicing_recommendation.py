@@ -39,7 +39,10 @@ def _lcd(**slots) -> RequirementProfile:
 
 
 class TestYesAnswersThePreviousLcdQuestion:
-    def test_yes_takes_the_value_proposed_in_the_last_question(self):
+    def test_yes_takes_the_value_proposed_in_the_last_question_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_yes_takes_the_value_proposed_in_the_last_question ──
         profile = _lcd(
             lcd_category="monitoring", lcd_is_splicing=True, lcd_splicing_layout="3x3",
             lcd_screen_count=9, lcd_size_inch=65.0, environment="indoor",
@@ -59,7 +62,7 @@ class TestYesAnswersThePreviousLcdQuestion:
         assert profile.sources.get("lcd_bezel_mm") == "explicit"
         assert action.question_slot != "lcd_bezel", "拼缝已经确认，不能再问一遍"
 
-    def test_yes_answers_boolean_questions(self):
+        # ── test_yes_answers_boolean_questions ──
         profile = _lcd(environment="indoor", lcd_category="monitoring")
         profile.record_ask("lcd_splicing")
         profile.last_asked_slot = "lcd_splicing"
@@ -70,7 +73,7 @@ class TestYesAnswersThePreviousLcdQuestion:
 
         assert profile.lcd_is_splicing is True
 
-    def test_no_answers_boolean_questions_negatively(self):
+        # ── test_no_answers_boolean_questions_negatively ──
         profile = _lcd(environment="indoor", lcd_category="monitoring")
         profile.record_ask("lcd_splicing")
         profile.last_asked_slot = "lcd_splicing"
@@ -79,7 +82,7 @@ class TestYesAnswersThePreviousLcdQuestion:
 
         assert profile.lcd_is_splicing is False
 
-    def test_resolution_is_never_asked_so_a_bare_yes_cannot_pick_it(self):
+        # ── test_resolution_is_never_asked_so_a_bare_yes_cannot_pick_it ──
         """分辨率不再反问客户（客户口径 2026-09-30）：客户只说 "yes" 不能变成"客户要 4K"。
 
         档案里的 4K 是**尺寸规则**推出来的，来源必须还是规则，不能升级成
@@ -100,7 +103,10 @@ class TestYesAnswersThePreviousLcdQuestion:
 
 
 class TestOptionalFieldsStopLooping:
-    def test_bezel_is_asked_once_then_defaulted(self):
+    def test_bezel_is_asked_once_then_defaulted_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_bezel_is_asked_once_then_defaulted ──
         """拼缝问过一次没得到明确值 → 按计划 §十 默认 3.5mm，不再重复问。"""
         profile = _lcd(lcd_category="monitoring", lcd_is_splicing=True,
                        lcd_splicing_layout="3x3", lcd_screen_count=9,
@@ -115,7 +121,7 @@ class TestOptionalFieldsStopLooping:
             "默认值不能伪装成客户要求（计划 §八）"
         )
 
-    def test_explicit_recommend_request_closes_the_chain(self):
+        # ── test_explicit_recommend_request_closes_the_chain ──
         profile = _lcd(lcd_category="monitoring", lcd_is_splicing=True,
                        lcd_splicing_layout="3x3", lcd_screen_count=9,
                        lcd_size_inch=65.0, environment="indoor")
@@ -130,7 +136,10 @@ class TestOptionalFieldsStopLooping:
 class TestLcdRecommendationPath:
     """Solution 侧必须有 LCD 的选型路径（不能再拿 LED 的 Gate / 引擎去卡）。"""
 
-    def test_solution_gate_is_lcd_aware(self):
+    def test_solution_gate_is_lcd_aware_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_solution_gate_is_lcd_aware ──
         from src.agents.solution.nodes.requirement import recommendation_gate_node
 
         profile = _lcd(
@@ -144,7 +153,7 @@ class TestLcdRecommendationPath:
         assert out["next_action"] == "retrieve", out.get("next_action")
         assert "permanent install" not in str(out.get("pending_question") or "").lower()
 
-    def test_lcd_selection_prefers_a_video_wall_for_a_splicing_request(self):
+        # ── test_lcd_selection_prefers_a_video_wall_for_a_splicing_request ──
         from src.rag.lcd_recommendation import select_lcd_candidate
 
         profile = _lcd(
@@ -166,7 +175,7 @@ class TestLcdRecommendationPath:
         assert picked is not None
         assert picked[1].get("model") == "H6530LN-B", picked[1]
 
-    def test_lcd_selection_respects_a_non_splicing_request(self):
+        # ── test_lcd_selection_respects_a_non_splicing_request ──
         from src.rag.lcd_recommendation import select_lcd_candidate
 
         profile = _lcd(
@@ -186,7 +195,7 @@ class TestLcdRecommendationPath:
         assert picked is not None
         assert picked[1].get("model") == "P65", picked[1]
 
-    def test_lcd_recommendation_never_asks_led_questions(self):
+        # ── test_lcd_recommendation_never_asks_led_questions ──
         from src.agents.solution.nodes.recommend import _recommend_lcd
 
         profile = _lcd(

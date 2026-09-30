@@ -45,16 +45,19 @@ CHURCH = RequirementProfile.from_slots(
 
 class TestExpediteQuestions:
 
-    def test_short_window_counts_as_a_delivery_question(self):
+    def test_short_window_counts_as_a_delivery_question_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_short_window_counts_as_a_delivery_question ──
         assert is_delivery_question("不能10天到吗") is True
         assert wants_faster_delivery("不能10天到吗") is True
         assert requested_window_days("不能10天到吗") == 10
 
-    def test_normal_window_is_not_an_expedite_request(self):
+        # ── test_normal_window_is_not_an_expedite_request ──
         assert wants_faster_delivery("3周内能发货吗") is False
         assert requested_window_days("3周内能发货吗") == 21
 
-    def test_answer_covers_lead_time_and_air_freight(self):
+        # ── test_answer_covers_lead_time_and_air_freight ──
         answer = delivery_answer("不能10天到吗", language="en", seed=0) or ""
         assert "15" in answer and "30" in answer
         assert "air" in answer.lower(), answer   # 加急口径：可空运、成本增加
@@ -71,16 +74,19 @@ class TestModelGuard:
         "metadata": {"indoor": True, "outdoor": False, "is_rental": False},
     }
 
-    def test_confirmed_requirements_are_rendered(self):
+    def test_confirmed_requirements_are_rendered_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_confirmed_requirements_are_rendered ──
         lines = "\n".join(requirement_lines(CHURCH))
         assert "indoor" in lines and "fixed" in lines and "church" in lines
 
-    def test_retrieval_filters_follow_requirements(self):
+        # ── test_retrieval_filters_follow_requirements ──
         filters = retrieval_filters(CHURCH)
         assert filters.get("indoor") is True
         assert filters.get("is_rental") is False
 
-    def test_outdoor_chunk_is_dropped_for_an_indoor_customer(self):
+        # ── test_outdoor_chunk_is_dropped_for_an_indoor_customer ──
         assert chunk_conflicts(self.OUTDOOR_CHUNK, CHURCH) is True
         kept, dropped = drop_conflicting_chunks(
             [self.OUTDOOR_CHUNK, self.INDOOR_CHUNK], CHURCH
@@ -88,7 +94,7 @@ class TestModelGuard:
         assert dropped == 1
         assert kept == [self.INDOOR_CHUNK]
 
-    def test_model_sentence_is_removed(self):
+        # ── test_model_sentence_is_removed ──
         text = (
             "That is tight for your setup. "
             "The TW21-OD-P10 needs production plus waterproofing and testing. "
@@ -99,7 +105,7 @@ class TestModelGuard:
         assert "TW21-OD-P10" not in cleaned
         assert "ship by air" in cleaned
 
-    def test_opposite_environment_claim_is_removed(self):
+        # ── test_opposite_environment_claim_is_removed ──
         text = (
             "That is really tight for an outdoor fixed cabinet setup like this. "
             "Screens indoors usually need less sealing."

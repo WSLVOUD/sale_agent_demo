@@ -30,9 +30,10 @@ from src.rag.readiness import (  # noqa: E402
 
 class TestContentTypeQuestion:
 
-    def test_asked_right_after_scenario(self):
-        # 客户口径（2026-09-18）：硬性条件（室内外 / 固装租赁 / P值 / 尺寸）先问，
-        # 场景、内容类型、价格取向都排在后面且不阻塞推荐。
+    def test_asked_right_after_scenario_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_asked_right_after_scenario ──
         assert MISSING_ORDER.index("environment") < MISSING_ORDER.index("installation")
         assert MISSING_ORDER.index("installation") < MISSING_ORDER.index("pixel_pitch")
         assert MISSING_ORDER.index("pixel_pitch") < MISSING_ORDER.index("size")
@@ -49,7 +50,7 @@ class TestContentTypeQuestion:
         assert decision.missing[0] == "installation"
         assert "rental" in (decision.next_question or "").lower()
 
-    def test_every_variant_offers_both(self):
+        # ── test_every_variant_offers_both ──
         for language in ("en", "zh"):
             variants = QUESTION_VARIANTS["content_type"][language]
             assert len(variants) >= 4
@@ -58,18 +59,18 @@ class TestContentTypeQuestion:
         for text in EASIER_QUESTIONS["content_type"]["zh"]:
             assert "都有" in text, text
 
-    def test_variants_rotate(self):
+        # ── test_variants_rotate ──
         texts = {question_for("content_type", "en", seed) for seed in range(8)}
         assert len(texts) >= 3
 
-    def test_answer_parsing(self):
+        # ── test_answer_parsing ──
         assert extract_slots("放视频").get("content_type") == "video"
         assert extract_slots("主要显示图片").get("content_type") == "image"
         assert extract_slots("两种都有").get("content_type") == "mixed"
         assert extract_slots("视频和图片都要").get("content_type") == "mixed"
         assert extract_slots("a mix of both").get("content_type") == "mixed"
 
-    def test_does_not_change_selection(self):
+        # ── test_does_not_change_selection ──
         """内容类型只记录，不影响选型结果。"""
         from src.rag.recommendation_service import RecommendationService
 
@@ -106,29 +107,32 @@ class TestPricePreferenceQuestion:
         slots.update(extra)
         return RequirementProfile.from_slots(slots, explicit_keys=set(slots))
 
-    def test_price_preference_does_not_block_recommendation(self):
+    def test_price_preference_does_not_block_recommendation_merged(self):
+        """合并自 10 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_price_preference_does_not_block_recommendation ──
         """客户口径（2026-09-18）：价格取向是非硬性项，不再阻塞推荐。"""
         assert MISSING_ORDER[-1] == "price_preference"
         decision = check_recommendation_ready(self._profile())
         assert decision.ready is True
         assert "price_preference" not in decision.missing
 
-    def test_not_asked_when_budget_already_stated(self):
+        # ── test_not_asked_when_budget_already_stated ──
         decision = check_recommendation_ready(self._profile(budget_level="high"))
         assert decision.ready is True
         assert "price_preference" not in decision.missing
 
-    def test_quality_preference_maps_to_middle_tier(self):
+        # ── test_quality_preference_maps_to_middle_tier ──
         profile = self._profile(price_preference="quality")
         assert profile.budget_level == "medium"
         assert check_recommendation_ready(profile).ready is True
 
-    def test_price_and_both_map_to_default_tier(self):
+        # ── test_price_and_both_map_to_default_tier ──
         for preference in ("price", "both"):
             profile = self._profile(price_preference=preference)
             assert profile.budget_level == "low", preference
 
-    def test_quality_recommends_middle_tier_model(self):
+        # ── test_quality_recommends_middle_tier_model ──
         from src.rag.recommendation_service import RecommendationService
 
         profile = self._profile(price_preference="quality")
@@ -137,14 +141,14 @@ class TestPricePreferenceQuestion:
         assert result["recommendation_status"] == "RECOMMENDED"
         assert result["recommendations"]
 
-    def test_price_preference_parsing(self):
+        # ── test_price_preference_parsing ──
         assert extract_slots("我们更看重质量").get("price_preference") == "quality"
         assert extract_slots("价格优先").get("price_preference") == "price"
         assert extract_slots("价格和质量都看重").get("price_preference") == "both"
         # "视频和图片都要" 说的是内容类型，不能被当成"价格+质量都要"
         assert extract_slots("视频和图片都要").get("price_preference") is None
 
-    def test_unambiguous_both_phrases_are_parsed(self):
+        # ── test_unambiguous_both_phrases_are_parsed ──
         """客户口径：both are fine / either works 这类说法要算"两者都行"。"""
         for text in (
             "both are fine",
@@ -156,7 +160,7 @@ class TestPricePreferenceQuestion:
         ):
             assert extract_slots(text).get("price_preference") == "both", text
 
-    def test_bare_both_answer_is_recognised_for_price_question(self):
+        # ── test_bare_both_answer_is_recognised_for_price_question ──
         """实测 bug：问"最看重价格还是质量"客户只回 "both" → 系统当成没回答。
 
         修复：结合"上一轮问的就是这一项"把 bare both 落到 price_preference=both，
@@ -182,7 +186,7 @@ class TestPricePreferenceQuestion:
         assert profile.budget_level == "low", "两者都行 → 按默认档（最便宜优先）"
         assert check_recommendation_ready(profile).ready is True
 
-    def test_bare_both_answer_follows_the_asked_slot(self):
+        # ── test_bare_both_answer_follows_the_asked_slot ──
         """"both" 落在哪个槽位由"上一轮问的是什么"决定，不能互相污染。"""
         from src.core.requirement_extractor import get_requirement_extractor
 
@@ -194,7 +198,7 @@ class TestPricePreferenceQuestion:
         assert profile.content_type == "mixed"
         assert profile.price_preference is None
 
-    def test_wording_does_not_quote_prices(self):
+        # ── test_wording_does_not_quote_prices ──
         for language in ("en", "zh"):
             for text in QUESTION_VARIANTS["price_preference"][language]:
                 assert "$" not in text and "美元" not in text and "元" not in text
@@ -299,7 +303,10 @@ class TestOffTopicVsBusinessQuestion:
     但真正的业务问题（产品/规格/价格/交期/公司/质保）仍要正面回答。
     """
 
-    def test_offtopic_questions_are_not_business(self):
+    def test_offtopic_questions_are_not_business_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_offtopic_questions_are_not_business ──
         from src.agents.sales.nodes.requirement import _is_product_or_business_question
 
         for message in (
@@ -320,7 +327,7 @@ class TestOffTopicVsBusinessQuestion:
         ):
             assert _is_product_or_business_question(message) is True, message
 
-    def test_offtopic_question_only_acks_and_asks_requirement(self):
+        # ── test_offtopic_question_only_acks_and_asks_requirement ──
         """节点级：闲聊问句 → 回复里不能出现型号/参数，且必须继续问需求。"""
         import importlib
 

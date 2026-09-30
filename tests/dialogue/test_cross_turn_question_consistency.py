@@ -42,7 +42,10 @@ def _candidate_slots(profile) -> list:
 
 class TestCrossTurnQuestionConsistency:
 
-    def test_answering_the_question_removes_it_from_candidates(self):
+    def test_answering_the_question_removes_it_from_candidates_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_answering_the_question_removes_it_from_candidates ──
         first = _profile_from("3m x 5m indoor LED")
         first_slots = _candidate_slots(first)
         assert "viewing_distance" in first_slots, first_slots
@@ -56,14 +59,14 @@ class TestCrossTurnQuestionConsistency:
         assert "environment" not in second_slots, second_slots
         assert "size" not in second_slots, second_slots
 
-    def test_confirmed_slots_never_come_back(self):
+        # ── test_confirmed_slots_never_come_back ──
         """三个已确认的硬条件（环境 / 尺寸 / 视距）都不能再进候选。"""
         second = _profile_from("3m x 5m indoor LED", "5 meters")
         second_slots = _candidate_slots(second)
         for answered in ("environment", "size", "viewing_distance"):
             assert answered not in second_slots, (answered, second_slots)
 
-    def test_answer_to_another_slot_is_still_saved(self):
+        # ── test_answer_to_another_slot_is_still_saved ──
         """§二十四：客户答的是 mall（没回答 viewing distance）→ mall 也要存下来。"""
         profile = _profile_from("indoor 3m x 5m LED", "it will be installed in a shopping mall")
         assert profile.purpose or profile.content_type or profile.installation

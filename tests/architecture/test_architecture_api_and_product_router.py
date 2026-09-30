@@ -39,7 +39,10 @@ def _code_only(text: str) -> str:
 
 class TestProductRouterOnlyMapsConfirmedTypes:
 
-    def test_product_router_never_decides_the_type(self):
+    def test_product_router_never_decides_the_type_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_product_router_never_decides_the_type ──
         code = _code_only(_read("src/dialogue/product_router.py"))
         for token in (
             "route_display_type",   # 决策在 ProductTypeRouter
@@ -50,14 +53,14 @@ class TestProductRouterOnlyMapsConfirmedTypes:
         ):
             assert token not in code, f"ProductRouter 不得重新判断产品类型（{token}）"
 
-    def test_product_type_understanding_only_returns_signals(self):
+        # ── test_product_type_understanding_only_returns_signals ──
         """Understanding 只给信号，不能产出最终类型。"""
         code = _code_only(_read("src/dialogue/product_type_understanding.py"))
         for token in ("DisplayTypeDecision", "route_display_type", "load_decision"):
             assert token not in code, f"Understanding 不得直接决定最终类型（{token}）"
         assert "def understand_product_type_reply" in code
 
-    def test_router_is_the_single_decider(self):
+        # ── test_router_is_the_single_decider ──
         """全项目只有 route_display_type 一个决策函数。"""
         hits = []
         for root, _dirs, files in os.walk(os.path.join(project_root, "src")):
@@ -85,12 +88,15 @@ class TestApiDoesNotDecideBusiness:
         "decide_turn_action",          # 对话决策
     )
 
-    def test_api_only_feeds_the_turn_executor(self):
+    def test_api_only_feeds_the_turn_executor_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_api_only_feeds_the_turn_executor ──
         code = _code_only(_read("src/api.py"))
         for token in self.FORBIDDEN_IN_API:
             assert token not in code, f"API 不应参与业务决策（{token}）"
 
-    def test_legacy_turn_merge_entry_is_gone(self):
+        # ── test_legacy_turn_merge_entry_is_gone ──
         for rel in ("src/api.py", "src/input/__init__.py"):
             code = _code_only(_read(rel))
             assert "_merge_turn_request" not in code, f"{rel} 仍挂着旧合并入口"
@@ -99,7 +105,7 @@ class TestApiDoesNotDecideBusiness:
             os.path.join(project_root, "src", "input", "turn_payload.py")
         ), "旧 turn_payload 模块应已删除"
 
-    def test_api_still_collects_messages_for_the_executor(self):
+        # ── test_api_still_collects_messages_for_the_executor ──
         code = _code_only(_read("src/api.py"))
         assert "collect_messages" in code
         assert "_collect_turn_request" in code

@@ -54,7 +54,10 @@ def _solution_modules():
 
 class TestSolutionDoesNotUnderstandRequirements:
 
-    def test_no_llm_requirement_extraction_in_solution(self):
+    def test_no_llm_requirement_extraction_in_solution_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_no_llm_requirement_extraction_in_solution ──
         """Solution 里不许再有"需求理解"链。
 
         注意：响应生成（others / recommend 组织话术）用 LLM 是允许的 ——
@@ -73,14 +76,14 @@ class TestSolutionDoesNotUnderstandRequirements:
             if rel.endswith("nodes/requirement.py"):
                 assert "get_llm(" not in code, f"{rel} 不许可再用 LLM 提取需求"
 
-    def test_solution_never_writes_requirement_fields(self):
+        # ── test_solution_never_writes_requirement_fields ──
         """Solution 不许改 RequirementProfile 的核心需求字段（只读）。"""
         for rel in _solution_modules():
             code = _code_only(_read(rel))
             writes = re.findall(r"\b(?:profile|_profile|requirement_profile)\.\w+\s*=[^=]", code)
             assert writes == [], f"{rel} 修改了需求档案：{writes}"
 
-    def test_solution_never_decides_display_type(self):
+        # ── test_solution_never_decides_display_type ──
         for rel in _solution_modules():
             code = _code_only(_read(rel))
             for token in ("infer_display_type", "route_display_type", "_IFP_RE", "_LED_RE"):
@@ -89,7 +92,10 @@ class TestSolutionDoesNotUnderstandRequirements:
 
 class TestProductTypeRouterIsTheOnlyDecider:
 
-    def test_router_is_the_single_display_type_decision(self):
+    def test_router_is_the_single_display_type_decision_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_router_is_the_single_display_type_decision ──
         hits = []
         for root, _dirs, files in os.walk(os.path.join(project_root, "src")):
             if "__pycache__" in root:
@@ -102,7 +108,7 @@ class TestProductTypeRouterIsTheOnlyDecider:
                     hits.append(rel)
         assert hits == ["src/dialogue/product_type_router.py"], hits
 
-    def test_lcd_is_never_silently_downgraded_to_led(self):
+        # ── test_lcd_is_never_silently_downgraded_to_led ──
         from src.dialogue.product_type_router import route_display_type
 
         lcd = route_display_type("i need an LCD video wall")
@@ -111,7 +117,7 @@ class TestProductTypeRouterIsTheOnlyDecider:
         later = route_display_type("it is for a meeting room, indoor", current=lcd)
         assert later.display_type == "LCD", "已确认的 LCD 不能被场景悄悄改成 LED"
 
-    def test_explicit_ifp_intent_still_locks_ifp(self):
+        # ── test_explicit_ifp_intent_still_locks_ifp ──
         from src.dialogue.product_type_router import SUBTYPE_IFP, route_display_type
 
         decision = route_display_type("we need handwriting on an interactive whiteboard")
@@ -121,21 +127,27 @@ class TestProductTypeRouterIsTheOnlyDecider:
 
 class TestRecommendationOnlyByGate:
 
-    def test_solution_recommend_path_checks_the_gate(self):
+    def test_solution_recommend_path_checks_the_gate_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_solution_recommend_path_checks_the_gate ──
         code = _code_only(_read("src/agents/solution/nodes/recommend.py"))
         assert "check_recommendation_ready" in code or "RecommendationService" in code, (
             "推荐必须过 Gate（或走会过 Gate 的统一入口）"
         )
         assert "recommendation_status" in code or "require_ready" in code
 
-    def test_gate_module_is_the_only_readiness_source(self):
+        # ── test_gate_module_is_the_only_readiness_source ──
         for rel in ("src/rag/recommendation_engine.py", "src/rag/recommendation_coordinator.py"):
             assert "check_recommendation_ready" in _read(rel), rel
 
 
 class TestLegacyRequirementIsNotABusinessSource:
 
-    def test_business_decision_modules_only_use_the_profile(self):
+    def test_business_decision_modules_only_use_the_profile_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_business_decision_modules_only_use_the_profile ──
         """Gate / 路由器 / 需求理解 / 工程推断都不允许把 legacy requirement 当决策输入。"""
         for rel in (
             "src/rag/readiness.py",
@@ -147,7 +159,7 @@ class TestLegacyRequirementIsNotABusinessSource:
             assert '"requirement"' not in code, f"{rel} 不该读 legacy requirement"
             assert "state.get(\"requirements\")" not in code, f"{rel} 不该读 legacy requirements"
 
-    def test_parameter_inference_prefers_the_profile(self):
+        # ── test_parameter_inference_prefers_the_profile ──
         """工程推断的唯一真值是档案；旧字典只补齐缺口。"""
         code = _read("src/rag/parameter_inference.py")
         assert "profile_to_legacy(_profile)" in code

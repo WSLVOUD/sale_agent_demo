@@ -128,7 +128,10 @@ class TestConfirmedLcdKeepsTheRecommendation:
 class TestFactsComeFromContext:
     """需求事实优先由语境理解给出；正则只是兜底。"""
 
-    def test_parse_returns_both_category_and_facts(self):
+    def test_parse_returns_both_category_and_facts_merged(self):
+        """合并自 9 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_parse_returns_both_category_and_facts ──
         parsed = lcu._parse(
             '{"category": "conference_education", "confidence": 0.9,'
             ' "scene": "meeting room", "reason": "meetings",'
@@ -143,13 +146,13 @@ class TestFactsComeFromContext:
         assert parsed["facts"]["resolution"] == "4K"
         assert parsed["evidence"]["camera"] == "i need a cam"
 
-    def test_parse_keeps_facts_even_when_the_category_is_unclear(self):
+        # ── test_parse_keeps_facts_even_when_the_category_is_unclear ──
         parsed = lcu._parse('{"category": "nonsense", "facts": {"camera": true}}')
 
         assert parsed["category"] == "unknown"
         assert parsed["facts"]["camera"] is True
 
-    def test_parse_drops_bogus_fact_values(self):
+        # ── test_parse_drops_bogus_fact_values ──
         parsed = lcu._parse(
             '{"category": "normal", "facts": {"screen_size_inch": 9999,'
             ' "bezel_mm": -3, "resolution": "8K", "unknown_field": 1}}'
@@ -157,7 +160,7 @@ class TestFactsComeFromContext:
 
         assert parsed["facts"] == {}, parsed["facts"]
 
-    def test_understanding_covers_phrasings_the_regex_would_miss(self):
+        # ── test_understanding_covers_phrasings_the_regex_would_miss ──
         """客户说"想在会上写写画画"（一个关键词都没有）→ 语境理解给出 handwriting。"""
         message = "the team would like to sketch on it during the meeting"
         signal = {"category": "conference_education", "facts": {"handwriting": True}}
@@ -167,7 +170,7 @@ class TestFactsComeFromContext:
         assert facts.handwriting is True, "正则认不出来，但语境理解认得出来"
         assert facts.touch is True, "要手写就一定带触控"
 
-    def test_camera_can_be_understood_without_the_word_camera(self):
+        # ── test_camera_can_be_understood_without_the_word_camera ──
         message = "we also want a lens on top for video calls"
         signal = {"facts": {"camera": True}}
 
@@ -175,7 +178,7 @@ class TestFactsComeFromContext:
 
         assert facts.camera is True
 
-    def test_a_negative_answer_is_a_valid_fact(self):
+        # ── test_a_negative_answer_is_a_valid_fact ──
         """客户说"不用"是有效答案（false），不是"没提到"。"""
         signal = {"facts": {"ops": False, "tender": False}}
 
@@ -184,7 +187,7 @@ class TestFactsComeFromContext:
         assert facts.ops is False
         assert facts.tender is False
 
-    def test_regex_still_works_when_the_model_is_unavailable(self):
+        # ── test_regex_still_works_when_the_model_is_unavailable ──
         """模型不可用（没有语境信号）→ 全部退回正则兜底，链路不能死。"""
         facts = extract_lcd_facts(
             "We need a 6x2 video wall, indoor, 3.5mm bezel, with a camera"
@@ -196,7 +199,7 @@ class TestFactsComeFromContext:
         assert facts.bezel_mm == 3.5
         assert facts.camera is True
 
-    def test_lcd_turn_applies_the_context_facts_end_to_end(self):
+        # ── test_lcd_turn_applies_the_context_facts_end_to_end ──
         profile = _profile()
         signal = {
             "category": "conference_education",
@@ -214,7 +217,7 @@ class TestFactsComeFromContext:
         assert profile.lcd_camera_required is True
         assert action.lcd_category == "conference_education"
 
-    def test_context_facts_win_over_the_regex(self):
+        # ── test_context_facts_win_over_the_regex ──
         """模型读了上下文说没有摄像头 → 压过"这一句里出现了 camera"的兜底判断。"""
         signal = {"facts": {"camera": False}}
 

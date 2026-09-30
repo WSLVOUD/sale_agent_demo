@@ -65,7 +65,10 @@ def _executor(runner, *, grace_ms=150, max_window_ms=1200):
 
 class TestCase1ContinuousMessages:
 
-    def test_three_messages_make_one_turn_and_one_agent_run(self):
+    def test_three_messages_make_one_turn_and_one_agent_run_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_three_messages_make_one_turn_and_one_agent_run ──
         runner = _RecordingRunner()
         executor = _executor(runner, grace_ms=400)
         outcomes = []
@@ -93,7 +96,7 @@ class TestCase1ContinuousMessages:
         payload_text = runner.calls[0]["text"]
         assert payload_text.index("3*5") < payload_text.index("indoor") < payload_text.index("P3")
 
-    def test_frontend_batched_messages_are_one_turn(self):
+        # ── test_frontend_batched_messages_are_one_turn ──
         """前端已聚合（一次请求带 3 条）→ 也是 1 个 Turn、1 次 Agent。"""
         runner = _RecordingRunner()
         executor = _executor(runner)
@@ -162,7 +165,10 @@ class TestCase4TurnRetry:
 
 class TestCase5ConcurrentRequests:
 
-    def test_two_requests_are_serialized_by_session_lock(self):
+    def test_two_requests_are_serialized_by_session_lock_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_two_requests_are_serialized_by_session_lock ──
         runner = _RecordingRunner(delay=0.05)
         executor = _executor(runner, grace_ms=120)
         results = []
@@ -184,7 +190,7 @@ class TestCase5ConcurrentRequests:
         assert len({item.turn_id for item in results}) == 1, "同一时间只能有一个 Turn"
         assert len(runner.calls) == 1
 
-    def test_message_after_seal_starts_next_turn(self):
+        # ── test_message_after_seal_starts_next_turn ──
         """已封口的 Turn 不再吞新消息 → 新消息进入下一轮（计划 §5.3）。"""
         runner = _RecordingRunner()
         executor = _executor(runner, grace_ms=80)
@@ -199,7 +205,10 @@ class TestCase5ConcurrentRequests:
 
 class TestCase6WebhookRetry:
 
-    def test_webhook_replays_produce_one_business_result(self):
+    def test_webhook_replays_produce_one_business_result_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_webhook_replays_produce_one_business_result ──
         runner = _RecordingRunner()
         executor = _executor(runner)
         payload_id = "n8n-msg-1"
@@ -211,7 +220,7 @@ class TestCase6WebhookRetry:
         assert len({item.response for item in outcomes}) == 1
         assert sum(1 for item in outcomes if item.duplicate) == 2
 
-    def test_failed_turn_can_be_retried(self):
+        # ── test_failed_turn_can_be_retried ──
         """执行失败 → 去重登记撤销，客户重试要能重新跑。"""
         calls = {"n": 0}
 
@@ -231,7 +240,10 @@ class TestCase6WebhookRetry:
 
 class TestInboxAndTrace:
 
-    def test_message_walks_the_status_machine(self):
+    def test_message_walks_the_status_machine_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_message_walks_the_status_machine ──
         runner = _RecordingRunner()
         executor = _executor(runner)
         executor.submit(session_id="inbox-1", text="hi", message_ids=["inbox-m1"])
@@ -240,7 +252,7 @@ class TestInboxAndTrace:
         assert message.status == "COMMITTED"
         assert message.turn_id
 
-    def test_turn_trace_is_recorded(self):
+        # ── test_turn_trace_is_recorded ──
         runner = _RecordingRunner()
         executor = _executor(runner)
         outcome = executor.submit(session_id="trace-1", text="hi", message_ids=["trace-m1"])
@@ -249,7 +261,7 @@ class TestInboxAndTrace:
         assert outcome.trace["response_count"] == 1
         assert outcome.trace["llm_call_count"] == 1
 
-    def test_turn_store_is_idempotent(self):
+        # ── test_turn_store_is_idempotent ──
         store = TurnStore()
         record = store.create("s1", message_ids=["m1"], text="hi")
         store.commit(record.turn_id, response="first", action="ask_only", question_slot="size")
@@ -266,7 +278,10 @@ class TestFollowUpWhileGenerating:
     现在：生成期间到达的消息并入同一个 Turn，客户只收到**一条**回复。
     """
 
-    def test_message_arriving_during_generation_is_merged(self):
+    def test_message_arriving_during_generation_is_merged_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_message_arriving_during_generation_is_merged ──
         runner = _RecordingRunner(delay=0.6)
         executor = _executor(runner, grace_ms=80)
         results = {}
@@ -298,7 +313,7 @@ class TestFollowUpWhileGenerating:
         assert len({item.turn_id for item in results.values()}) == 1
         assert results["a"].trace["commit_status"] == "COMMITTED"
 
-    def test_follow_up_does_not_create_a_second_committed_turn(self):
+        # ── test_follow_up_does_not_create_a_second_committed_turn ──
         runner = _RecordingRunner(delay=0.4)
         executor = _executor(runner, grace_ms=60)
         seen = []
@@ -325,7 +340,7 @@ class TestFollowUpWhileGenerating:
         assert len({item.turn_id for item in committed}) == 1
         assert len({item.response for item in committed}) == 1, "只有一个客户可见回复"
 
-    def test_follow_up_missing_the_merge_window_is_never_dropped(self):
+        # ── test_follow_up_missing_the_merge_window_is_never_dropped ──
         """补发消息要是在"回复已经生成完、只差提交"的窗口到达 → 另起一轮回答它。
 
         实测风险：前端现在会把客户补发的消息**立刻**送出去（不再等上一轮回复），

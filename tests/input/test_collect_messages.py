@@ -18,7 +18,10 @@ from src.input.message import collect_messages, join_text  # noqa: E402
 
 class TestCollectMessages:
 
-    def test_legacy_question_is_ignored_when_messages_carry_it(self):
+    def test_legacy_question_is_ignored_when_messages_carry_it_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_legacy_question_is_ignored_when_messages_carry_it ──
         messages = collect_messages(
             session_id="s1",
             question="3 * 5",
@@ -28,7 +31,7 @@ class TestCollectMessages:
         assert len(messages) == 1
         assert join_text(messages) == "3 * 5"
 
-    def test_duplicate_message_ids_are_collapsed(self):
+        # ── test_duplicate_message_ids_are_collapsed ──
         messages = collect_messages(
             session_id="s1",
             messages=[
@@ -38,7 +41,7 @@ class TestCollectMessages:
         )
         assert len(messages) == 1
 
-    def test_legacy_only_client_still_works(self):
+        # ── test_legacy_only_client_still_works ──
         messages = collect_messages(
             session_id="s1", question="i need a led display", message_ids=["legacy-1"]
         )
@@ -46,7 +49,7 @@ class TestCollectMessages:
         assert messages[0].text == "i need a led display"
         assert messages[0].message_id == "legacy-1"
 
-    def test_images_are_kept(self):
+        # ── test_images_are_kept ──
         messages = collect_messages(
             session_id="s1",
             images=["data:image/png;base64,AAA"],
@@ -55,7 +58,7 @@ class TestCollectMessages:
         assert len(messages) == 2 or messages[0].images == ["data:image/png;base64,AAA"]
         assert any(message.images for message in messages)
 
-    def test_batch_of_messages_keeps_order(self):
+        # ── test_batch_of_messages_keeps_order ──
         messages = collect_messages(
             session_id="s1",
             messages=[

@@ -24,7 +24,10 @@ from src.dialogue import (  # noqa: E402
 
 class TestSingleTurnAction:
 
-    def test_customer_question_is_answered_first(self):
+    def test_customer_question_is_answered_first_merged(self):
+        """合并自 9 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_customer_question_is_answered_first ──
         """§10：即使还缺 viewing_distance，也先答 delivery。"""
         action = decide_turn_action(
             customer_question=True,
@@ -36,7 +39,7 @@ class TestSingleTurnAction:
         assert action.priority == P0_CUSTOMER_QUESTION
         assert action.asks_question is False
 
-    def test_product_question_asks_only_when_really_needed(self):
+        # ── test_product_question_asks_only_when_really_needed ──
         needed = decide_turn_action(
             customer_question=True,
             question_kind="PRODUCT_QUESTION",
@@ -55,7 +58,7 @@ class TestSingleTurnAction:
         assert not_needed.action == ANSWER
         assert not_needed.asks_question is False
 
-    def test_momentum_wins_over_generic_missing_slot(self):
+        # ── test_momentum_wins_over_generic_missing_slot ──
         """§11：顺着客户刚聊的话题问，而不是重新扫描所有 missing。"""
         action = decide_turn_action(
             newly_filled_slots=["size"],
@@ -67,7 +70,7 @@ class TestSingleTurnAction:
         assert action.target_slot == "pixel_pitch"
         assert action.priority == P3_NATURAL_CONTINUATION
 
-    def test_required_for_recommendation_is_asked(self):
+        # ── test_required_for_recommendation_is_asked ──
         action = decide_turn_action(
             missing_slots=["installation", "size"],
             question_candidates=["installation", "size"],
@@ -77,15 +80,15 @@ class TestSingleTurnAction:
         assert action.target_slot == "size"
         assert action.priority == P4_REQUIRED_FOR_RECOMMENDATION
 
-    def test_conflict_clarifies_first(self):
+        # ── test_conflict_clarifies_first ──
         action = decide_turn_action(conflicts=["size_conflict"])
         assert action.action == CLARIFY
 
-    def test_ready_to_recommend(self):
+        # ── test_ready_to_recommend ──
         action = decide_turn_action(ready_to_recommend=True, missing_slots=[])
         assert action.action == RECOMMEND
 
-    def test_nothing_required_uses_wait_not_a_made_up_question(self):
+        # ── test_nothing_required_uses_wait_not_a_made_up_question ──
         action = decide_turn_action(
             missing_slots=[],
             question_candidates=[],
@@ -95,7 +98,7 @@ class TestSingleTurnAction:
         assert action.priority == P5_AUXILIARY
         assert action.asks_question is False
 
-    def test_blocked_slot_is_not_reasked(self):
+        # ── test_blocked_slot_is_not_reasked ──
         action = decide_turn_action(
             missing_slots=["environment", "size"],
             question_candidates=["environment", "size"],
@@ -103,7 +106,7 @@ class TestSingleTurnAction:
         )
         assert action.target_slot == "size"
 
-    def test_only_one_action_field_is_returned(self):
+        # ── test_only_one_action_field_is_returned ──
         action = decide_turn_action(
             customer_question=True,
             question_kind="PRODUCT_QUESTION",
@@ -117,12 +120,15 @@ class TestSingleTurnAction:
 
 class TestNextCandidateSlot:
 
-    def test_skips_blocked_and_answered(self):
+    def test_skips_blocked_and_answered_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_skips_blocked_and_answered ──
         assert next_candidate_slot(
             ["environment", "size", "pixel_pitch"],
             blocked_slot="environment",
             answered_slots=["size"],
         ) == "pixel_pitch"
 
-    def test_returns_empty_when_nothing_left(self):
+        # ── test_returns_empty_when_nothing_left ──
         assert next_candidate_slot(["environment"], blocked_slot="environment") == ""

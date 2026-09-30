@@ -14,7 +14,7 @@ from ...rag.fusion import HybridSearch
 from ...rag.rerank import is_ifp_product
 from ...rag.router import has_structured_requirement
 from ...rag.structured_product_query import structured_product_query_handle
-from ...utils.ifp_intent import has_ifp_intent, remove_unsupported_ifp_text, user_messages_text
+from ...utils.ifp_intent import remove_unsupported_ifp_text, user_messages_text
 
 logger = logging.getLogger(__name__)
 
@@ -476,19 +476,17 @@ class SolutionAgentRunner:
 
             # IFP safety net
             #
-            # 客户口径（2026-09-30）：**关键词只能是兜底**。以前这里只看客户原话里有没有
-            # IFP 关键词，于是客户把 "meeting" 打成 "metting"（拼写错），
-            # has_ifp_intent 就判成 False → 把系统自己按需求选出来的交互平板连型号一起
-            # 删掉了，客户看到"我在准备推荐"却永远拿不到型号（实测）。
+            # 客户口径（整改计划 §八"IFP 判断必须统一"）：
+            # **只能由 LCD Decision Center 决定 IFP**。以前这里还有第二道关键词判定
+            # （has_ifp_intent），它会让"已经判成 IFP 的需求链"和"关键词判定"两个系统
+            # 同时做 IFP 决策 —— 客户把 "meeting" 打成 "metting" 时关键词判 False，
+            # 系统自己按需求选出来的交互平板就被连型号一起删掉。
             #
-            # 现在的主路径是**需求档案**：客户自己说了要手写/触控 + 会议教育场景
-            # （is_ifp_requirement，由语境理解 + 客户回答得出），这才是"客户要 IFP"的
-            # 依据；关键词判定退居兜底，只用来兜住档案没覆盖到的情况。
+            # 现在只认决策中心：档案里明确要手写/触控（``is_ifp_requirement``）→ 放行；
+            # 否则才清掉 IFP 型号/话术（防止模型凭空推荐交互平板）。
             customer_text = user_messages_text(initial_state.get("messages", []))
             response_products = result.get("products", [])
-            if not _profile_needs_ifp(result, initial_state) and not has_ifp_intent(
-                user_text=customer_text
-            ):
+            if not _profile_needs_ifp(result, initial_state):
                 answer = remove_unsupported_ifp_text(answer)
                 response_products = [p for p in response_products if not is_ifp_product(p)]
 

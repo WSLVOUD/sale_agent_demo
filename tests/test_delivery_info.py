@@ -51,22 +51,28 @@ class TestDeliveryQuestionDetection:
         "we need it asap",
     ]
 
-    def test_delivery_questions(self):
+    def test_delivery_questions_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_delivery_questions ──
         assert_all_cases(
             self.DELIVERY_QUESTIONS, _is_delivery_question, label="message"
         )
 
-    def test_faster_requests(self):
+        # ── test_faster_requests ──
         assert_all_cases(self.FASTER_REQUESTS, _wants_faster, label="message")
 
-    def test_non_delivery_messages(self):
+        # ── test_non_delivery_messages ──
         assert not is_delivery_question("我需要室内会议室的屏")
         assert not is_delivery_question("do you have P1.2 COB LED?")
 
 
 class TestDeliveryAnswers:
 
-    def test_lead_time_is_15_to_30_days(self):
+    def test_lead_time_is_15_to_30_days_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_lead_time_is_15_to_30_days ──
         for seed in range(4):
             answer = delivery_answer("你们多久能发货？", language="en", seed=seed)
             assert answer
@@ -75,12 +81,12 @@ class TestDeliveryAnswers:
             assert "order" in lowered, answer
             assert any(word in lowered for word in ("pay", "paid", "payment")), answer
 
-    def test_chinese_lead_time_answer(self):
+        # ── test_chinese_lead_time_answer ──
         answer = delivery_answer("交期多久？", language="zh", seed=0)
         assert "15" in answer and "30" in answer
         assert "下单付款" in answer
 
-    def test_faster_means_air_freight_with_extra_cost(self):
+        # ── test_faster_means_air_freight_with_extra_cost ──
         answer = delivery_answer("can you ship faster?", language="en", seed=0)
         lowered = answer.lower()
         assert "air" in lowered, answer
@@ -89,28 +95,31 @@ class TestDeliveryAnswers:
         zh = delivery_answer("能不能加急？", language="zh", seed=0)
         assert "空运" in zh and "成本" in zh
 
-    def test_question_plus_faster_gives_both(self):
+        # ── test_question_plus_faster_gives_both ──
         answer = delivery_answer("交期多久？我们比较急，能加快吗", language="zh", seed=0)
         assert "15" in answer and "30" in answer
         assert "空运" in answer
 
-    def test_unrelated_message_returns_none(self):
+        # ── test_unrelated_message_returns_none ──
         assert delivery_answer("我需要室内会议室的屏") is None
         assert install_timing_note("我需要室内会议室的屏") is None
 
 
 class TestInstallTiming:
 
-    def test_extracts_month_phrase(self):
+    def test_extracts_month_phrase_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_extracts_month_phrase ──
         assert extract_timing_phrase("i wanna buy a display, and wanna install 11月") == "11月"
         assert extract_timing_phrase("need it by December") == "December"
 
-    def test_timing_note_mentions_lead_time(self):
+        # ── test_timing_note_mentions_lead_time ──
         note = install_timing_note("i wanna buy a display, and wanna install 11月", language="en")
         assert "11月" in note
         assert "15" in note and "30" in note
 
-    def test_chinese_timing_note(self):
+        # ── test_chinese_timing_note ──
         note = install_timing_note("我们想11月安装", language="zh")
         assert "11月" in note
         assert "15" in note and "30" in note
@@ -134,7 +143,10 @@ class TestScriptGeneratorDeliveryBranch:
             "pending_slot": "environment",
         }
 
-    def test_delivery_question_is_answered_without_forced_question(self):
+    def test_delivery_question_is_answered_without_forced_question_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_delivery_question_is_answered_without_forced_question ──
         from src.agents.sales.nodes.script_generator import script_generator
 
         out = script_generator(self._state("你们多久能发货？"))
@@ -143,7 +155,7 @@ class TestScriptGeneratorDeliveryBranch:
         assert "indoors or outdoors" not in reply, reply   # v2.5++++ 计划 §16.5：answer_only，不硬塞需求问题
         assert out["next_action"] == "ask"
 
-    def test_install_month_is_acknowledged(self):
+        # ── test_install_month_is_acknowledged ──
         """复刻客户日志：'i wanna buy a disaply ,and wanna install 11月'"""
         from src.agents.sales.nodes.script_generator import script_generator
 
@@ -155,7 +167,7 @@ class TestScriptGeneratorDeliveryBranch:
         assert "15" in reply and "30" in reply, reply
         assert "indoors or outdoors" in reply, reply
 
-    def test_faster_request_mentions_air_freight(self):
+        # ── test_faster_request_mentions_air_freight ──
         from src.agents.sales.nodes.script_generator import script_generator
 
         out = script_generator(self._state("交期要多久？我们比较急，能不能加快"))
@@ -163,7 +175,7 @@ class TestScriptGeneratorDeliveryBranch:
         assert "air" in reply or "空运" in reply, reply
         assert "cost" in reply or "成本" in reply, reply
 
-    def test_normal_question_unaffected(self):
+        # ── test_normal_question_unaffected ──
         from src.agents.sales.nodes.script_generator import script_generator
 
         out = script_generator(self._state("it is for a conference room"))

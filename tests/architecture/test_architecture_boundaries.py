@@ -51,7 +51,10 @@ def _imports(path: str):
 
 class TestRagIsKnowledgeOnly:
 
-    def test_rag_never_imports_dialogue_or_agents(self):
+    def test_rag_never_imports_dialogue_or_agents_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_rag_never_imports_dialogue_or_agents ──
         offenders = []
         for path in _py_files("rag"):
             level, nested = _imports(path)
@@ -60,7 +63,7 @@ class TestRagIsKnowledgeOnly:
                     offenders.append((os.path.relpath(path, project_root), line))
         assert offenders == [], f"RAG 不能伸手进对话/Agent 层：{offenders}"
 
-    def test_rag_does_not_decide_recommendation_by_itself(self):
+        # ── test_rag_does_not_decide_recommendation_by_itself ──
         """推荐决策只允许从 readiness（Gate）与 recommendation_engine 出。"""
         for path in _py_files("rag"):
             name = os.path.basename(path)
@@ -76,7 +79,10 @@ class TestRagIsKnowledgeOnly:
 class TestKnownBoundaryExceptionsArePinned:
     """已知例外：只允许这么多处，且必须是函数内延迟导入（不能变成模块级依赖）。"""
 
-    def test_models_only_lazily_reach_into_rag(self):
+    def test_models_only_lazily_reach_into_rag_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_models_only_lazily_reach_into_rag ──
         hits, module_level = [], []
         for path in _py_files("models"):
             level, nested = _imports(path)
@@ -91,7 +97,7 @@ class TestKnownBoundaryExceptionsArePinned:
         joined = " ".join(line for _f, line in hits)
         assert "_detect_purpose" in joined and "check_recommendation_ready" in joined
 
-    def test_dialogue_only_lazily_reaches_into_agents(self):
+        # ── test_dialogue_only_lazily_reaches_into_agents ──
         hits, module_level = [], []
         for path in _py_files("dialogue"):
             level, nested = _imports(path)

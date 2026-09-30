@@ -513,30 +513,33 @@ class TestVisionConfirmation:
 class TestApiImagePayload:
     """API 层：图片入参规范化（计划第十五 / 二十一阶段）。"""
 
-    def test_data_field_becomes_data_url(self):
+    def test_data_field_becomes_data_url_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_data_field_becomes_data_url ──
         from src.api import ImageInput, _normalize_images
 
         result = _normalize_images([ImageInput(data="QUJD", mime_type="image/png")])
         assert result == ["data:image/png;base64,QUJD"]
 
-    def test_url_is_passed_through(self):
+        # ── test_url_is_passed_through ──
         from src.api import ImageInput, _normalize_images
 
         result = _normalize_images([ImageInput(url="https://example.com/a.jpg")])
         assert result == ["https://example.com/a.jpg"]
 
-    def test_empty_payload_is_ignored(self):
+        # ── test_empty_payload_is_ignored ──
         from src.api import ImageInput, _normalize_images
 
         assert _normalize_images([ImageInput()]) == []
 
-    def test_too_many_images_are_trimmed(self):
+        # ── test_too_many_images_are_trimmed ──
         from src.api import ImageInput, _normalize_images
 
         images = [ImageInput(data=f"img{index}") for index in range(10)]
         assert len(_normalize_images(images)) == 3
 
-    def test_no_images_returns_empty(self):
+        # ── test_no_images_returns_empty ──
         from src.api import _normalize_images
 
         assert _normalize_images(None) == []

@@ -13,7 +13,10 @@ if project_root not in sys.path:
 
 class TestOthersBoundaries:
 
-    def test_pure_chat_never_goes_to_free_question(self):
+    def test_pure_chat_never_goes_to_free_question_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_pure_chat_never_goes_to_free_question ──
         from src.dialogue.turn_kind import PURE_CONVERSATION, classify_turn_kind
         from src.agents.solution.nodes.intent import route_by_turn_kind
 
@@ -21,7 +24,7 @@ class TestOthersBoundaries:
             assert classify_turn_kind(message) == PURE_CONVERSATION, message
             assert route_by_turn_kind({"turn_kind": PURE_CONVERSATION}) == "conversation"
 
-    def test_free_question_enters_others(self):
+        # ── test_free_question_enters_others ──
         from src.dialogue.turn_kind import FREE_QUESTION, classify_turn_kind
         from src.agents.solution.nodes.intent import route_by_turn_kind
 
@@ -34,7 +37,7 @@ class TestOthersBoundaries:
             assert classify_turn_kind(message) == FREE_QUESTION, message
         assert route_by_turn_kind({"turn_kind": FREE_QUESTION, "intent": "others"}) == "others"
 
-    def test_confirmed_requirements_are_never_contradicted(self):
+        # ── test_confirmed_requirements_are_never_contradicted ──
         from src.rag.model_guard import strip_environment_contradictions, requirement_summary
 
         source = {"indoor": True, "is_rental": False}
@@ -45,7 +48,7 @@ class TestOthersBoundaries:
         assert removed
         assert "outdoor" not in text.lower()
 
-    def test_models_are_not_named_unless_the_customer_did(self):
+        # ── test_models_are_not_named_unless_the_customer_did ──
         from src.rag.model_guard import strip_model_mentions
 
         text, removed = strip_model_mentions("The TW11-3216-P3.0 would fit well.")
@@ -59,7 +62,10 @@ class TestOthersBoundaries:
 
 class TestConversationWithBusinessSignal:
 
-    def test_chat_with_business_information_keeps_the_signals(self):
+    def test_chat_with_business_information_keeps_the_signals_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_chat_with_business_information_keeps_the_signals ──
         from src.dialogue.turn_kind import (
             CONVERSATION_WITH_BUSINESS_SIGNAL,
             business_signals,
@@ -73,7 +79,7 @@ class TestConversationWithBusinessSignal:
         signals = business_signals(message)
         assert signals.get("environment") == "outdoor" or signals.get("outdoor") is True
 
-    def test_signals_land_in_the_requirement_profile(self):
+        # ── test_signals_land_in_the_requirement_profile ──
         from src.models.requirement import RequirementProfile
         from src.dialogue.turn_kind import business_signals
 
@@ -85,7 +91,10 @@ class TestConversationWithBusinessSignal:
 
 class TestProductDomainInterface:
 
-    def test_domains_are_detected(self):
+    def test_domains_are_detected_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_domains_are_detected ──
         from src.dialogue.turn_kind import (
             IFP,
             LCD,
@@ -103,11 +112,13 @@ class TestProductDomainInterface:
         inferred = route_display_type("I need an outdoor screen for a stadium")
         assert inferred.display_type == LED and inferred.status == "INFERRED"
         assert detect_product_domain("I need an LCD video wall for a lobby") == LCD
-        assert detect_product_domain("interactive flat panel for a meeting room") == IFP
+        # 整改计划 §八"IFP 判断必须统一"：IFP 是 LCD 的子系列，**不再由关键词判成独立产品域**，
+        # 只由 LCD Decision Center（lcd_decision.is_ifp_requirement）决定 → 这里归 LCD。
+        assert detect_product_domain("interactive flat panel for a meeting room") == LCD
         assert detect_product_domain("What is the difference between LED and LCD?") == MULTI
         assert detect_product_domain("How are you?") == UNKNOWN
 
-    def test_every_domain_passes_the_router(self):
+        # ── test_every_domain_passes_the_router ──
         from src.agents.solution.nodes.intent import route_by_intent
         from src.dialogue.turn_kind import ALL_PRODUCT_DOMAINS
 
@@ -119,7 +130,7 @@ class TestProductDomainInterface:
             # 未知意图默认落到 others（Free Question），不是 conversation
             assert route_by_intent({"product_domain": domain}) == "others"
 
-    def test_context_carries_the_domain_into_the_prompt(self):
+        # ── test_context_carries_the_domain_into_the_prompt ──
         from src.dialogue import ResponseContext
 
         context = ResponseContext(action="FREE_QUESTION", product_domain="LCD")

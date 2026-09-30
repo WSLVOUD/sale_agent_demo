@@ -112,7 +112,10 @@ class TestScenarioAnswerIsNotOffTopicInLcd:
 
 
 class TestLcdQuestionIsNotSuppressed:
-    def test_continuation_budget_does_not_clear_an_lcd_question(self):
+    def test_continuation_budget_does_not_clear_an_lcd_question_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_continuation_budget_does_not_clear_an_lcd_question ──
         data = {
             "offtopic_turn": True,  # 就算被标成闲聊，LCD 的问句也不许被清掉
             "pending_question": "What screen size do you have in mind (in inches)?",
@@ -131,7 +134,7 @@ class TestLcdQuestionIsNotSuppressed:
         assert data.get("pending_slot") == "lcd_size", "不许被清空"
         assert not data.get("suppressed_question")
 
-    def test_led_behaviour_is_unchanged_without_the_protection_flag(self):
+        # ── test_led_behaviour_is_unchanged_without_the_protection_flag ──
         """不传 protect_question 时，承接额度的老行为完全不变。"""
         data = {
             "offtopic_turn": True,
@@ -149,7 +152,7 @@ class TestLcdQuestionIsNotSuppressed:
         assert questions == []
         assert data.get("suppressed_question")
 
-    def test_prepare_final_keeps_the_lcd_question(self):
+        # ── test_prepare_final_keeps_the_lcd_question ──
         profile = _lcd_profile()
         coordinator = ResponseCoordinator(profile_lookup=lambda _s: profile)
         result = {

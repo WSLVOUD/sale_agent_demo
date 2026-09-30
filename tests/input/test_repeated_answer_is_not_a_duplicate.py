@@ -72,7 +72,10 @@ def _submit(executor, text, message_id):
 
 
 class TestRepeatedAnswerAcrossQuestions:
-    def test_same_no_answering_the_next_question_is_processed_again(self):
+    def test_same_no_answering_the_next_question_is_processed_again_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_same_no_answering_the_next_question_is_processed_again ──
         """客户用同一个 "no" 回答**另一个** yes/no 问题 → 必须再跑一次。"""
         runner = _Runner(question_slots=("lcd_size", "lcd_ops", "lcd_camera"))
         executor = _executor(runner, grace_seconds=0.1)
@@ -87,7 +90,7 @@ class TestRepeatedAnswerAcrossQuestions:
         assert first_no.turn_id != second_no.turn_id
         assert "reply #3" in str(second_no.response), second_no.response
 
-    def test_a_quick_retry_is_still_deduped(self):
+        # ── test_a_quick_retry_is_still_deduped ──
         """窗口内的同内容重发（客户端重试 / 双击）照旧只跑一次。"""
         runner = _Runner(question_slots=("lcd_ops",))
         executor = _executor(runner, grace_seconds=30.0)
@@ -99,7 +102,7 @@ class TestRepeatedAnswerAcrossQuestions:
         assert len(runner.calls) == 2, "刚回完就重发 → 复用上一轮（不重复跑 Agent）"
         assert second.duplicate, second
 
-    def test_a_retry_while_the_turn_is_still_running_joins_it(self):
+        # ── test_a_retry_while_the_turn_is_still_running_joins_it ──
         runner = _Runner(question_slots=("lcd_ops",))
         executor = _executor(runner, grace_seconds=0.0)
 

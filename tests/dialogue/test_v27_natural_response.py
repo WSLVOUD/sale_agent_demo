@@ -15,7 +15,10 @@ from src.dialogue import (  # noqa: E402
 
 class TestMechanicalPhrases:
 
-    def test_detects_banned_openers(self):
+    def test_detects_banned_openers_merged(self):
+        """合并自 7 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_detects_banned_openers ──
         for text in (
             "Got it. What size do you need?",
             "Thanks. What size do you need?",
@@ -26,31 +29,31 @@ class TestMechanicalPhrases:
         ):
             assert find_mechanical_prefixes(text), text
 
-    def test_strips_openers(self):
+        # ── test_strips_openers ──
         text, removed = strip_mechanical_phrases("Got it. What size do you need?")
         assert removed == ["Got it"]
         assert text == "What size do you need?"
 
-    def test_strips_multiple_openers(self):
+        # ── test_strips_multiple_openers ──
         text, removed = strip_mechanical_phrases("Got it, thanks. What size?")
         assert len(removed) >= 1
         assert text.endswith("What size?")
 
-    def test_allow_keeps_them(self):
+        # ── test_allow_keeps_them ──
         text, removed = strip_mechanical_phrases("Got it. Thanks for the details.", allow=True)
         assert removed == []
         assert text.startswith("Got it")
 
-    def test_plain_question_is_untouched(self):
+        # ── test_plain_question_is_untouched ──
         text, removed = strip_mechanical_phrases("Will the screen be installed indoors?")
         assert removed == []
         assert text == "Will the screen be installed indoors?"
 
-    def test_pure_ack_is_dropped(self):
+        # ── test_pure_ack_is_dropped ──
         text, removed = strip_mechanical_phrases("Got it.")
         assert text == ""
         assert removed == ["Got it"]
 
-    def test_is_mechanical_helper(self):
+        # ── test_is_mechanical_helper ──
         assert is_mechanical("Thanks. Anything else?") is True
         assert is_mechanical("Which pitch do you want?") is False

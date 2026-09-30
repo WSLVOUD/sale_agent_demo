@@ -21,7 +21,10 @@ from src.dialogue.action import (  # noqa: E402
 
 class TestOneQuestionPerTurn:
 
-    def test_two_questions_in_one_text_collapse_to_one(self):
+    def test_two_questions_in_one_text_collapse_to_one_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_two_questions_in_one_text_collapse_to_one ──
         coordinator = FinalResponseCoordinator()
         final = coordinator.build(
             text="Got it — P3. What is the viewing distance? Is it fixed or rental?",
@@ -33,7 +36,7 @@ class TestOneQuestionPerTurn:
         assert final.question_count <= MAX_QUESTIONS_PER_TURN
         assert final.dropped_questions, "被丢掉的问题要能追溯"
 
-    def test_extras_never_become_a_second_bubble_with_a_question(self):
+        # ── test_extras_never_become_a_second_bubble_with_a_question ──
         coordinator = FinalResponseCoordinator()
         final = coordinator.build(
             text="P3 works well indoors.",
@@ -43,7 +46,7 @@ class TestOneQuestionPerTurn:
         assert final.question_count <= 1
         assert "other screens" in final.text, "内容不能丢，只是收进同一条回复"
 
-    def test_answer_then_ask_has_at_most_one_question(self):
+        # ── test_answer_then_ask_has_at_most_one_question ──
         coordinator = FinalResponseCoordinator()
         final = coordinator.build(
             text=(
@@ -56,7 +59,7 @@ class TestOneQuestionPerTurn:
         )
         assert final.question_count <= 1
 
-    def test_validation_marks_repair(self):
+        # ── test_validation_marks_repair ──
         coordinator = FinalResponseCoordinator()
         final = coordinator.build(
             text="Indoor or outdoor? What size is the screen?",
@@ -71,7 +74,10 @@ class TestOneQuestionPerTurn:
 
 class TestSingleActionSelection:
 
-    def test_policy_picks_one_action_and_discards_the_rest(self):
+    def test_policy_picks_one_action_and_discards_the_rest_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_policy_picks_one_action_and_discards_the_rest ──
         """§26 Case 10：ask(pixel_pitch) + ask(viewing_distance) → 只留一个。"""
         candidates = [
             DialogueDecision(
@@ -92,7 +98,7 @@ class TestSingleActionSelection:
         assert len(discarded) == 1
         assert discarded[0].question_slot == "price_preference"
 
-    def test_no_candidates_means_no_question(self):
+        # ── test_no_candidates_means_no_question ──
         selected, discarded = select_single_action([])
         assert discarded == []
         assert selected.question_count == 0

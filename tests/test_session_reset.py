@@ -90,7 +90,10 @@ class TestExplicitResetDetection:
             message, requirements=CHURCH_REQUIREMENTS, recommended=True
         )
 
-    def test_chinese_reset_phrases(self):
+    def test_chinese_reset_phrases_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_chinese_reset_phrases ──
         def check(message: str) -> None:
             decision = self._reset_decision(message)
             assert decision.should_reset, message
@@ -98,18 +101,18 @@ class TestExplicitResetDetection:
 
         assert_all_cases(self.CHINESE_RESET_PHRASES, check, label="message")
 
-    def test_english_reset_phrases(self):
+        # ── test_english_reset_phrases ──
         def check(message: str) -> None:
             assert self._reset_decision(message).should_reset, message
 
         assert_all_cases(self.ENGLISH_RESET_PHRASES, check, label="message")
 
-    def test_reset_without_context_does_nothing(self):
+        # ── test_reset_without_context_does_nothing ──
         """"重新来"在空会话里没有东西可清空 → 不重置。"""
         decision = detect_requirement_reset("重新来", requirements={}, recommended=False)
         assert not decision.should_reset
 
-    def test_no_false_reset(self):
+        # ── test_no_false_reset ──
         """想看更多选项 / 参数提问，不是换需求 → 不清空。"""
         def check(message: str) -> None:
             assert not self._reset_decision(message).should_reset, message
@@ -452,11 +455,12 @@ class TestGraphAsksAgainAfterReset:
     @pytest.fixture
     def fake_llm(self, monkeypatch):
         # 注意：包的 __init__ 里 `classify` 这个名字被节点函数占用了，
-        # 所以必须从 sys.modules 取子模块本体。
-        import sys
+        # 所以必须 import 子模块本体（以前从 sys.modules 里捞，依赖别的测试文件
+        # 先把它 import 进来 —— 那种写法一旦 import 图变化就会 KeyError，实测踩过）。
+        import importlib
 
-        classify_mod = sys.modules["src.agents.sales.nodes.classify"]
-        sales_req = sys.modules["src.agents.sales.nodes.requirement"]
+        classify_mod = importlib.import_module("src.agents.sales.nodes.classify")
+        sales_req = importlib.import_module("src.agents.sales.nodes.requirement")
 
         class _ClassifyResponse:
             content = "others"
@@ -570,10 +574,10 @@ class TestMultiTurnSwitchProductEndToEnd:
 
     @pytest.fixture
     def fake_llm(self, monkeypatch):
-        import sys
+        import importlib
 
-        classify_mod = sys.modules["src.agents.sales.nodes.classify"]
-        sales_req = sys.modules["src.agents.sales.nodes.requirement"]
+        classify_mod = importlib.import_module("src.agents.sales.nodes.classify")
+        sales_req = importlib.import_module("src.agents.sales.nodes.requirement")
 
         class _Response:
             def __init__(self, content):

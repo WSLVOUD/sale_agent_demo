@@ -16,7 +16,10 @@ if root_missing := (project_root not in sys.path):
 
 class TestResponseContextSemantics:
 
-    def test_default_restrictions_are_applied(self):
+    def test_default_restrictions_are_applied_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_default_restrictions_are_applied ──
         from src.dialogue import ResponseContext
 
         context = ResponseContext(action="ASK", question_slot="viewing_distance")
@@ -27,7 +30,7 @@ class TestResponseContextSemantics:
         ):
             assert rule in context.restrictions
 
-    def test_legacy_prose_fields_are_observable(self):
+        # ── test_legacy_prose_fields_are_observable ──
         from src.dialogue import ResponseContext
 
         context = ResponseContext(
@@ -36,7 +39,7 @@ class TestResponseContextSemantics:
         fields = context.legacy_prose_fields()
         assert set(fields) == {"answer", "opening"}
 
-    def test_prompt_labels_legacy_fields_as_facts_only(self):
+        # ── test_prompt_labels_legacy_fields_as_facts_only ──
         from src.dialogue import ResponseContext
 
         block = ResponseContext(
@@ -48,7 +51,10 @@ class TestResponseContextSemantics:
 
 class TestActionBridge:
 
-    def test_policy_action_wins(self):
+    def test_policy_action_wins_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_policy_action_wins ──
         from src.dialogue.action_bridge import (
             ANSWER_AND_ASK,
             ASK,
@@ -77,12 +83,12 @@ class TestActionBridge:
             == RECOMMEND
         )
 
-    def test_fallback_only_when_policy_is_silent(self):
+        # ── test_fallback_only_when_policy_is_silent ──
         from src.dialogue.action_bridge import ANSWER_AND_ASK, expression_action
 
         assert expression_action({}, answer="x", question="q") == ANSWER_AND_ASK
 
-    def test_natural_reply_records_the_action_from_policy(self):
+        # ── test_natural_reply_records_the_action_from_policy ──
         """script_generator._natural_reply 不再自己推断动作（只记录映射结果）。"""
         import io
         import re
@@ -99,7 +105,10 @@ class TestActionBridge:
 
 class TestResponseMetrics:
 
-    def test_counters_track_the_chain(self):
+    def test_counters_track_the_chain_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_counters_track_the_chain ──
         from src.dialogue import ResponseContext, generate_response
         from src.dialogue.response_metrics import reset, snapshot
 
@@ -112,7 +121,7 @@ class TestResponseMetrics:
         assert data["legacy_reply_ratio"] == 0.0
         assert "legacy_reply_turns" in data
 
-    def test_legacy_counter_is_recordable(self):
+        # ── test_legacy_counter_is_recordable ──
         from src.dialogue.response_metrics import record, reset, snapshot
 
         reset()

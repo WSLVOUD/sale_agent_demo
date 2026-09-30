@@ -65,14 +65,17 @@ class _StubSolutionAgent:
 
 class TestVisionTypeIsRouted:
 
-    def test_vision_led_is_inferred_and_asks_for_confirmation(self):
+    def test_vision_led_is_inferred_and_asks_for_confirmation_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_vision_led_is_inferred_and_asks_for_confirmation ──
         decision = _route("here is a photo of the screen", vision_display_type="LED")
         assert decision.display_type == "LED"
         assert decision.status == "INFERRED"
         assert decision.source == "VISION"
         assert decision.ask_customer is True, "图片判断必须让客户确认（计划 §六）"
 
-    def test_vision_ifp_is_lcd_with_the_ifp_subtype(self):
+        # ── test_vision_ifp_is_lcd_with_the_ifp_subtype ──
         """计划 §十四：IFP 属于 LCD —— 图片认出 IFP 时，第一层也只能给 LCD。"""
         decision = _route("here is a photo of the screen", vision_display_type="IFP")
         assert decision.display_type == "LCD"
@@ -80,7 +83,7 @@ class TestVisionTypeIsRouted:
         assert decision.source == "VISION"
         assert decision.ask_customer is True
 
-    def test_vision_that_cannot_tell_is_not_guessed(self):
+        # ── test_vision_that_cannot_tell_is_not_guessed ──
         decision = _route("here is a photo of the screen", vision_display_type="")
         assert decision.display_type == "UNKNOWN"
         assert decision.ask_customer is True
@@ -152,7 +155,10 @@ class TestImageTurnCarriesTheVisionType:
 
 class TestVisionTypeConfirmationLoop:
 
-    def test_customer_confirms_the_vision_type_then_it_locks_and_enters_led(self):
+    def test_customer_confirms_the_vision_type_then_it_locks_and_enters_led_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_customer_confirms_the_vision_type_then_it_locks_and_enters_led ──
         """计划 §六 闭环：图片 → 推断 → 客户确认 → 锁定 → 进 LED 成熟链路。"""
         from src.dialogue.product_router import LED_ENTRY, route_product_domain
 
@@ -165,7 +171,7 @@ class TestVisionTypeConfirmationLoop:
         assert confirmed.locked is True
         assert route_product_domain(confirmed.display_type) == LED_ENTRY
 
-    def test_customer_denies_the_vision_type_and_it_is_rerouted(self):
+        # ── test_customer_denies_the_vision_type_and_it_is_rerouted ──
         """计划 §六：客户否认 → 不强行沿用图片判断，按客户说的重新路由。"""
         proposed = _route("here is a photo of my screen", vision_display_type="LED")
         corrected = _route("no, it is an LCD video wall", current=proposed)
@@ -174,7 +180,7 @@ class TestVisionTypeConfirmationLoop:
         assert corrected.source == "CUSTOMER"
         assert corrected.locked is True
 
-    def test_customer_lets_the_image_decide(self):
+        # ── test_customer_lets_the_image_decide ──
         """计划 §六：客户说"不知道" → 采用 AI（图片）判断，不再反复问。"""
         proposed = _route("here is a photo of my screen", vision_display_type="LCD")
         adopted = _route("i don't know", current=proposed)

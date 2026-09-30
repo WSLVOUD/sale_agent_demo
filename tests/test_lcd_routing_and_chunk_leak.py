@@ -82,7 +82,10 @@ class TestTypeStatementGoesToTheRequirementChain:
 class TestInternalChunksNeverReachTheCustomer:
     """问题 2：`[产品资料 N] …` 是内部块，必须在客户可见文本里被清掉。"""
 
-    def test_strip_internal_blocks_removes_the_leaked_dump(self):
+    def test_strip_internal_blocks_removes_the_leaked_dump_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_strip_internal_blocks_removes_the_leaked_dump ──
         from src.utils.text import strip_internal_blocks
 
         leaked = (
@@ -96,7 +99,7 @@ class TestInternalChunksNeverReachTheCustomer:
         assert "H4930LN-B" not in cleaned, cleaned
         assert cleaned.startswith("An LCD display, noted."), cleaned
 
-    def test_customer_response_sanitizer_applies_the_cleanup(self):
+        # ── test_customer_response_sanitizer_applies_the_cleanup ──
         from src.rag.rerank import sanitize_customer_response
 
         text = "An LCD display, noted. [产品资料 1]\nH4930LN-B | LCD | size=49\""
@@ -105,7 +108,7 @@ class TestInternalChunksNeverReachTheCustomer:
         assert "产品资料" not in cleaned, cleaned
         assert "LCD" in cleaned
 
-    def test_others_node_never_falls_back_to_the_raw_chunks(self):
+        # ── test_others_node_never_falls_back_to_the_raw_chunks ──
         import importlib
 
         others = importlib.import_module("src.agents.solution.nodes.others")

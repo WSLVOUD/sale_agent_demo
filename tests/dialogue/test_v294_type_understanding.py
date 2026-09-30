@@ -45,19 +45,22 @@ def _proposal(type_value: str = "LED"):
 class TestRouterConsumesTheContextSignal:
     """路由消费语境信号（信号由模型在上下文里给出，路由不再自己猜关键词）。"""
 
-    def test_cannot_choose_gets_an_explanation(self):
+    def test_cannot_choose_gets_an_explanation_merged(self):
+        """合并自 9 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_cannot_choose_gets_an_explanation ──
         decision = _route("i dont know", reply_signal={"reply": "does_not_know"})
 
         assert decision.needs_explanation is True, decision.to_dict()
         assert decision.ask_customer is True
 
-    def test_question_about_the_difference_gets_an_explanation(self):
+        # ── test_question_about_the_difference_gets_an_explanation ──
         decision = _route("what is the difference?", reply_signal={"reply": "asks_meaning"})
 
         assert decision.needs_explanation is True
         assert decision.ask_customer is True
 
-    def test_explanation_carries_the_actual_difference(self):
+        # ── test_explanation_carries_the_actual_difference ──
         from src.dialogue.product_type_router import product_type_question
 
         decision = _route("i dont know", reply_signal={"reply": "does_not_know"})
@@ -67,7 +70,7 @@ class TestRouterConsumesTheContextSignal:
         assert "seams" in question, "要讲清区别：LED 基本无拼缝 / LCD 有拼缝"
         assert "indoors" in question or "indoor" in question, question
 
-    def test_signal_chose_lcd_confirms_it(self):
+        # ── test_signal_chose_lcd_confirms_it ──
         decision = _route(
             "go with that one", reply_signal={"reply": "chose", "display_type": "LCD"}
         )
@@ -76,7 +79,7 @@ class TestRouterConsumesTheContextSignal:
         assert decision.status == "CONFIRMED"
         assert decision.locked is True
 
-    def test_signal_rejects_without_a_type_asks_the_other(self):
+        # ── test_signal_rejects_without_a_type_asks_the_other ──
         decision = _route(
             "nope", current=_proposal("LED"), reply_signal={"reply": "rejects"}
         )
@@ -85,7 +88,7 @@ class TestRouterConsumesTheContextSignal:
         assert decision.alternative is True
         assert decision.locked is False
 
-    def test_signal_rejects_with_a_type_switches(self):
+        # ── test_signal_rejects_with_a_type_switches ──
         decision = _route(
             "no",
             current=_proposal("LED"),
@@ -95,7 +98,7 @@ class TestRouterConsumesTheContextSignal:
         assert decision.display_type == "LCD"
         assert decision.status == "CONFIRMED"
 
-    def test_unrelated_signal_adopts_our_proposal(self):
+        # ── test_unrelated_signal_adopts_our_proposal ──
         decision = _route(
             "it is for our showroom",
             current=_proposal("LED"),
@@ -106,7 +109,7 @@ class TestRouterConsumesTheContextSignal:
         assert decision.status == "CONFIRMED"
         assert decision.locked is True
 
-    def test_dont_know_still_adopts_when_we_already_suggested(self):
+        # ── test_dont_know_still_adopts_when_we_already_suggested ──
         """计划 §六：我们**已经建议过** LED，客户说不知道 → 采用我们的建议（不再解释一遍）。"""
         decision = _route(
             "i dont know", current=_proposal("LED"), reply_signal={"reply": "does_not_know"}
@@ -116,7 +119,7 @@ class TestRouterConsumesTheContextSignal:
         assert decision.status == "CONFIRMED"
         assert decision.locked is True
 
-    def test_delegate_without_a_proposal_gets_an_explanation(self):
+        # ── test_delegate_without_a_proposal_gets_an_explanation ──
         decision = _route("you choose for me", reply_signal={"reply": "delegates"})
 
         assert decision.needs_explanation is True
@@ -213,7 +216,10 @@ class TestExplanationHasNoFillerOpening:
             "product_entry": "PRODUCT_SELECTION",
         }
 
-    def test_offtopic_turn_with_explanation_says_it_directly(self):
+    def test_offtopic_turn_with_explanation_says_it_directly_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_offtopic_turn_with_explanation_says_it_directly ──
         from src.agents.sales.nodes.script_generator import script_generator
 
         out = script_generator(self._state())
@@ -225,7 +231,7 @@ class TestExplanationHasNoFillerOpening:
         assert "quick version" not in lowered, f"不要过渡话术：{reply}"
         assert reply.rstrip().endswith("?"), f"结尾要落在「请你选」的问题上：{reply}"
 
-    def test_non_offtopic_turn_with_explanation_also_has_no_filler(self):
+        # ── test_non_offtopic_turn_with_explanation_also_has_no_filler ──
         from src.agents.sales.nodes.script_generator import script_generator
 
         state = self._state()

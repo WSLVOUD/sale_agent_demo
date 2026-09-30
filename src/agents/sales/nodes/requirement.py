@@ -9,7 +9,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from ..state import SalesState
 from ....config import config
 from ....models.legacy_adapter import rebuild_legacy_view
-from ....utils.ifp_intent import has_ifp_intent, user_messages_text
 
 logger = logging.getLogger(__name__)
 
@@ -1017,26 +1016,12 @@ ack 的写法（很重要，销售不能只会追问）：
     # 注：上下文变化检测（场景切换清理）已经移到 Profile 上做（见下方 Extractor 之后），
     # 这里不再在 legacy 字典上重复一遍。
 
-    # IFP safety: only keep IFP in meeting room context
-    # Context-aware: check current usage, not just message keywords
-    customer_text = user_messages_text(state.get("messages", []))
-    display_type = str(state.get("requirements", {}).get("display_type", "")).strip().upper()
-    current_usage = state.get("requirements", {}).get("usage", "")
-    current_category = _get_scene_category(current_usage)
-    
-    if display_type == "IFP":
-        # Only keep IFP if user explicitly wants interaction in meeting room context
-        ifp_trigger_keywords = ["手写", "书写", "触摸", "触控", "交互", "白板", "批注", "会议一体机"]
-        
-        has_ifp_word = any(kw in customer_text for kw in ifp_trigger_keywords)
-        
-        # Keep IFP only in meeting room context with explicit interaction need
-        if current_category == "meeting" and has_ifp_word:
-            logger.info(f"IFP kept: meeting room context with interaction need")
-        else:
-            # Not in meeting room context or no explicit interaction need - remove
-            logger.info(f"Removed IFP: current_category={current_category}, has_ifp_word={has_ifp_word}")
-            state["requirements"].pop("display_type", None)
+    # ── 【遗留 IFP 决策已删除】整改计划 §七/§八：IFP 判断必须统一 ───────────────
+    # 这里原来有一段"IFP safety"：只要客户原话里没有手写/白板/触控这类关键词，
+    # 就把 display_type=IFP 从需求里删掉。那是**第二套 IFP 决策中心**（而且是纯关键词），
+    # 与新 LCD Decision Center 的结论打架 —— 客户用英文/拼写有误时，决策中心已经判成
+    # IFP，这里却把型号连同需求一起抹掉。
+    # 现在 IFP 只由 lcd_decision.is_ifp_requirement（需求档案）决定，这段删除。
 
     # ── v2.0 Phase 4：Recommendation Ready Gate 门控推荐（唯一推荐闸门）──────
     # 【M5/M11】是否推荐**只**由下面的 Gate 写入 should_generate_solution：

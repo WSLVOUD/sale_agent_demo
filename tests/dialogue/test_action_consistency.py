@@ -83,7 +83,10 @@ class TestSingleActionPerTurn:
 
 class TestPolicySlotWins:
 
-    def test_final_question_follows_the_policy_slot(self):
+    def test_final_question_follows_the_policy_slot_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_final_question_follows_the_policy_slot ──
         """Policy 说 viewing_distance，销售层准备了 pixel_pitch → 以 Policy 为准。"""
         result = {
             "response": "Your 3x5 screen is a good size. What pixel pitch do you need?",
@@ -108,7 +111,7 @@ class TestPolicySlotWins:
         assert "pixel pitch" not in out["response"].lower()
         assert out["action_consistency"]["overridden_slot"] == "pixel_pitch"
 
-    def test_agreement_keeps_the_prepared_question(self):
+        # ── test_agreement_keeps_the_prepared_question ──
         result = {
             "response": "What pixel pitch do you need?",
             "pending_question": "What pixel pitch do you need?",

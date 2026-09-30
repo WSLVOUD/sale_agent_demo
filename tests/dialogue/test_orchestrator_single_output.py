@@ -49,7 +49,10 @@ class TestOrchestratorSingleOutput:
     def _orchestrator(self, sales):
         return DualAgentOrchestrator(sales_agent=sales, solution_agent=_StubSolution())
 
-    def test_extras_are_merged_and_not_returned_separately(self):
+    def test_extras_are_merged_and_not_returned_separately_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_extras_are_merged_and_not_returned_separately ──
         session_id = "v26-single-output-1"
         memory.clear(session_id)
         memory.mark_first_contact_done(session_id)
@@ -74,7 +77,7 @@ class TestOrchestratorSingleOutput:
         finally:
             memory.clear(session_id)
 
-    def test_process_message_returns_one_question_at_most(self):
+        # ── test_process_message_returns_one_question_at_most ──
         session_id = "v26-single-output-2"
         memory.clear(session_id)
         memory.mark_first_contact_done(session_id)
@@ -98,7 +101,7 @@ class TestOrchestratorSingleOutput:
         finally:
             memory.clear(session_id)
 
-    def test_turn_log_fields_are_present(self):
+        # ── test_turn_log_fields_are_present ──
         """计划 §27：日志口径里要有 action / speech_act / question_count。"""
         session_id = "v26-single-output-3"
         memory.clear(session_id)

@@ -59,7 +59,10 @@ class TestResponseContextIsStructuredOnly:
 
 class TestResponseGeneratorDoesNotRedecide:
 
-    def test_generator_does_not_decide_business(self):
+    def test_generator_does_not_decide_business_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_generator_does_not_decide_business ──
         code = _code_only(_read("src/dialogue/response_generator.py"))
         for token in (
             "route_display_type",          # 产品类型
@@ -71,14 +74,17 @@ class TestResponseGeneratorDoesNotRedecide:
         ):
             assert token not in code, f"ResponseGenerator 不得重新决定业务（{token}）"
 
-    def test_generator_does_not_mutate_the_profile(self):
+        # ── test_generator_does_not_mutate_the_profile ──
         code = _code_only(_read("src/dialogue/response_generator.py"))
         assert re.findall(r"profile\.\w+\s*=[^=]", code) == []
 
 
 class TestSingleFinalCheck:
 
-    def test_validator_is_the_only_final_check_entry(self):
+    def test_validator_is_the_only_final_check_entry_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_validator_is_the_only_final_check_entry ──
         code = _code_only(_read("src/dialogue/response_validator.py"))
         assert "def validate_response" in code
         # 生成器与 Guard 都只能"调用"校验，不能自己再写一套
@@ -89,7 +95,7 @@ class TestSingleFinalCheck:
             other = _code_only(_read(rel))
             assert "def validate_response" not in other, f"{rel} 不该再定义一套校验"
 
-    def test_guard_only_enforces_the_single_question_budget(self):
+        # ── test_guard_only_enforces_the_single_question_budget ──
         """Final Guard 只做"最多一个问题 + 清内部术语"，不重排业务。"""
         code = _code_only(_read("src/dialogue/final_guard.py"))
         for token in ("route_display_type", "check_recommendation_ready", "field_action"):

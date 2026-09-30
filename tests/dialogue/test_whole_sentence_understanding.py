@@ -45,7 +45,10 @@ def _extract(semantic, *, message="ok", context=CONVERSATION):
 
 class TestEvidenceBasedUnderstanding:
 
-    def test_fields_paraphrased_earlier_are_recorded(self):
+    def test_fields_paraphrased_earlier_are_recorded_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_fields_paraphrased_earlier_are_recorded ──
         profile = _extract(
             {
                 "size": "5m x 10m",
@@ -67,7 +70,7 @@ class TestEvidenceBasedUnderstanding:
         assert profile.sources.get("target_width_m") == "explicit"
         assert profile.sources.get("price_preference") == "explicit"
 
-    def test_evidence_must_exist_in_the_conversation(self):
+        # ── test_evidence_must_exist_in_the_conversation ──
         profile = _extract(
             {
                 "pixel_pitch": "P3",
@@ -76,7 +79,7 @@ class TestEvidenceBasedUnderstanding:
         )
         assert profile.pixel_pitch_mm is None, "编造的字段不能入档"
 
-    def test_soft_values_must_be_in_the_allowed_set(self):
+        # ── test_soft_values_must_be_in_the_allowed_set ──
         profile = _extract(
             {
                 "price_preference": "cheapest possible",
@@ -86,7 +89,7 @@ class TestEvidenceBasedUnderstanding:
         # 证据原话能解析出 price；即便模型给了别的说法，也只能落到合法枚举
         assert profile.price_preference in ("price", None)
 
-    def test_rules_win_when_the_current_message_already_gave_a_value(self):
+        # ── test_rules_win_when_the_current_message_already_gave_a_value ──
         profile = _extract(
             {
                 "size": "99 x 99 m",

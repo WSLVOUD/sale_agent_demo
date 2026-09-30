@@ -99,7 +99,10 @@ class TestOffTopicBranchRespectsTheTypeGate:
             "product_entry": "PRODUCT_SELECTION",
         }
 
-    def test_offtopic_turn_asks_led_or_lcd_not_led_requirements(self):
+    def test_offtopic_turn_asks_led_or_lcd_not_led_requirements_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_offtopic_turn_asks_led_or_lcd_not_led_requirements ──
         from src.agents.sales.nodes.script_generator import script_generator
 
         out = script_generator(self._state())
@@ -108,10 +111,8 @@ class TestOffTopicBranchRespectsTheTypeGate:
 
         assert "led" in lowered and "lcd" in lowered, reply
         assert "indoors or outdoors" not in lowered, reply
-        # 槽位由 Question Planner / Dialogue Policy 定，script_generator 不写 pending_slot
-        # （架构收敛测试把这一点钉死）；这里只要求它"问的内容"是类型问题。
 
-    def test_offtopic_turn_still_says_something_to_the_customer(self):
+        # ── test_offtopic_turn_still_says_something_to_the_customer ──
         """先接住客户的话，再问类型 —— 不是把整段回复丢掉。"""
         from src.agents.sales.nodes.script_generator import script_generator
 
@@ -122,7 +123,10 @@ class TestOffTopicBranchRespectsTheTypeGate:
 class TestContinuationKeepsTheTypeQuestion:
     """C：承接额度不能压掉"LED 还是 LCD"这个问题。"""
 
-    def test_type_gate_question_is_exempt_from_the_ack_budget(self):
+    def test_type_gate_question_is_exempt_from_the_ack_budget_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_type_gate_question_is_exempt_from_the_ack_budget ──
         from src.dialogue.continuation_budget import decide_continuation
 
         decision = decide_continuation(
@@ -134,7 +138,7 @@ class TestContinuationKeepsTheTypeQuestion:
         )
         assert decision.suppress_question is False, "类型问题必须问出去（计划 §五）"
 
-    def test_plain_requirement_question_is_still_suppressed(self):
+        # ── test_plain_requirement_question_is_still_suppressed ──
         """对照组：普通需求问题照旧受承接额度约束（客户口径不变）。"""
         from src.dialogue.continuation_budget import decide_continuation
 

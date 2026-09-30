@@ -19,26 +19,29 @@ from src.models.requirement import RequirementProfile  # noqa: E402
 
 class TestCustomerQuestionPriority:
 
-    def test_case7_delivery_question_answers_only(self):
+    def test_case7_delivery_question_answers_only_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_case7_delivery_question_answers_only ──
         """§26 Case 7：How long is delivery? → 先回答，不跳去问题采集。"""
         speech = detect_speech_act("How long is delivery?")
         action = decide_action(speech, profile=None)
         assert action.action == ANSWER_ONLY
         assert action.priority == P0_CUSTOMER_QUESTION
 
-    def test_delivery_question_does_not_append_requirement_question(self):
+        # ── test_delivery_question_does_not_append_requirement_question ──
         profile = RequirementProfile.from_slots(
             {"environment": "indoor"}, explicit_keys={"environment"}
         )
         assert should_append_requirement_question("How long is delivery?", profile) is False
 
-    def test_price_question_does_not_append_requirement_question(self):
+        # ── test_price_question_does_not_append_requirement_question ──
         profile = RequirementProfile.from_slots(
             {"environment": "indoor"}, explicit_keys={"environment"}
         )
         assert should_append_requirement_question("what's the price?", profile) is False
 
-    def test_policy_bundle_reports_customer_question_priority(self):
+        # ── test_policy_bundle_reports_customer_question_priority ──
         bundle = decide_speech_policy("How long is delivery?")
         assert bundle["dialogue_action"]["priority"] == P0_CUSTOMER_QUESTION
         assert bundle["dialogue_action"]["priority_label"] == "customer_question"

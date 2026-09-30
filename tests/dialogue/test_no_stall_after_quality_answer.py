@@ -118,7 +118,10 @@ class TestProfileSlotMapCoversAllFields:
 
 class TestNoStall:
 
-    def test_answered_price_question_does_not_suppress_the_next_question(self):
+    def test_answered_price_question_does_not_suppress_the_next_question_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_answered_price_question_does_not_suppress_the_next_question ──
         session_id = "stall-recover-1"
         _prepare(session_id)
         try:
@@ -133,7 +136,7 @@ class TestNoStall:
         finally:
             memory.clear(session_id)
 
-    def test_registry_is_synced_with_the_profile(self):
+        # ── test_registry_is_synced_with_the_profile ──
         session_id = "stall-recover-2"
         _prepare(session_id)
         try:
@@ -145,7 +148,7 @@ class TestNoStall:
         finally:
             memory.clear(session_id)
 
-    def test_unanswered_question_still_chats_first(self):
+        # ── test_unanswered_question_still_chats_first ──
         """反向用例：客户这轮说的是与需求无关的话 → 先承接（不立刻重复问）。"""
         session_id = "stall-recover-3"
         # 承接额度还没用完（ack_streak=0，上限 1 条）→ 应该先承接一轮

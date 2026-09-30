@@ -50,7 +50,10 @@ def _complete_ifp_profile() -> RequirementProfile:
 
 
 class TestRecommendationRouteWhenRequirementsAreComplete:
-    def test_bare_answer_after_complete_requirements_still_recommends(self):
+    def test_bare_answer_after_complete_requirements_still_recommends_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_bare_answer_after_complete_requirements_still_recommends ──
         """客户最后一句只是回答我们的问题（"no,personal"）→ 这一轮必须给推荐。"""
         state = {
             "messages": [{"role": "user", "content": "no,personal"}],
@@ -62,7 +65,7 @@ class TestRecommendationRouteWhenRequirementsAreComplete:
 
         assert out["intent"] == "recommendation", out["intent"]
 
-    def test_caller_product_question_is_still_respected(self):
+        # ── test_caller_product_question_is_still_respected ──
         """客户真在问问题 → 先回答问题，不要拿推荐打断。"""
         state = {
             "messages": [{"role": "user", "content": "does it support 4K input?"}],
@@ -74,7 +77,7 @@ class TestRecommendationRouteWhenRequirementsAreComplete:
 
         assert out["intent"] == "product_question", out["intent"]
 
-    def test_incomplete_requirements_do_not_force_a_recommendation(self):
+        # ── test_incomplete_requirements_do_not_force_a_recommendation ──
         state = {
             "messages": [{"role": "user", "content": "yes i need handwriting"}],
             "requirement_profile": _profile(
@@ -85,7 +88,7 @@ class TestRecommendationRouteWhenRequirementsAreComplete:
 
         assert _lcd_requirements_are_complete(state) is False
 
-    def test_led_is_not_touched(self):
+        # ── test_led_is_not_touched ──
         """LED 链路保持原样（客户口径：LED 那条不许动）。"""
         state = {
             "messages": [{"role": "user", "content": "no"}],
@@ -132,7 +135,10 @@ class TestRouterPassesTheRecommendationIntent:
 
 
 class TestFallbacksUseTheRightProductFamily:
-    def test_lcd_relaxation_has_no_led_wording(self):
+    def test_lcd_relaxation_has_no_led_wording_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_lcd_relaxation_has_no_led_wording ──
         from src.rag.reply_composer import relaxation_answer
 
         for seed in range(4):
@@ -140,12 +146,12 @@ class TestFallbacksUseTheRightProductFamily:
             assert "pixel pitch" not in text, text
             assert "viewing distance" not in text, text
 
-    def test_led_relaxation_keeps_the_original_wording(self):
+        # ── test_led_relaxation_keeps_the_original_wording ──
         from src.rag.reply_composer import relaxation_answer
 
         assert "pitch" in relaxation_answer().lower()
 
-    def test_product_fallback_names_the_model(self):
+        # ── test_product_fallback_names_the_model ──
         from src.rag.reply_composer import product_fallback_answer
 
         text = product_fallback_answer(
@@ -164,7 +170,7 @@ class TestFallbacksUseTheRightProductFamily:
         assert "65" in text
         assert product_fallback_answer([]) == ""
 
-    def test_no_product_rewrite_follows_the_family(self):
+        # ── test_no_product_rewrite_follows_the_family ──
         from src.rag.rerank import sanitize_customer_response
 
         rewritten = sanitize_customer_response(
@@ -175,7 +181,7 @@ class TestFallbacksUseTheRightProductFamily:
         assert "pixel pitch" not in rewritten.lower(), rewritten
         assert "panel size" in rewritten.lower() or "bezel" in rewritten.lower(), rewritten
 
-    def test_family_detection_for_a_handwriting_meeting_room(self):
+        # ── test_family_detection_for_a_handwriting_meeting_room ──
         from src.utils.product_family import product_family_of
 
         assert product_family_of(_complete_ifp_profile()) == "ifp"

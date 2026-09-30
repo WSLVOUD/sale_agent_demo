@@ -38,7 +38,10 @@ def _slots(message: str):
 
 class TestOffTopicJudgement:
 
-    def test_requirement_messages_are_not_offtopic(self):
+    def test_requirement_messages_are_not_offtopic_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_requirement_messages_are_not_offtopic ──
         for message in (
             "i need a led display",
             "3*5",
@@ -54,18 +57,18 @@ class TestOffTopicJudgement:
                 continue
             assert is_offtopic_message(message, rule_slots=slots) is False, message
 
-    def test_semantic_layer_counts_as_requirement(self):
+        # ── test_semantic_layer_counts_as_requirement ──
         """LLM 语义层抽到的字段（本例：size）也算"在聊需求"，不看关键词。"""
         assert is_offtopic_message(
             "the whole front wall, about 8 metres across",
             semantic_payload={"size": "8m"},
         ) is False
 
-    def test_business_questions_are_not_offtopic(self):
+        # ── test_business_questions_are_not_offtopic ──
         for message in ("delivery time?", "how much does it cost?", "你们公司在哪里"):
             assert is_offtopic_message(message, rule_slots=_slots(message)) is False, message
 
-    def test_small_talk_is_offtopic(self):
+        # ── test_small_talk_is_offtopic ──
         for message in (
             "haha i am in nairobi",
             "nice weather today",
@@ -120,7 +123,10 @@ class TestRequirementTurnsAlwaysAsk:
         finally:
             memory.clear(session_id)
 
-    def test_logged_sequence_keeps_asking(self):
+    def test_logged_sequence_keeps_asking_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_logged_sequence_keeps_asking ──
         """实测日志那串需求消息：每一轮都要"接住 + 追问"，不能只寒暄。"""
         results = self._run(
             "offtopic-req", ["i need a led display", "3*5", "indoor", "maybe 5m"]
@@ -132,7 +138,7 @@ class TestRequirementTurnsAlwaysAsk:
             # 同一个问题不能连着问两遍（重复提问闸门）
             assert result["response"].count("?") == 1, result["response"]
 
-    def test_only_consecutive_small_talk_is_acknowledged_alone(self):
+        # ── test_only_consecutive_small_talk_is_acknowledged_alone ──
         results = self._run(
             "offtopic-chat",
             ["i need a led display", "haha i am in nairobi", "nice weather today"],

@@ -28,14 +28,17 @@ def _profile_from_message(message: str) -> RequirementProfile:
 
 class TestAnswerWrongSlot:
 
-    def test_size_answer_to_environment_question_is_wrong_slot(self):
+    def test_size_answer_to_environment_question_is_wrong_slot_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_size_answer_to_environment_question_is_wrong_slot ──
         match = match_answer_to_question("3*5", last_question_slot="environment")
         assert match.kind == ANSWER_WRONG_SLOT
         assert match.slot == "size"
         assert match.expected_slot == "environment"
         assert "environment" not in match.slots, "不能把尺寸当成室内外"
 
-    def test_information_is_not_lost(self):
+        # ── test_information_is_not_lost ──
         """§10：AI 问 indoor/outdoor、客户答 3×5 → 尺寸照样要记下来。"""
         reset_conversation_state("wrong-slot-1")
         state = get_conversation_state("wrong-slot-1")
@@ -49,7 +52,7 @@ class TestAnswerWrongSlot:
         assert state.registry.should_skip("size") is True, "尺寸已经知道，不该再问"
         assert state.registry.should_skip("environment") is False, "环境仍然未知"
 
-    def test_environment_is_still_asked_next_turn(self):
+        # ── test_environment_is_still_asked_next_turn ──
         """§26 Case 8：3×5 不会让系统丢掉尺寸，也不会让环境变成已知。"""
         profile = _profile_from_message("3*5")
         session_id = "wrong-slot-2"

@@ -18,7 +18,10 @@ if project_root not in sys.path:
 
 class TestQuestionSpecAnchor:
 
-    def test_anchor_is_the_semantic_anchor(self):
+    def test_anchor_is_the_semantic_anchor_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_anchor_is_the_semantic_anchor ──
         from src.dialogue import QuestionSpec
 
         spec = QuestionSpec(
@@ -30,7 +33,7 @@ class TestQuestionSpecAnchor:
         # 兼容别名：两者始终一致
         assert spec.text == spec.anchor
 
-    def test_legacy_text_still_works(self):
+        # ── test_legacy_text_still_works ──
         from src.dialogue import QuestionSpec
 
         spec = QuestionSpec(slot="size", text="What screen size?")
@@ -40,7 +43,10 @@ class TestQuestionSpecAnchor:
 
 class TestResponseShape:
 
-    def test_shape_follows_the_action(self):
+    def test_shape_follows_the_action_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_shape_follows_the_action ──
         from src.dialogue import ResponseShape
 
         ask = ResponseShape.for_action("ASK", has_question=True)
@@ -48,7 +54,7 @@ class TestResponseShape:
         answer_ask = ResponseShape.for_action("ANSWER_AND_ASK", has_question=True)
         assert (answer_ask.allow_answer, answer_ask.allow_question) == (True, True)
 
-    def test_context_carries_the_shape_into_the_prompt(self):
+        # ── test_context_carries_the_shape_into_the_prompt ──
         from src.dialogue import ResponseContext
 
         context = ResponseContext(
@@ -68,7 +74,10 @@ class TestValidatorV28Checks:
 
         return validate_response(text, **kwargs)
 
-    def test_multiple_response_blocks_are_flagged(self):
+    def test_multiple_response_blocks_are_flagged_merged(self):
+        """合并自 6 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_multiple_response_blocks_are_flagged ──
         text = (
             "First complete sales block that is long enough to stand alone.\n\n"
             "Second complete sales block that is also long enough.\n\n"
@@ -78,12 +87,12 @@ class TestValidatorV28Checks:
         assert "multiple_response_blocks" in result.issues
         assert result.response_blocks >= 3
 
-    def test_truncated_tail_is_flagged(self):
+        # ── test_truncated_tail_is_flagged ──
         result = self._validate("Sure, I can put a proposal together for you and")
         assert result.incomplete_tail is True
         assert "incomplete_response" in result.issues
 
-    def test_mechanical_fact_repetition_is_flagged(self):
+        # ── test_mechanical_fact_repetition_is_flagged ──
         result = self._validate(
             "You have an indoor screen, at 5 meters, and the 3x5 size, so let me help.",
             customer_message="indoor 5 meters 3x5 size, church",
@@ -91,21 +100,21 @@ class TestValidatorV28Checks:
         assert len(result.repeated_known_facts) >= 3, result.repeated_known_facts
         assert "repeated_known_facts" in result.issues
 
-    def test_single_fact_is_not_mechanical_repetition(self):
+        # ── test_single_fact_is_not_mechanical_repetition ──
         result = self._validate(
             "An indoor screen works well here. What size do you need?",
             customer_message="indoor",
         )
         assert "repeated_known_facts" not in result.issues
 
-    def test_passing_confirmation_is_allowed(self):
+        # ── test_passing_confirmation_is_allowed ──
         result = self._validate(
             "Your 3x5 indoor setup is a good size. Roughly how far will viewers be?",
             customer_message="indoor 3x5",
         )
         assert "repeated_known_facts" not in result.issues
 
-    def test_wrong_question_slot_is_flagged(self):
+        # ── test_wrong_question_slot_is_flagged ──
         result = self._validate(
             "Thanks. What pixel pitch would you like?",
             question_slot="viewing_distance",

@@ -70,7 +70,10 @@ class TestLayoutIsParsedFromTheAnsweredQuestion:
 
 
 class TestBareValuesAreParsedForTheAskedSlot:
-    def test_bezel_without_the_word_bezel(self):
+    def test_bezel_without_the_word_bezel_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_bezel_without_the_word_bezel ──
         profile = _profile(lcd_category="monitoring", lcd_is_splicing=True)
         profile, _action = _answer(profile, "0.88mm", asked_slot="lcd_bezel", last_question=BEZEL_Q)
 
@@ -78,19 +81,19 @@ class TestBareValuesAreParsedForTheAskedSlot:
             "客户答的 0.88mm 不能被业务默认值 3.5 顶掉"
         )
 
-    def test_bezel_bare_number(self):
+        # ── test_bezel_bare_number ──
         profile = _profile(lcd_category="monitoring", lcd_is_splicing=True)
         profile, _action = _answer(profile, "0.88", asked_slot="lcd_bezel", last_question=BEZEL_Q)
 
         assert profile.lcd_bezel_mm == pytest.approx(0.88)
 
-    def test_size_bare_number(self):
+        # ── test_size_bare_number ──
         profile = _profile(lcd_category="monitoring", lcd_is_splicing=True)
         profile, _action = _answer(profile, "65", asked_slot="lcd_size", last_question=SIZE_Q)
 
         assert profile.lcd_size_inch == pytest.approx(65.0)
 
-    def test_meters_are_not_mistaken_for_a_layout(self):
+        # ── test_meters_are_not_mistaken_for_a_layout ──
         """拼接墙口径下客户说 "3 x 5 m"（场地尺寸）时，不能当成 3x5 排布。"""
         profile = _profile(lcd_category="monitoring", lcd_is_splicing=True)
         profile, _action = _answer(
@@ -111,7 +114,10 @@ class TestChainNeverLoopsForever:
             lcd_size_inch=65.0,
         )
 
-    def test_explicit_recommendation_closes_an_unanswered_environment(self):
+    def test_explicit_recommendation_closes_an_unanswered_environment_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_explicit_recommendation_closes_an_unanswered_environment ──
         """室内外问了两轮客户没答 → 按 LCD 业务默认（室内）收口，直接推荐。"""
         profile = self._video_wall_profile()
         profile.last_asked_slot = "environment"
@@ -125,13 +131,13 @@ class TestChainNeverLoopsForever:
         assert action.confirmed is True, action.missing_fields
         assert action.missing_fields == []
 
-    def test_layout_is_not_asked_for_a_single_display_wall(self):
+        # ── test_layout_is_not_asked_for_a_single_display_wall ──
         profile = _profile(lcd_category="monitoring", lcd_is_splicing=False, lcd_size_inch=65.0)
         _profile_out, action = lcd_turn(profile, "single displays indoor")
 
         assert action.question_slot != "lcd_layout", action.question_slot
 
-    def test_layout_stops_blocking_after_the_ask_limit(self):
+        # ── test_layout_stops_blocking_after_the_ask_limit ──
         """排布问了两轮还是没答案 → 不阻塞推荐（也不编造值）。"""
         profile = self._video_wall_profile()
         profile.lcd_splicing_layout = None
@@ -145,7 +151,7 @@ class TestChainNeverLoopsForever:
         assert "lcd_layout" not in action.missing_fields, action.missing_fields
         assert profile.lcd_splicing_layout is None, "不编造排布，只是不再阻塞"
 
-    def test_full_video_wall_conversation_reaches_the_recommendation(self):
+        # ── test_full_video_wall_conversation_reaches_the_recommendation ──
         """把客户口径里的整段对话重放一遍 → 必须走到 confirmed（触发推荐）。"""
         profile = _profile()
         script = [
@@ -172,7 +178,10 @@ class TestChainNeverLoopsForever:
 
 
 class TestLcdSlotQuestionValidation:
-    def test_asking_a_different_lcd_slot_is_flagged(self):
+    def test_asking_a_different_lcd_slot_is_flagged_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_asking_a_different_lcd_slot_is_flagged ──
         """Python 定的是"问拼缝"，模型却问成"尺寸" → 校验必须拦下来。"""
         result = validate_response(
             "A 65-inch panel keeps things sharp. What screen size are you thinking, "
@@ -182,7 +191,7 @@ class TestLcdSlotQuestionValidation:
         )
         assert "question_intent_mismatch" in result.issues, result.issues
 
-    def test_asking_the_right_slot_passes(self):
+        # ── test_asking_the_right_slot_passes ──
         result = validate_response(
             "Got it. How narrow does the bezel need to be, for example 3.5mm?",
             question_slot="lcd_bezel",
@@ -190,7 +199,7 @@ class TestLcdSlotQuestionValidation:
         )
         assert result.issues == [], result.issues
 
-    def test_wrong_lcd_slot_is_detected(self):
+        # ── test_wrong_lcd_slot_is_detected ──
         """问的是排布，答案里却在问拼接/单体 → 判为问错槽位。"""
         result = validate_response(
             "Do you need a video wall (spliced screens) or single displays?",

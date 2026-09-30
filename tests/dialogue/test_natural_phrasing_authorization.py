@@ -75,7 +75,10 @@ def _context(**overrides):
 
 class TestQuestionBankIsASeedNotATemplate:
 
-    def test_no_canned_preamble_anywhere(self):
+    def test_no_canned_preamble_anywhere_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_no_canned_preamble_anywhere ──
         for slot, variants in QUESTION_VARIANTS.items():
             for seed in range(12):
                 question = question_for(slot, "en", seed)
@@ -84,19 +87,22 @@ class TestQuestionBankIsASeedNotATemplate:
                 lowered = question.lower()
                 assert not lowered.startswith(_CANNED_PREAMBLES), (slot, seed, question)
 
-    def test_intent_is_available_per_slot(self):
+        # ── test_intent_is_available_per_slot ──
         assert "室内" in question_intent("environment")
         assert "租赁" in question_intent("installation")
 
 
 class TestCleaningUsesCommasInsteadOfDashes:
 
-    def test_em_dash_becomes_a_comma(self):
+    def test_em_dash_becomes_a_comma_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_em_dash_becomes_a_comma ──
         text = sanitize_customer_response("Fixed install — or is it for rental events?")
         assert "—" not in text and "–" not in text, text
         assert text == "Fixed install, or is it for rental events?", text
 
-    def test_no_double_commas(self):
+        # ── test_no_double_commas ──
         text = sanitize_customer_response("Pricing depends on the model —— then I quote.")
         assert ", ," not in text and ",," not in text
         assert "—" not in text
@@ -104,7 +110,10 @@ class TestCleaningUsesCommasInsteadOfDashes:
 
 class TestValidatorKeepsIntentAndFactsHonest:
 
-    def test_question_about_the_wrong_topic_is_flagged(self):
+    def test_question_about_the_wrong_topic_is_flagged_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_question_about_the_wrong_topic_is_flagged ──
         result = validate_response(
             "Which pitch do you want?",
             question_slot="environment",
@@ -112,7 +121,7 @@ class TestValidatorKeepsIntentAndFactsHonest:
         )
         assert "question_intent_mismatch" in result.issues
 
-    def test_same_question_phrasing_is_flagged(self):
+        # ── test_same_question_phrasing_is_flagged ──
         result = validate_response(
             "Will the screen be installed indoors or outdoors?",
             question_slot="environment",
@@ -120,7 +129,7 @@ class TestValidatorKeepsIntentAndFactsHonest:
         )
         assert "repeated_question_phrasing" in result.issues
 
-    def test_a_fresh_phrasing_passes(self):
+        # ── test_a_fresh_phrasing_passes ──
         result = validate_response(
             "Is this one going indoors, or will it live outside?",
             question_slot="environment",
@@ -131,13 +140,16 @@ class TestValidatorKeepsIntentAndFactsHonest:
 
 class TestLLMIsAuthorizedToPhraseItItself:
 
-    def test_natural_variation_is_used_as_is(self):
+    def test_natural_variation_is_used_as_is_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_natural_variation_is_used_as_is ──
         llm = _FakeLLM(["Indoors or outdoors? That decides which cabinet I'd quote."])
         text = generate_response(_context(), llm=llm)
         assert text == "Indoors or outdoors? That decides which cabinet I'd quote."
         assert len(llm.prompts) == 1, "合格就不该再重写"
 
-    def test_wrong_topic_is_rewritten_once_then_used(self):
+        # ── test_wrong_topic_is_rewritten_once_then_used ──
         llm = _FakeLLM([
             "Which pitch do you want?",              # 问错主题 → 要求重写
             "Indoors or outdoors — which one is it?",  # 重写后合格
@@ -148,7 +160,7 @@ class TestLLMIsAuthorizedToPhraseItItself:
         assert len(llm.prompts) == 2, "应触发一次重写"
         assert "Problems to fix" in llm.prompts[1]
 
-    def test_invented_model_never_reaches_the_customer(self):
+        # ── test_invented_model_never_reaches_the_customer ──
         """编造型号 / 编造事实 → 重写仍越界 → 退回模板（事实安全优先）。"""
         llm = _FakeLLM([
             "We'd use model TW99-X with a 5-year warranty.",
@@ -161,7 +173,7 @@ class TestLLMIsAuthorizedToPhraseItItself:
             context.question,
         ) or "indoors or outdoors" in text.lower()
 
-    def test_prompt_tells_the_model_phrasing_is_its_own(self):
+        # ── test_prompt_tells_the_model_phrasing_is_its_own ──
         llm = _FakeLLM(["Indoors or outdoors?"])
         generate_response(_context(), llm=llm)
         prompt = llm.prompts[0]
@@ -169,7 +181,7 @@ class TestLLMIsAuthorizedToPhraseItItself:
         assert "do NOT copy it verbatim" in prompt
         assert "explicitly allowed to" in prompt
 
-    def test_prompt_carries_previous_phrasings(self):
+        # ── test_prompt_carries_previous_phrasings ──
         llm = _FakeLLM(["Is this indoors or outdoors?"])
         context = _context(recent_questions=["Will the screen be installed indoors or outdoors?"])
         generate_response(context, llm=llm)

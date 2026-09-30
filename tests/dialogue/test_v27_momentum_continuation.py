@@ -21,25 +21,28 @@ from src.dialogue import (  # noqa: E402
 
 class TestMomentum:
 
-    def test_momentum_follows_the_latest_topic(self):
+    def test_momentum_follows_the_latest_topic_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_momentum_follows_the_latest_topic ──
         momentum = compute_momentum(newly_filled_slots=["size"])
         assert momentum.slot == "size"
         assert "pixel_pitch" in momentum.follow_ups
 
-    def test_momentum_prefers_newest(self):
+        # ── test_momentum_prefers_newest ──
         momentum = compute_momentum(
             answered_slots=["environment"], newly_filled_slots=["size"]
         )
         assert momentum.slot == "size"
         assert momentum.slots[0] == "size"
 
-    def test_continuation_candidates_are_ranked(self):
+        # ── test_continuation_candidates_are_ranked ──
         momentum = compute_momentum(newly_filled_slots=["size"])
         ranked = continuation_candidates(momentum, ["installation", "pixel_pitch", "size"])
         assert ranked[0] == "pixel_pitch"
         assert set(ranked) == {"installation", "pixel_pitch", "size"}
 
-    def test_momentum_bonus_only_for_related_slots(self):
+        # ── test_momentum_bonus_only_for_related_slots ──
         momentum = compute_momentum(newly_filled_slots=["size"])
         assert momentum_bonus("pixel_pitch", momentum) > 0
         assert momentum_bonus("price_preference", momentum) == 0
@@ -47,7 +50,10 @@ class TestMomentum:
 
 class TestNaturalContinuation:
 
-    def test_single_parameter_uses_minimal_density(self):
+    def test_single_parameter_uses_minimal_density_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_single_parameter_uses_minimal_density ──
         continuation = build_natural_continuation(
             customer_message="8 meters",
             newly_filled_slots=["viewing_distance"],
@@ -59,7 +65,7 @@ class TestNaturalContinuation:
         assert continuation.opening == "", "普通参数不要任何铺垫"
         assert continuation.avoid_ack is True
 
-    def test_customer_question_is_answered(self):
+        # ── test_customer_question_is_answered ──
         continuation = build_natural_continuation(
             customer_message="How long is delivery?",
             customer_question=True,
@@ -67,7 +73,7 @@ class TestNaturalContinuation:
         )
         assert continuation.mode == "answer"
 
-    def test_recommendation_is_detailed(self):
+        # ── test_recommendation_is_detailed ──
         continuation = build_natural_continuation(
             customer_message="ok",
             has_recommendation=True,
@@ -75,7 +81,7 @@ class TestNaturalContinuation:
         assert continuation.density == DETAILED
         assert continuation.mode == "recommend"
 
-    def test_render_minimal_is_just_the_question(self):
+        # ── test_render_minimal_is_just_the_question ──
         continuation = build_natural_continuation(
             newly_filled_slots=["size"], next_required_slot="pixel_pitch"
         )
@@ -85,21 +91,24 @@ class TestNaturalContinuation:
 
 class TestResponseDensity:
 
-    def test_one_parameter_is_minimal(self):
+    def test_one_parameter_is_minimal_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_one_parameter_is_minimal ──
         assert decide_response_density(newly_filled_slots=["size"]) == MINIMAL
 
-    def test_two_parameters_is_normal(self):
+        # ── test_two_parameters_is_normal ──
         assert decide_response_density(newly_filled_slots=["size", "environment"]) == NORMAL
 
-    def test_technical_or_recommendation_is_detailed(self):
+        # ── test_technical_or_recommendation_is_detailed ──
         assert decide_response_density(has_engineering=True) == DETAILED
         assert decide_response_density(has_recommendation=True) == DETAILED
         assert decide_response_density(customer_requested_detail=True) == DETAILED
 
-    def test_delivery_question_is_short(self):
+        # ── test_delivery_question_is_short ──
         assert decide_response_density(
             customer_question=True, question_kind="DELIVERY_QUESTION"
         ) == MINIMAL
 
-    def test_conflict_is_normal(self):
+        # ── test_conflict_is_normal ──
         assert decide_response_density(conflicts=["size_conflict"]) == NORMAL

@@ -161,19 +161,22 @@ class TestOthersNodeCarriesContext:
 class TestLegacyRequirementsAreUnderstood:
     """legacy 投影字典（indoor / is_rental / size）也必须被护栏认出来。"""
 
-    def test_summary_covers_environment_installation_and_size(self):
+    def test_summary_covers_environment_installation_and_size_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_summary_covers_environment_installation_and_size ──
         summary = requirement_summary(profile_to_solution_requirement(_profile()))
         assert summary["environment"] == "indoor"
         assert summary["installation"] == "fixed"
         assert summary["size"]
         assert summary["viewing_distance"]
 
-    def test_requirement_lines_are_complete(self):
+        # ── test_requirement_lines_are_complete ──
         lines = "\n".join(requirement_lines(profile_to_solution_requirement(_profile())))
         assert "indoor" in lines and "fixed" in lines
         assert "3000" in lines or "3" in lines
 
-    def test_retrieval_filters_keep_environment_and_installation(self):
+        # ── test_retrieval_filters_keep_environment_and_installation ──
         filters = retrieval_filters(profile_to_solution_requirement(_profile()))
         assert filters.get("indoor") is True
         assert filters.get("is_rental") is False
@@ -208,7 +211,10 @@ class _StubSolutionAnswer:
 class TestPlaceholderHistoryIsReplaced:
     """历史里不能留 Sales 的占位符（"Sure."）——那是下一轮语境的污染源。"""
 
-    def test_solution_answer_replaces_the_placeholder_in_history(self):
+    def test_solution_answer_replaces_the_placeholder_in_history_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_solution_answer_replaces_the_placeholder_in_history ──
         from src.orchestrator import DualAgentOrchestrator
 
         session_id = "others-history-1"
@@ -233,7 +239,7 @@ class TestPlaceholderHistoryIsReplaced:
         finally:
             memory.clear(session_id)
 
-    def test_store_helper_only_touches_the_last_assistant_message(self):
+        # ── test_store_helper_only_touches_the_last_assistant_message ──
         session_id = "others-history-2"
         memory.clear(session_id)
         memory.extend(

@@ -28,7 +28,10 @@ from src.rag.reply_composer import (  # noqa: E402
 
 class TestPricePreferenceIsAnAnswerNotAQuestion:
 
-    def test_preference_phrases_are_parsed(self):
+    def test_preference_phrases_are_parsed_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_preference_phrases_are_parsed ──
         for message in (
             "cost down the priority",
             "keeping the cost down",
@@ -42,7 +45,7 @@ class TestPricePreferenceIsAnAnswerNotAQuestion:
             }
             assert slots.get("price_preference"), (message, slots)
 
-    def test_answering_the_preference_question_is_not_a_price_question(self):
+        # ── test_answering_the_preference_question_is_not_a_price_question ──
         assert (
             is_price_question_with_context(
                 "cost down the priority", last_asked_slot="price_preference"
@@ -51,7 +54,7 @@ class TestPricePreferenceIsAnAnswerNotAQuestion:
         )
         assert is_price_question("cost down the priority") is False
 
-    def test_real_price_questions_still_detected(self):
+        # ── test_real_price_questions_still_detected ──
         assert (
             is_price_question_with_context(
                 "what is the price?", last_asked_slot="price_preference"
@@ -61,12 +64,12 @@ class TestPricePreferenceIsAnAnswerNotAQuestion:
         assert is_price_question("please send me a quotation") is True
         assert is_price_question("多少钱") is True
 
-    def test_speech_act_treats_it_as_a_requirement_answer(self):
+        # ── test_speech_act_treats_it_as_a_requirement_answer ──
         result = detect_speech_act("cost down the priority", last_asked_slot="price_preference")
         assert result.speech_act == "ANSWER_REQUIREMENT"
         assert "PRICE_QUESTION" not in (result.customer_questions or [])
 
-    def test_speech_act_still_flags_a_real_price_question(self):
+        # ── test_speech_act_still_flags_a_real_price_question ──
         result = detect_speech_act("what about the price?", last_asked_slot="price_preference")
         assert "PRICE_QUESTION" in (result.customer_questions or [])
 

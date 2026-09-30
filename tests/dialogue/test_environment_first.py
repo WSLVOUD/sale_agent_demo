@@ -35,25 +35,28 @@ def _next_slot(profile: RequirementProfile, session_id: str):
 
 class TestEnvironmentFirst:
 
-    def test_case1_generic_request_asks_environment_first(self):
+    def test_case1_generic_request_asks_environment_first_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_case1_generic_request_asks_environment_first ──
         """§26 Case 1：i need a display → 只问 indoor / outdoor。"""
         assert _next_slot(_profile_from_message("i need a display"), "env-case1") == "environment"
 
-    def test_case2_size_only_still_asks_environment(self):
+        # ── test_case2_size_only_still_asks_environment ──
         """§26 Case 2：3*5 → 记下尺寸，环境仍然第一问。"""
         assert _next_slot(_profile_from_message("3*5"), "env-case2") == "environment"
 
-    def test_pitch_alone_does_not_skip_environment(self):
+        # ── test_pitch_alone_does_not_skip_environment ──
         """§13：随机只发生在同等重要的候选之间，environment 未知时不许被跳过。"""
         assert _next_slot(_profile_from_message("P3"), "env-case3") == "environment"
 
-    def test_obvious_scenario_keeps_inferring(self):
+        # ── test_obvious_scenario_keeps_inferring ──
         """§12：明显场景（教堂 / 会议室 / 户外广告）继续允许推断，不再问室内外。"""
         profile = _profile_from_message("led screen for a church")
         assert environment_needs_asking(profile) is False
         assert _next_slot(profile, "env-case4") != "environment"
 
-    def test_customer_said_indoor_never_asked_again(self):
+        # ── test_customer_said_indoor_never_asked_again ──
         profile = _profile_from_message("indoor")
         assert environment_needs_asking(profile) is False
         assert _next_slot(profile, "env-case5") != "environment"
@@ -76,7 +79,10 @@ class TestEnvironmentAfterWrongAnswer:
         profile.record_ask("environment")
         return profile
 
-    def test_environment_can_move_on_when_unanswered(self):
+    def test_environment_can_move_on_when_unanswered_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_environment_can_move_on_when_unanswered ──
         """客户口径（2026-09-21）：每个问题没答出来**都可以跳转**（硬性条件也一样）；
         硬性条件只在"要推荐 / 要算方案"时才必须满足。
 
@@ -92,7 +98,7 @@ class TestEnvironmentAfterWrongAnswer:
         assert getattr(plan, "slot", None) != "environment", "没答出来 → 可以跳转"
         assert plan is not None
 
-    def test_environment_comes_back_with_the_plain_form(self):
+        # ── test_environment_comes_back_with_the_plain_form ──
         """其它都问不到了 → 环境作为复问回来（直问，不用降门槛说法）。"""
         slots = {
             "display_type": "LED",
@@ -117,7 +123,7 @@ class TestEnvironmentAfterWrongAnswer:
         question = (getattr(plan, "question", "") or "")
         assert "indoor" in question.lower()
 
-    def test_two_attempts_is_the_cap(self):
+        # ── test_two_attempts_is_the_cap ──
         """问满两次仍拿不到 → 不再无限追问（交给 Gate 的 DEFERRED / BLOCKED）。"""
         profile = self._profile_asked_once()
         profile.record_ask("environment")

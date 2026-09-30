@@ -30,14 +30,17 @@ def _raw_slots(message: str) -> dict:
 
 class TestMultiRequirementUpdate:
 
-    def test_all_four_fields_are_extracted_at_once(self):
+    def test_all_four_fields_are_extracted_at_once_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_all_four_fields_are_extracted_at_once ──
         slots = canonical_slots(explicit_slots(MESSAGE))
         assert slots.get("environment") == "indoor"
         assert "size" in slots
         assert slots.get("pixel_pitch") == 3.0
         assert slots.get("installation") == "fixed"
 
-    def test_profile_records_every_field(self):
+        # ── test_profile_records_every_field ──
         raw = _raw_slots(MESSAGE)
         profile = RequirementProfile.from_slots(raw, explicit_keys=set(raw))
         assert getattr(profile, "environment", "") == "indoor"
@@ -47,7 +50,7 @@ class TestMultiRequirementUpdate:
             profile, "target_height_mm", None
         )
 
-    def test_at_most_one_follow_up_question(self):
+        # ── test_at_most_one_follow_up_question ──
         """§26 Case 6：不要连续提四个问题。"""
         raw = _raw_slots(MESSAGE)
         covered = canonical_slots(explicit_slots(MESSAGE))

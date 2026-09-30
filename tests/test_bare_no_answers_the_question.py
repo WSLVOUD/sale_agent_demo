@@ -46,12 +46,15 @@ class TestBareNoIsAnAnswerNotACorrection:
         assert result.field == slot
         assert result.value is False
 
-    def test_plain_no_also_counts(self):
+    def test_plain_no_also_counts_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_plain_no_also_counts ──
         result = detect_speech_act("no", last_asked_slot="lcd_ops")
 
         assert result.speech_act == ANSWER_REQUIREMENT
 
-    def test_a_real_correction_is_still_a_correction(self):
+        # ── test_a_real_correction_is_still_a_correction ──
         """"no + 新说法" 才是纠正，不能被当成否定回答吃掉。"""
         result = detect_speech_act(
             "no, actually we need two screens instead", last_asked_slot="lcd_ops"
@@ -59,7 +62,7 @@ class TestBareNoIsAnAnswerNotACorrection:
 
         assert result.speech_act == CORRECTION, result.speech_act
 
-    def test_a_no_on_a_non_yes_no_slot_is_not_hijacked(self):
+        # ── test_a_no_on_a_non_yes_no_slot_is_not_hijacked ──
         """上一轮问的是室内外这种非是非题 → "no" 的含义不清楚，保持原判（纠正）。"""
         result = detect_speech_act("no,personal", last_asked_slot="environment")
 
@@ -67,7 +70,10 @@ class TestBareNoIsAnAnswerNotACorrection:
 
 
 class TestPolicyKeepsAskingAfterABareNo:
-    def test_policy_picks_an_ask_action_not_clarify_only(self):
+    def test_policy_picks_an_ask_action_not_clarify_only_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_policy_picks_an_ask_action_not_clarify_only ──
         profile = _lcd_profile(lcd_size_inch=65.0, lcd_handwriting_required=True)
         profile.last_asked_slot = "lcd_tender"
 
@@ -78,7 +84,7 @@ class TestPolicyKeepsAskingAfterABareNo:
         assert bundle["speech_act"]["speech_act"] == ANSWER_REQUIREMENT
         assert bundle["dialogue_action"]["action"] == "ask_only", bundle["dialogue_action"]
 
-    def test_clarify_only_is_still_used_for_real_corrections(self):
+        # ── test_clarify_only_is_still_used_for_real_corrections ──
         profile = _lcd_profile()
         profile.last_asked_slot = "lcd_ops"
 

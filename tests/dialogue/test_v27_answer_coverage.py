@@ -11,7 +11,10 @@ from src.dialogue import compute_answer_coverage, match_answer_to_question  # no
 
 class TestAnswerCoverage:
 
-    def test_asked_size_answered_distance(self):
+    def test_asked_size_answered_distance_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_asked_size_answered_distance ──
         """计划 §18 的原文例子。"""
         match = match_answer_to_question("Viewing distance is 8 meters", last_question_slot="size")
         coverage = compute_answer_coverage(
@@ -23,7 +26,7 @@ class TestAnswerCoverage:
         assert coverage.is_wrong_slot is True
         assert "size" in coverage.unresolved_slots
 
-    def test_answered_the_asked_slot(self):
+        # ── test_answered_the_asked_slot ──
         match = match_answer_to_question("P3", last_question_slot="pixel_pitch")
         coverage = compute_answer_coverage(
             asked_slot="pixel_pitch", match=match, newly_filled_slots=["pixel_pitch"]
@@ -32,7 +35,7 @@ class TestAnswerCoverage:
         assert coverage.is_wrong_slot is False
         assert coverage.unresolved_slots == []
 
-    def test_multi_information_turn(self):
+        # ── test_multi_information_turn ──
         match = match_answer_to_question(
             "Indoor, 3x5m, P3", last_question_slot="environment"
         )
@@ -44,12 +47,12 @@ class TestAnswerCoverage:
         assert coverage.answered_asked_slot is True
         assert set(coverage.newly_filled_slots) >= {"size", "pixel_pitch"}
 
-    def test_no_answer_at_all(self):
+        # ── test_no_answer_at_all ──
         coverage = compute_answer_coverage(asked_slot="size")
         assert coverage.answered_slots == []
         assert "size" in coverage.unresolved_slots
 
-    def test_to_dict_is_serialisable(self):
+        # ── test_to_dict_is_serialisable ──
         payload = compute_answer_coverage(asked_slot="size").to_dict()
         assert payload["asked_slot"] == "size"
         assert isinstance(payload["unresolved_slots"], list)

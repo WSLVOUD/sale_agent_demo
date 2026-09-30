@@ -87,24 +87,27 @@ class TestDetection:
 
 class TestFacts:
 
-    def test_manual_fact(self):
+    def test_manual_fact_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_manual_fact ──
         fact = service_faq_fact("说明书和图纸").lower()
         assert "manual" in fact and "drawing" in fact
         assert "order" in fact and "goods" in fact
         assert "technical support" in fact
 
-    def test_installation_fact(self):
+        # ── test_installation_fact ──
         fact = service_faq_fact("你们包安装吗").lower()
         assert "do not provide on-site installation" in fact
         assert "local installation company" in fact
         assert "installation guide" in fact
 
-    def test_warranty_fact(self):
+        # ── test_warranty_fact ──
         fact = service_faq_fact("质保多久").lower()
         assert "1-year warranty" in fact
         assert "extended" in fact and "fee" in fact
 
-    def test_no_answer_when_not_asked(self):
+        # ── test_no_answer_when_not_asked ──
         assert service_faq_reply("这个屏多少钱") is None
         assert service_faq_fact("教堂室内") is None
 

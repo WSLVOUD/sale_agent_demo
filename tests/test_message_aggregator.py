@@ -82,7 +82,10 @@ class TestAggregation:
 
 class TestIdempotency:
 
-    def test_duplicate_message_id_is_ignored(self):
+    def test_duplicate_message_id_is_ignored_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_duplicate_message_id_is_ignored ──
         clock = _Clock()
         agg = _aggregator(clock)
         agg.add("s", {"message_id": "dup", "text": "first"})
@@ -92,7 +95,7 @@ class TestIdempotency:
         assert turn is not None
         assert turn.text.count("first") == 1
 
-    def test_session_lock_prevents_double_run(self):
+        # ── test_session_lock_prevents_double_run ──
         clock = _Clock()
         agg = _aggregator(clock)
         agg.add("s", {"message_id": "m1", "text": "a"})
@@ -112,7 +115,10 @@ class TestCollectMessagesEntry:
     兼容层引用），本次删除后，断言全部迁移到**真实入口**上（覆盖不减）。
     """
 
-    def test_messages_keep_order_and_images(self):
+    def test_messages_keep_order_and_images_merged(self):
+        """合并自 5 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_messages_keep_order_and_images ──
         from src.input import collect_messages
 
         messages = collect_messages(
@@ -134,14 +140,14 @@ class TestCollectMessagesEntry:
         assert [m.message_id for m in messages] == ["m1", "m2", "m3", "m4"]
         assert messages[2].images == ["img-1"]
 
-    def test_legacy_question_still_works(self):
+        # ── test_legacy_question_still_works ──
         from src.input import collect_messages
 
         messages = collect_messages(session_id="collect-legacy", question="indoor screen")
 
         assert [m.text for m in messages] == ["indoor screen"]
 
-    def test_duplicate_message_ids_are_dropped(self):
+        # ── test_duplicate_message_ids_are_dropped ──
         from src.input import collect_messages
 
         # 同一个请求里放了重复的 message_id → 只算一条（跨请求的幂等在 TurnExecutor，
@@ -156,7 +162,7 @@ class TestCollectMessagesEntry:
 
         assert [m.text for m in messages] == ["first message"]
 
-    def test_api_collect_helper_legacy_path(self):
+        # ── test_api_collect_helper_legacy_path ──
         """API 层：老客户端只发 question 也要收成一条消息。"""
         from src.api import ChatRequest, _collect_turn_request
 
@@ -166,7 +172,7 @@ class TestCollectMessagesEntry:
 
         assert [m.text for m in messages] == ["5m x 3m indoors"]
 
-    def test_api_collect_helper_prefers_messages(self):
+        # ── test_api_collect_helper_prefers_messages ──
         from src.api import ChatRequest, _collect_turn_request
 
         messages = _collect_turn_request(
@@ -184,7 +190,10 @@ class TestCollectMessagesEntry:
 
 class TestMultimodal:
 
-    def test_text_image_text(self):
+    def test_text_image_text_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_text_image_text ──
         clock = _Clock()
         agg = _aggregator(clock)
         agg.add("s", {"message_id": "m1", "text": "I need something like this."})
@@ -203,7 +212,7 @@ class TestMultimodal:
         nxt = agg.add("s", {"message_id": "m5", "text": "thanks"})
         assert nxt is not None and "Around 200 people." in nxt.text
 
-    def test_image_only(self):
+        # ── test_image_only ──
         clock = _Clock()
         agg = _aggregator(clock)
         agg.add("s", {"message_id": "m1", "images": ["img"]})
@@ -211,7 +220,7 @@ class TestMultimodal:
         turn = agg.flush("s") or agg.add("s", {"message_id": "m2", "text": "x"})
         assert turn is not None and turn.has_images
 
-    def test_turn_to_dict(self):
+        # ── test_turn_to_dict ──
         turn = UserTurn(session_id="s")
         turn.add({"message_id": "m1", "text": "hello"})
         turn.close()

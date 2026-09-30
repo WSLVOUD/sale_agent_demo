@@ -176,7 +176,10 @@ class TestABStrategies:
                           "supported_parameters": ["TW11-3216-P3.0"]})
         return cases
 
-    def test_strategy_b_is_less_stiff_than_a(self):
+    def test_strategy_b_is_less_stiff_than_a_merged(self):
+        """合并自 2 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_strategy_b_is_less_stiff_than_a ──
         reset_llm_breaker()   # 别让前面用例的 LLM 失败熔断影响策略对比
         cases = self._cases()
         assert cases, "黄金数据集里应该有需要提问的用例"
@@ -195,7 +198,7 @@ class TestABStrategies:
         assert b["one_question_compliance"] == 1.0
         assert b["response_length"] < a["response_length"]
 
-    def test_both_strategies_still_answer_the_customer(self):
+        # ── test_both_strategies_still_answer_the_customer ──
         reset_llm_breaker()
         cases = self._cases()
         metrics = compare_strategies(

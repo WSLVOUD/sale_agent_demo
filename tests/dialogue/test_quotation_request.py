@@ -27,24 +27,27 @@ def _module():
 
 class TestQuotationIntentDetection:
 
-    def test_bare_yes_after_a_quotation_question(self):
+    def test_bare_yes_after_a_quotation_question_merged(self):
+        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_bare_yes_after_a_quotation_question ──
         module = _module()
         state = {"messages": [{"role": "assistant", "content": RECOMMENDATION_MESSAGE}]}
         for message in ("yes", "好的", "可以", "sure", "please do"):
             assert module._wants_quotation(state, message) is True, message
 
-    def test_direct_quotation_request(self):
+        # ── test_direct_quotation_request ──
         module = _module()
         state = {"messages": []}
         for message in ("报价", "给我报价单", "send me the price list", "quotation please"):
             assert module._wants_quotation(state, message) is True, message
 
-    def test_yes_without_quotation_context_is_not_a_quotation_request(self):
+        # ── test_yes_without_quotation_context_is_not_a_quotation_request ──
         module = _module()
         state = {"messages": [{"role": "assistant", "content": "What screen size do you need?"}]}
         assert module._wants_quotation(state, "yes") is False
 
-    def test_confirmation_with_more_questions_is_not_treated_as_quotation(self):
+        # ── test_confirmation_with_more_questions_is_not_treated_as_quotation ──
         module = _module()
         state = {"messages": [{"role": "assistant", "content": RECOMMENDATION_MESSAGE}]}
         assert module._wants_quotation(state, "yes, but I have a question about brightness") is False

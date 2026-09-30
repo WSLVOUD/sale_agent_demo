@@ -15,7 +15,10 @@ from src.dialogue import (  # noqa: E402
 
 class TestConversationStateV26:
 
-    def test_ai_turn_records_question_slot_and_response(self):
+    def test_ai_turn_records_question_slot_and_response_merged(self):
+        """合并自 6 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_ai_turn_records_question_slot_and_response ──
         state = ConversationState(session_id="cs-ai")
         state.note_ai_turn(
             action="ask_only",
@@ -31,7 +34,7 @@ class TestConversationStateV26:
         assert state.last_response
         assert state.last_turn_id == "turn-1"
 
-    def test_customer_turn_records_answer_slot_and_turn_id(self):
+        # ── test_customer_turn_records_answer_slot_and_turn_id ──
         state = ConversationState(session_id="cs-customer")
         state.note_customer_turn(text="P3", answer_slot="pixel_pitch", turn_id="turn-2")
         assert state.current_answer_slot == "pixel_pitch"
@@ -39,13 +42,13 @@ class TestConversationStateV26:
         assert state.pending_customer_answer == "P3"
         assert state.turn_index == 1
 
-    def test_question_slot_is_remembered_for_next_turn(self):
+        # ── test_question_slot_is_remembered_for_next_turn ──
         """§8：AI 问过的那一项必须留着，下一轮才知道客户在答什么。"""
         state = ConversationState(session_id="cs-memory")
         state.note_ai_turn(question="What is the viewing distance?", slot="viewing_distance")
         assert state.last_question_slot == "viewing_distance"
 
-    def test_state_is_per_session(self):
+        # ── test_state_is_per_session ──
         reset_conversation_state("cs-v26-a")
         reset_conversation_state("cs-v26-b")
         get_conversation_state("cs-v26-a").note_ai_turn(
@@ -53,7 +56,7 @@ class TestConversationStateV26:
         )
         assert get_conversation_state("cs-v26-b").last_question_slot == ""
 
-    def test_to_dict_exposes_v26_fields(self):
+        # ── test_to_dict_exposes_v26_fields ──
         state = ConversationState(session_id="cs-dict")
         state.note_ai_turn(action="ask_only", question="Q?", slot="size")
         payload = state.to_dict()
@@ -72,7 +75,7 @@ class TestConversationStateV26:
         ):
             assert key in payload, key
 
-    def test_requirement_profile_and_conversation_state_are_separate(self):
+        # ── test_requirement_profile_and_conversation_state_are_separate ──
         """§7：档案记"客户有什么需求"，对话状态记"客户现在在做什么"。"""
         from src.models.requirement import RequirementProfile
 

@@ -106,7 +106,10 @@ def _load_turns():
 
 class TestRealLogReplay:
 
-    def test_one_turn_one_agent_run_one_question(self):
+    def test_one_turn_one_agent_run_one_question_merged(self):
+        """合并自 3 条同类测试（瘦身；断言全部保留）。"""
+
+        # ── test_one_turn_one_agent_run_one_question ──
         replay = _load_turns()
         session_id = replay["session_id"]
         reset_conversation_state(session_id)
@@ -134,7 +137,7 @@ class TestRealLogReplay:
         assert all(item.trace["response_count"] == 1 for item in outcomes)
         assert all(item.trace["commit_status"] == "COMMITTED" for item in outcomes)
 
-    def test_no_question_is_repeated_without_new_information(self):
+        # ── test_no_question_is_repeated_without_new_information ──
         replay = _load_turns()
         session_id = replay["session_id"] + "-repeat"
         reset_conversation_state(session_id)
@@ -159,7 +162,7 @@ class TestRealLogReplay:
             profile.last_asked_slot = slot
             profile.record_ask(slot)
 
-    def test_wrong_slot_answer_keeps_the_information(self):
+        # ── test_wrong_slot_answer_keeps_the_information ──
         """§41：问 indoor/outdoor、客户答 3×5 → 尺寸必须进档案。"""
         session_id = "replay-wrong-slot"
         reset_conversation_state(session_id)
