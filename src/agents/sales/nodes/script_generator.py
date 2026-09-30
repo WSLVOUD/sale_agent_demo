@@ -358,6 +358,26 @@ def _known_facts(state: SalesState) -> list:
         requirements = state.get("requirements") or {}
         return [f"{key}={value}" for key, value in requirements.items() if value]
     items = []
+    # ── LCD / IFP（《LCD_IFP 整改计划》Phase 5/§二十六）───────────────────
+    # 锁定事实要给到表达层：LLM 才知道"这些已经定了，不要再问"（§二十一）。
+    lcd_action = state.get("lcd_action") or {}
+    for field_name, value in (lcd_action.get("locked_facts") or {}).items():
+        if field_name.startswith("lcd_") and value not in (None, "", [], {}):
+            label = {
+                "lcd_category": "use case",
+                "lcd_size_inch": "screen size",
+                "lcd_resolution": "resolution",
+                "lcd_is_splicing": "video wall (spliced)",
+                "lcd_splicing_layout": "wall layout",
+                "lcd_screen_count": "screen count",
+                "lcd_bezel_mm": "bezel",
+                "lcd_touch_required": "touch required",
+                "lcd_handwriting_required": "handwriting required",
+                "lcd_tender_project": "tender project",
+                "lcd_ops_required": "OPS required",
+                "lcd_camera_required": "camera required",
+            }.get(field_name, field_name)
+            items.append(f"{label}={value}")
     for slot, field in (
         ("display_type", "display_type"),
         ("environment", "environment"),
@@ -580,6 +600,7 @@ def _natural_reply(
     state["response_action"] = action
     # v2.5+++（计划 §5）：把"有来源的事实"整理好交给 LLM —— 它只能用这些
     profile = state.get("requirement_profile")
+    lcd_action = state.get("lcd_action") or {}
     grounded = build_grounded_facts(
         profile=profile,
         recommendation=state.get("recommendation") or None,
@@ -618,7 +639,18 @@ def _natural_reply(
             "you_may_react_naturally_in_your_own_words",
             "do_not_invent_facts",
             "do_not_repeat_customer_unnecessarily",
-        ],
+        ]
+        # LCD / IFP（计划 §二十 / §二十六）：先接住客户这句 + 只问一个核心问题，
+        # 已经锁定的事实不再重复确认。
+        + (
+            [
+                f"lcd_branch_is:{lcd_action.get('lcd_category')}",
+                "acknowledge_what_the_customer_just_said",
+                "do_not_re_ask_locked_lcd_facts",
+            ]
+            if lcd_action
+            else []
+        ),
         style="natural_b2b_sales",
     )
     context.allow_ack = allow_ack
@@ -930,19 +962,135 @@ def script_generator(state: SalesState) -> SalesState:
             from ....rag.reply_composer import reply_language as _reply_language2
 
             lcd_decision = load_decision(detail_decision)
-            label = "LCD video wall" if not lcd_decision.is_ifp else "interactive flat panel (LCD)"
+            # 称呼要准：只有一个"LCD"时别说成"video wall"（拼接只是 LCD 的一种用法）。
+            label = (
+                "interactive flat panel (LCD)"
+                if lcd_decision.is_ifp
+                else "LCD display"
+            )
             language_zh = str(_reply_language2(str(state.get("current_message") or ""))).startswith("zh")
             ack = (
                 f"好的，按 {label} 来做。"
                 if language_zh
                 else f"Understood, let's go with {label} for this project."
             )
+            # 只在**第一次**确认 LCD 时说明"我们按 LCD 来做"：
+            # 实测（2026-09-28）连续三轮回复都带同一句 "Let's go with LCD display…"，
+            # 很机械。之前 AI 已经说过 LCD 就不再重复宣告。
+            already_announced = False
+            try:
+                from ....dialogue import get_conversation_state
+
+                last_ai = str(
+                    getattr(get_conversation_state(str(state.get("session_id") or "")),
+                            "last_ai_response", "")
+                    or ""
+                ).lower()
+                already_announced = "lcd" in last_ai
+            except Exception:  # pragma: no cover - 防御式
+                already_announced = False
+            if already_announced:
+                ack = ""
+            # ── 《LCD_IFP_需求链路工程化整改计划》Phase 5：需求链已实现 ──────
+            # 以前这里只回一句"按 LCD 来做"就停（需求链留白）；现在按 LCD 决策层
+            # 给的结构化结果继续：接住客户这句话 + 只问一个真正缺失的问题（§二十）。
+            lcd_action = state.get("lcd_action") or {}
+            lcd_question = str(lcd_action.get("question") or "")
+            lcd_slot = str(lcd_action.get("question_slot") or "")
+            if lcd_action and lcd_action.get("confirmed"):
+                # 需求齐了 → 型号由 router（RAG / 推荐引擎）产出。
+                #
+                # 客户口径（2026-09-30）："需求满足了就直接推荐产品" —— 图上
+                # should_generate_solution=True 时会**先走 router** 拿推荐，再进到这里。
+                # 以前这里无条件用"我在准备推荐了"这句把推荐盖掉，客户看到的永远
+                # 是 "Before I finalize it, just confirm…"，型号永远出不来（实测）。
+                if (
+                    str(state.get("next_action") or "") == "trigger_solution"
+                    and str(state.get("response") or "").strip()
+                ):
+                    state["lcd_entry"] = {
+                        "product_domain": "LCD",
+                        "subtype": lcd_decision.subtype,
+                        "status": "RECOMMENDED",
+                        "category": str(lcd_action.get("lcd_category") or ""),
+                    }
+                    logger.info(
+                        "[ProductType] LCD 需求已齐 → 保留 router 产出的推荐，不再覆盖"
+                    )
+                    return state
+                # 兜底（router 没跑或没产出）：说一句"正在准备推荐"，不要提需求问题。
+                # 客户口径（2026-09-30）：**不要**把成句塞进 answer（LLM 会照抄 → 每次都一样）。
+                # 成句只作为"可选接话提示"（opening），让 LLM 用自己的话润色。
+                state["acknowledgement"] = ack
+                state["response"] = _natural_reply(
+                    state, answer="", question="", slot="", allow_ack=True,
+                    business_goal=(
+                        "say that the requirement is complete and you are preparing the "
+                        "recommendation now; do NOT ask the customer to confirm anything and "
+                        "do NOT ask any requirement question"
+                    ),
+                )
+                state["should_generate_solution"] = True
+                state["lcd_entry"] = {
+                    "product_domain": "LCD",
+                    "subtype": lcd_decision.subtype,
+                    "status": "REQUIREMENT_CHAIN_READY",
+                    "category": str(lcd_action.get("lcd_category") or ""),
+                }
+                return state
+            if lcd_question and lcd_slot:
+                # LCD 轮不要 LED 口径的"接话"：
+                #   · 需求抽取器按 LED 规则生成的 acknowledgement 会把 "6x2" 读成
+                #     "6 米 x 2 米"（实测），对拼接排布完全是错的；
+                #   · reply_composer 的通用复述开场（"Noted: …"）同样按 LED 口径复述。
+                # 客户口径（2026-09-30）：这一轮要的是"AI 自己润色的话术" ——
+                # 成句只当 opening（可选提示，prompt 明确要求不得照抄），
+                # 问题以 slot + intent + 意思锚点交给 LLM 自己组织；answer 留空，
+                # 免得 LLM 把成句当"必须传达的内容"照搬（实测每轮都是同一句）。
+                state["acknowledgement"] = ack
+                state["response"] = _natural_reply(
+                    state,
+                    answer="",
+                    question=lcd_question,
+                    slot=lcd_slot,
+                    allow_ack=True,
+                    business_goal=(
+                        "acknowledge the LCD choice and the customer's latest information, "
+                        "then ask exactly this one LCD requirement question "
+                        f"(LCD branch: {lcd_action.get('lcd_category')}); "
+                        "do not ask any LED question (pixel pitch / viewing distance / screen "
+                        "width-height) and do not re-ask anything already confirmed"
+                    ),
+                )
+                # 注意（架构收敛测试）：script_generator **不写** pending_question /
+                # pending_slot —— 槽位由 Requirement 节点 / Question Planner 决定，
+                # 这里只把 LCD 决策层给的那一问交给表达层（读，不写）。
+                state["lcd_entry"] = {
+                    "product_domain": "LCD",
+                    "subtype": lcd_decision.subtype,
+                    "status": "REQUIREMENT_CHAIN_ACTIVE",
+                    "category": str(lcd_action.get("lcd_category") or ""),
+                    "question_slot": lcd_slot,
+                }
+                logger.info(
+                    "[ProductType] LCD 需求链（subtype=%s, category=%s）→ 问 %s",
+                    lcd_decision.subtype or "-",
+                    lcd_action.get("lcd_category"), lcd_slot,
+                )
+                return state
             state["response"] = ack
             state["lcd_entry"] = {
                 "product_domain": "LCD",
                 "subtype": lcd_decision.subtype,
                 "status": "REQUIREMENT_CHAIN_PENDING",
             }
+            # 兜底也必须"有话说"：绝不能给空字符串（下游 API 会把空回复换成
+            # "放宽条件"话术，客户实测看到的就是那句）。优先给待问项。
+            if not str(state.get("response") or "").strip():
+                state["response"] = (
+                    str(state.get("pending_question") or "").strip()
+                    or f"Understood, let's go with {label} for this project."
+                )
             logger.info(
                 "[ProductType] LCD 类型已确认（subtype=%s）→ 进入 LCD_ENTRY"
                 "（需求链按计划留白，未套用 LED 需求问题）",

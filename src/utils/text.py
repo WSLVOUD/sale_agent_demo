@@ -69,6 +69,31 @@ def remove_internal_phrasing(text: str) -> str:
     return text
 
 
+# ── 内部标记块（绝不能发给客户）────────────────────────────────────────────
+# 实测（2026-09-28）：自由问答的兜底把检索片段原样拼给了客户：
+#     An LCD display, noted … [产品资料 1]
+#     H4930LN-B | B Series (LCD Video Wall) | LCD | indoor | size=49" | …
+# 这些是给 LLM 当"事实"用的内部块（含内部字段名），必须从客户可见文本里清掉。
+_INTERNAL_BLOCK_RE = re.compile(
+    r"\[\s*(?:产品资料|产品信息|Product\s*Info|Product\s*Data)\s*\d*\s*\]"
+    r"[\s\S]*?(?=\[\s*(?:产品资料|产品信息|Product\s*Info|Product\s*Data)\s*\d*\s*\]|$)",
+    re.IGNORECASE,
+)
+
+
+def strip_internal_blocks(text: str) -> str:
+    """删掉内部标记块（[产品资料 N] …）与"未检索到"这类内部提示。"""
+    source = str(text or "")
+    if not source:
+        return ""
+    cleaned = _INTERNAL_BLOCK_RE.sub("", source)
+    cleaned = cleaned.replace("（未检索到相关产品资料）", "")
+    cleaned = cleaned.replace("(no matching product data)", "")
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
+
+
 # ── "没有事实"的收尾评论句（客户口径 2026-09-28）────────────────────────────
 # 实测客户可见文本：
 #   "Both options use the same TW11-3216-P3.0 cabinets and suit a permanent church

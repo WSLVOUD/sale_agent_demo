@@ -461,6 +461,219 @@ def _snapshot_facts(profile) -> dict:
     return {field: getattr(profile, field, None) for field in _FACT_FIELDS}
 
 
+def _lcd_domain(state: Any, profile: Any) -> str:
+    """本会话是不是已经确定走 LCD / IFP（LED 一律返回空 → 链路保持冻结）。
+
+    客户口径（2026-09-30）：类型只由**图片识别**或**场景推断**出来时不算数 ——
+    必须等客户确认是 LED 还是 LCD，才允许进入对应的需求链。
+    """
+    decision = state.get("display_type_decision") or {}
+    display_type = str(
+        decision.get("display_type") or getattr(profile, "display_type", "") or ""
+    ).upper()
+    if display_type not in ("LCD", "IFP"):
+        return ""
+    return display_type if _type_confirmed(state, profile) else ""
+
+
+# 客户侧确认过的来源（图片结果经客户核对、客户没反对的也算）
+_TYPE_CONFIRMED_SOURCES: frozenset[str] = frozenset(
+    {
+        "explicit",
+        "confirmed",
+        "customer_explicit",
+        "customer_confirmed",
+        "vision_accepted",
+    }
+)
+
+
+def _type_confirmed(state: Any, profile: Any) -> bool:
+    """产品类型是不是**已经客户确认**（LED / LCD 都可以）。"""
+    decision = state.get("display_type_decision") or {}
+    if bool(decision.get("locked")):
+        return True
+    if str(decision.get("status") or "").upper() == "CONFIRMED":
+        return True
+    sources = dict(getattr(profile, "sources", None) or {})
+    return str(sources.get("display_type") or "") in _TYPE_CONFIRMED_SOURCES
+
+
+def _type_gate_result(state: Any, profile: Any):
+    """类型未确认 → 只问"LED 还是 LCD"，这一轮不采集任何需求。
+
+    返回 None 表示拿不到类型确认话术（模型不可用等）→ 调用方继续走原链路，
+    不能因为闸门本身出问题把客户晾在那儿。
+    """
+    from ....dialogue.product_type_router import load_decision, product_type_question
+
+    decision = dict(state.get("display_type_decision") or {})
+    seed = len(str(state.get("session_id") or "")) + len(str(state.get("current_message") or ""))
+    try:
+        question = product_type_question(load_decision(decision), seed=seed)
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("[TypeGate] 类型确认话术生成失败：%s", exc)
+        return None
+    if not question:
+        return None
+
+    state["requirement_profile"] = profile
+    state["pending_question"] = question
+    state["pending_slot"] = "display_type"
+    state["should_generate_solution"] = False
+    state["product_type_gate"] = decision
+    state["recommendation_gate"] = {
+        "ready": False,
+        "gate": "product_type",
+        "missing": ["display_type"],
+        "reason": "类型未确认：先确认 LED 还是 LCD（客户口径 2026-09-30）",
+        "next_question": question,
+        "status": "BLOCKED",
+    }
+    logger.info(
+        "[TypeGate] 类型未确认（status=%s, source=%s）→ 只问类型，不采集需求",
+        decision.get("status"), decision.get("source"),
+    )
+    return state
+
+
+def _lcd_requirement_action(state: Any, profile: Any, message: str):
+    """LCD / IFP → 唯一决策入口（计划 Phase 5）。LED 返回 None（原链路继续）。"""
+    if not _lcd_domain(state, profile):
+        return None
+    try:
+        from ....dialogue.lcd_decision import lcd_turn
+        from ....dialogue.lcd_category_understanding import understand_lcd_category
+
+        # 上一轮 AI 问的原话：客户答 "yes" 时要能接住其中的提案（3.5mm / 65" / 3x3）
+        last_question = ""
+        conversation = ""
+        try:
+            from ....dialogue import get_conversation_state
+            from ....memory.history_window import dialogue_window_text
+
+            session_id = str(state.get("session_id") or "")
+            if session_id:
+                last_question = str(
+                    getattr(get_conversation_state(session_id), "last_ai_question", "") or ""
+                )
+                conversation = dialogue_window_text(session_id)
+        except Exception:  # pragma: no cover - 防御式
+            last_question = ""
+
+        # ── 品类由**语境**决定（客户口径 2026-09-30）──────────────────────────
+        # 不许用关键词触发某条链路：先让模型读完"我们问过什么 + 客户已经答过什么"
+        # 再定品类，然后按这个品类的顺序推进需求询问。模型不可用时返回 {}，
+        # lcd_turn 会退回关键词兜底（降级路径）。
+        category_signal: dict = {}
+        try:
+            session_id = str(state.get("session_id") or "")
+            category_signal = understand_lcd_category(
+                str(message or ""),
+                session_id=session_id,
+                conversation=conversation,
+                asked_question=last_question,
+                profile=profile,
+            )
+            if category_signal:
+                logger.info(
+                    "[LCD] turn understanding: category=%s confidence=%s facts=%s reason=%s",
+                    category_signal.get("category"),
+                    category_signal.get("confidence"),
+                    category_signal.get("facts"),
+                    category_signal.get("reason"),
+                )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[LCD] category understanding failed: %s", exc)
+            category_signal = {}
+
+        _profile, action = lcd_turn(
+            profile,
+            str(message or ""),
+            last_question=last_question,
+            category_signal=category_signal,
+        )
+        return action
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("[LCD] requirement decision failed: %s", exc)
+        return None
+
+
+def _lcd_dialogue_action(action: Any, question: str) -> Dict[str, Any]:
+    """LCD 决策层的 ``next_action`` → 这一轮的**对话动作**。
+
+    客户口径（2026-09-30）："完全把两个链路隔离开，不要改动 LED，只把 LCD 里掺杂的
+    LED 链路隔离开。"
+
+    以前 LCD 只写 ``pending_question``，**动作**却由通用层（给 LED 场景调出来的
+    DialoguePolicy）决定 —— 客户答一个 "no"，通用层判成 CORRECTION → clarify_only
+    → LCD 已经算好的下一问被吞掉 → 回复为空 → 兜底话术顶上（实测）。
+
+    现在动作由 LCD 自己给：已经算好下一问 → ``ask_only``；需求齐全 → ``recommend_only``。
+    LED 侧一行不动（这个函数只在 LCD 分支里被调用）。
+    """
+    slot = str(getattr(action, "question_slot", "") or "")
+    if bool(getattr(action, "confirmed", False)):
+        return {
+            "action": "recommend_only",
+            "target_slot": "",
+            "question": "",
+            "reason": "lcd_requirement_complete",
+            "priority": 0,
+            "priority_label": "lcd_requirement_complete",
+            "source": "lcd_chain",
+        }
+    if not slot or not question:
+        return {}
+    return {
+        "action": "ask_only",
+        "target_slot": slot,
+        "question": question,
+        "reason": "lcd_requirement_chain",
+        "priority": 0,  # 硬性条件缺失 = 最高优先级（不被通用候选压过）
+        "priority_label": "lcd_hard_gate_missing",
+        "source": "lcd_chain",
+    }
+
+
+def _lcd_requirement_result(state: Any, profile: Any, action: Any) -> Any:
+    """把 LCD 唯一 Next Action 写进 state（pending_question / Gate 口径一致）。"""
+    state["requirement_profile"] = profile
+    state["lcd_action"] = action.to_dict()
+    slot = str(action.question_slot or "")
+    question = str(action.question or "") if slot else ""
+    state["pending_question"] = question
+    state["pending_slot"] = slot
+    profile.last_asked_slot = slot
+    if slot:
+        profile.record_ask(slot)
+    # ── 这一轮的动作也由 LCD 决策层说了算（客户口径 2026-09-30）─────────────
+    # 通用层（SpeechAct + DialoguePolicy）在这一行之前已经给了一个动作，那是
+    # 给 LED 场景调的口径；LCD 会话里必须换成 LCD 自己的结论，否则客户答一个
+    # "no" 就会让通用层把 LCD 算好的下一问吞掉。
+    lcd_action_payload = _lcd_dialogue_action(action, question)
+    if lcd_action_payload:
+        state["dialogue_action"] = lcd_action_payload
+        logger.info(
+            "[LCD] 本轮动作由 LCD 决策层决定：action=%s slot=%s",
+            lcd_action_payload["action"], slot or "-",
+        )
+    state["recommendation_gate"] = {
+        "ready": bool(action.confirmed),
+        "gate": "lcd_requirement",
+        "missing": list(action.missing_fields),
+        "reason": "LCD 需求链（LCD_IFP 整改计划 Phase 5/6）",
+        "next_question": question or None,
+        "lcd_category": action.lcd_category,
+    }
+    state["should_generate_solution"] = bool(action.confirmed)
+    logger.info(
+        "[LCD] category=%s next=%s missing=%s question=%r",
+        action.lcd_category, action.next_action, action.missing_fields, question,
+    )
+    return state
+
+
 def _facts_added(before: dict, profile) -> bool:
     """这一轮是否**新增/更新**了需求事实（用于决定要不要重新推荐）。"""
     for field in _FACT_FIELDS:
@@ -710,7 +923,15 @@ ack 的写法（很重要，销售不能只会追问）：
         # 不能当成无关话只回一句"接住"，也不能反过来倒一堆型号。
         # 判定放在 is_offtopic_message 里（纯函数，可离线回归）：
         # 语境里的语义理解（semantic_payload）优先，其次才是规则解析。
-        if is_offtopic_message(
+        # ── LCD 会话不走"无关闲聊"这一套（客户口径 2026-09-30）───────────────
+        # 实测：客户答一个场景词（"meeting"）被判成"与需求无关"，于是触发 LED
+        # 时代的"承接额度" → LCD 决策层算好的下一问（屏幕尺寸）被清空 →
+        # 客户只收到一句接话（"Knowing the room size helps…"），问题没了。
+        # LCD 那边有自己的"接话 + 问下一项"，不需要这条 LED 口径的分支。
+        _lcd_session_active = bool(
+            _lcd_domain(state, state.get("requirement_profile"))
+        )
+        if not _lcd_session_active and is_offtopic_message(
             current_msg_text,
             rule_slots=_this_turn_slots,
             semantic_payload=semantic_payload,
@@ -1125,6 +1346,21 @@ ack 的写法（很重要，销售不能只会追问）：
                 customer_wants_recommendation = False
         flow_plan = None
         conversation = None
+        # ── 类型闸门（客户口径 2026-09-30）──────────────────────────────────
+        # 只由图片识别 / 场景推断出来的类型**不算数**：必须等客户确认是 LED 还是
+        # LCD，才允许进入对应的需求链。实测 bug：客户发了明显是 LCD（有拼缝、有边框）
+        # 的图，图片判成 LED → 整轮按 LED 口径采集需求，客户纠正后才回到 LCD。
+        # 注意：没有 display_type_decision 的旧调用 / 单测保持原行为（不拦截）。
+        if state.get("display_type_decision") and not _type_confirmed(state, profile):
+            gated = _type_gate_result(state, profile)
+            if gated is not None:
+                return gated
+        # ── LCD / IFP 需求链（《LCD_IFP_需求链路工程化整改计划》Phase 5/6）────
+        # 只有 ProductTypeRouter 已经判定 LCD/IFP 时才走这条；LED 一律不进入，
+        # 后面的 Gate / QuestionFlow 原样不动（计划 §二十九 LED Chain = Frozen）。
+        lcd_action = _lcd_requirement_action(state, profile, current_msg_text)
+        if lcd_action is not None:
+            return _lcd_requirement_result(state, profile, lcd_action)
         if str(decision.status or "").upper() != "CONFLICT" and not (
             getattr(profile, "conflicts", None) or []
         ):

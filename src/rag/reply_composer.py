@@ -717,16 +717,89 @@ _RELAXATION_ANSWERS = {
     ),
 }
 
+# LCD / IFP 的"放宽条件"话术（客户口径 2026-09-30）：
+# 上面那套是 **LED 口径**（点间距 / 观看距离 / 箱体），LCD 会话里出现就会变成
+# "if one of the requirements can be relaxed (for example the pixel pitch…)"
+# —— 客户一眼就知道系统串链路了。LCD 只谈它自己的条件：尺寸 / 拼缝 / 分辨率 / 安装。
+_RELAXATION_ANSWERS_LCD = {
+    "en": (
+        "If one of the LCD requirements can be relaxed (for example the panel size, the bezel "
+        "width, or the resolution), I can match a model for you right away.",
+        "Happy to get you the closest fit, would you be open to adjusting one requirement, "
+        "say the panel size or the bezel width? Then I can put the right options in front of you.",
+        "One quick option: if any of the LCD requirements is flexible, size, bezel or "
+        "resolution, I can match a suitable model immediately.",
+    ),
+    "zh": (
+        "我们换个角度：如果某个条件可以放宽一点（比如面板尺寸、拼缝宽度或分辨率），"
+        "我马上就能帮您匹配到合适的型号。",
+        "方便的话，看看哪个条件能松一点（例如尺寸、拼缝或分辨率），我好帮您找到最合适的型号。",
+    ),
+}
+
+# 判定"这一轮属于 LCD / IFP 链路"时用的产品族写法
+_LCD_FAMILIES = ("lcd", "ifp", "interactive flat panel")
+
 
 def has_no_product_phrase(text: str) -> bool:
     """回复里是否出现了"找不到 / 没有匹配产品"这类话术。"""
     return bool(_NO_PRODUCT_RE.search(str(text or "")))
 
 
-def relaxation_answer(language: Optional[str] = None, seed: int = 0) -> str:
-    """"能不能放宽某个参数"的应答（多种说法轮换）。"""
-    variants = _RELAXATION_ANSWERS.get(_lang(language)) or _RELAXATION_ANSWERS["en"]
+def relaxation_answer(
+    language: Optional[str] = None,
+    seed: int = 0,
+    *,
+    product_family: str = "",
+) -> str:
+    """"能不能放宽某个参数"的应答（多种说法轮换）。
+
+    ``product_family``：``"lcd"`` / ``"ifp"`` 时用 LCD 口径的说法
+    （尺寸 / 拼缝 / 分辨率），不传或 ``"led"`` 时保持原来的 LED 口径
+    （点间距 / 观看距离）。LCD 会话里绝不能出现 LED 口径的放宽条件。
+    """
+    family = str(product_family or "").strip().lower()
+    table = _RELAXATION_ANSWERS_LCD if family in _LCD_FAMILIES else _RELAXATION_ANSWERS
+    variants = table.get(_lang(language)) or table["en"]
     return variants[seed % len(variants)]
+
+
+def product_fallback_answer(
+    products: Any,
+    *,
+    language: Optional[str] = None,
+) -> str:
+    """正文被清空、但系统**确实选出了型号**时的确定性兜底。
+
+    客户口径（2026-09-30）：这种情况绝不能说"放宽某个条件我就能匹配" ——
+    型号已经出来了，直接把型号给客户。见 ``api`` 里的空回复分支。
+    """
+    model = ""
+    size = ""
+    resolution = ""
+    try:
+        for item in products or []:
+            metadata = (
+                item.get("metadata") if isinstance(item, dict) else getattr(item, "metadata", None)
+            ) or {}
+            model = str(metadata.get("model") or metadata.get("product_id") or "").strip()
+            size = str(metadata.get("display_size_inch") or "").strip()
+            resolution = str(metadata.get("resolution") or "").strip()
+            if model:
+                break
+    except Exception:  # pragma: no cover - 防御式
+        return ""
+    if not model:
+        return ""
+    bits = [bit for bit in (f"{size} panel" if size else "", f"{resolution} resolution" if resolution else "") if bit]
+    detail = f" ({', '.join(bits)})" if bits else ""
+    zh = str(_lang(language)).startswith("zh")
+    if zh:
+        return f"按您的需求，最合适的是 {model}{detail}。需要我准备报价吗？"
+    return (
+        f"Based on your requirements, the closest match is {model}{detail}. "
+        "Shall I prepare the quotation?"
+    )
 
 
 # ── Phase 15：Best-effort 推荐时"缺了什么 + 会影响什么"的自然说法 ────────────
@@ -1204,6 +1277,7 @@ __all__ = [
     "missing_impact",
     "price_policy_answer",
     "relaxation_answer",
+    "product_fallback_answer",
     "reply_language",
     "requirement_echo",
     "vision_confirmation_items",

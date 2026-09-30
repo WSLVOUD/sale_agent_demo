@@ -47,6 +47,32 @@ def looks_like_requirement_answer(message: str) -> bool:
     return bool(_ANSWER_LIKE_RE.search(text))
 
 
+# 没有问号、但明显在问业务问题（价格 / 交期 / 保修 / 规格 / 有没有货…）
+_BUSINESS_QUESTION_RE = re.compile(
+    r"\b(price|pricing|cost|quote|quotation|delivery|lead ?time|warranty|guarantee|"
+    r"moq|stock|availability|available|how much|how long|how many|how far|"
+    r"what|which|when|where|why|can you|could you|do you have|is there|are there)\b"
+    r"|价格|报价|多少钱|交期|多久|多长时间|保修|质保|库存|有没有|能不能|怎么|"
+    r"多少|什么|哪(?:个|些)",
+    re.IGNORECASE,
+)
+
+
+def _has_business_question_intent(message: str) -> bool:
+    """这句话是不是在问业务问题（用于区分"报产品类型"与"选型 + 真提问"）。"""
+    text = str(message or "")
+    if not text.strip():
+        return False
+    if _BUSINESS_QUESTION_RE.search(text):
+        return True
+    try:
+        from ....rag.reply_composer import is_price_question
+
+        return bool(is_price_question(text))
+    except Exception:  # pragma: no cover - 防御式
+        return False
+
+
 def is_explicit_closing(message: str) -> bool:
     """"我要结束了"的明确说法（只有这种才真的走收尾流程）。"""
     return bool(_CLOSING_STOP_RE.search(str(message or "")))
@@ -335,6 +361,49 @@ def classify(state: SalesState) -> SalesState:
             reply_signal=reply_signal,
         )
         state["display_type_decision"] = decision.to_dict()
+
+        # ── 客户口径（2026-09-28，实测 "i need a lcd display"）：**报产品类型**不是提问 ──
+        # 客户只是在说"我要 LED / LCD 屏"，属于需求采集，必须进对应需求链
+        # （LED 走现有链路、LCD 走 LCD 需求链）。以前这种情况被 LLM 判成
+        # product_question → 整轮送去 Solution 自由问答 → 回一句
+        # "we actually work mainly with LED screens…" 还把检索片段拼给客户。
+        # 判定依据：这句话里**明说**了产品类型 + 没有真提问（问号 / 价格 / 交期意图）。
+        # （"led, how much is it?" 这类"选型 + 真问题"不受影响，仍走回答路径。）
+        if (
+            intent in ("product_question", "others", "greeting")
+            and "?" not in str(message)
+            and "？" not in str(message)
+            and not _has_business_question_intent(str(message))
+        ):
+            from ....dialogue.product_type_router import explicit_type_in
+
+            if explicit_type_in(str(message)):
+                logger.info(
+                    "Product type statement detected (%r) → intent %s → need_query"
+                    "（进对应需求链，不送自由问答）",
+                    str(message)[:40], intent,
+                )
+                intent = "need_query"
+                state["intent"] = intent
+
+        # ── 客户口径（2026-09-28 第二轮实测）：LCD / IFP 会话里，**不是真提问**就
+        # 按需求采集走。实测客户答 "65'"（尺寸）被判成 others → 整轮送自由问答，
+        # 回复变成"放宽条件"话术，还把已经答过的尺寸又问了一遍。
+        # 判定：会话已确认 LCD/IFP + 没有问号 + 没有价格/交期/规格这类真问题。
+        if (
+            str(decision.display_type or "").upper() in ("LCD", "IFP")
+            and intent in ("product_question", "others", "industry")
+            and "?" not in str(message)
+            and "？" not in str(message)
+            and not _has_business_question_intent(str(message))
+        ):
+            logger.info(
+                "LCD/IFP session requirement answer (%r) → intent %s → need_query"
+                "（继续走 LCD 需求链）",
+                str(message)[:40], intent,
+            )
+            intent = "need_query"
+            state["intent"] = intent
 
         book = (
             RequirementBook.from_payload(_memory.get_requirement_book(session_id))

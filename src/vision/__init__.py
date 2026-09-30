@@ -26,8 +26,26 @@ from src.vision.schema import (
     VisionField,
     VisionRequirement,
 )
+from src.vision.recognition import (
+    CANDIDATE_FIELDS,
+    CONFIRMABLE_FIELDS,
+    ImageRecognitionResult,
+)
+# LCD 那一路（新增）：类型只产出 LED / LCD，只取"是否拼接 / 有没有摄像头"。
+# LED 那一路（VisionExtractor + prompts.VISION_SYSTEM_PROMPT）原样保留。
+from src.vision.lcd_extractor import (
+    LCD_VISION_FIELDS,
+    LcdVisionExtractor,
+    extract_lcd_vision,
+    get_lcd_vision_extractor,
+)
 
 __all__ = [
+    "CANDIDATE_FIELDS",
+    "CONFIRMABLE_FIELDS",
+    "ImageRecognitionResult",
+    "LCD_VISION_FIELDS",
+    "LcdVisionExtractor",
     "VISION_EXPLICIT",
     "VISION_INFERRED",
     "VisionError",
@@ -37,8 +55,10 @@ __all__ = [
     "ZhipuVisionClient",
     "apply_vision_to_profile",
     "check_image_payload",
+    "extract_lcd_vision",
     "extract_vision_for_turn",
     "get_vision_extractor",
+    "get_lcd_vision_extractor",
     "merge_vision_results",
     "parse_vision_json",
     "resolve_vision_confirmation",

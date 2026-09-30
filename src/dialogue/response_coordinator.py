@@ -75,6 +75,20 @@ class ResponseCoordinator:
             profile = self._profile(session_id)
             if profile is None or not getattr(profile, "vision_confirmation_pending", None):
                 return response
+            # LCD / IFP（《LCD_IFP 整改计划》§二十二）：核对要结合上下文，
+            # 客户已经说过的部分不再重复问（"I've matched the image with what you described…"）。
+            if str(getattr(profile, "display_type", "") or "").upper() in ("LCD", "IFP"):
+                from .image_confirmation import prompt_from_profile
+                from src.rag.reply_composer import reply_language
+
+                lcd_sentence = prompt_from_profile(
+                    profile, language=reply_language(message)
+                )
+                if lcd_sentence:
+                    text = str(response or "")
+                    if lcd_sentence in text:
+                        return response
+                    return f"{lcd_sentence} {text}".strip() if text else lcd_sentence
             from src.rag.reply_composer import (
                 reply_language,
                 vision_confirmation_items,
@@ -103,6 +117,7 @@ class ResponseCoordinator:
         questions: Any = None,
         language: str = "en",
         service_faq_answered: str = "",
+        require_question: bool = False,
     ) -> str:
         """固定顺序：售后口径 → 图片核对 → **FinalResponseGuard 收口**。
 
@@ -117,7 +132,37 @@ class ResponseCoordinator:
             text, questions=questions, language=language
         )
         self.last_guard = guarded
-        return guarded.text
+        text = guarded.text
+        # 客户口径（2026-09-28 实测）：**必问的那一问不能丢**。
+        # 实测：LCD 入口那一轮 LLM 只写了"Let's go with LCD display…"，问题被吞掉，
+        # 客户等不到下一问（Sales / DialoguePolicy 都已经定好"这一轮要问什么"）。
+        # Guard 只负责"最多一个问题"，不补问题 —— 这里补上（仅当整段没有任何问句）。
+        # 注意：只有"这一轮本来就是问问题"（ask_only / answer_then_ask）才补，
+        # 推荐轮（RECOMMEND）里残留的 pending_question 不许被塞进交付话术。
+        if require_question:
+            text = self._ensure_required_question(text, questions)
+        return text
+
+    @staticmethod
+    def _ensure_required_question(text: str, questions: Any) -> str:
+        """这一轮有"必问项"但正文里一个问句都没有 → 把那一问补回去。"""
+        required = ""
+        for item in questions or []:
+            candidate = item.get("text") if isinstance(item, dict) else str(item or "")
+            candidate = str(candidate or "").strip()
+            if candidate:
+                required = candidate
+                break
+        if not required:
+            return text
+        if "?" in str(text) or "？" in str(text):
+            return text
+        body = str(text or "").strip()
+        if not body:
+            # 正文为空说明 Guard 有意清空了它（下游还有 result["response"] 兜底），
+            # 这时不要凭空造一句问句出来。
+            return text
+        return f"{body} {required}".strip()
 
     # ── 最终收口（FinalResponseGuard）────────────────────────────────────
     def prepare_final(
@@ -192,30 +237,49 @@ class ResponseCoordinator:
         )
         result["answer_coverage"] = coverage.to_dict()
 
-        question_slot, duplicate_check = apply_question_firewall(
-            result,
-            session_id=session_id,
-            coverage=coverage,
-            previous_question=previous_question,
-            newly_filled=newly_filled,
-            ranked_slots=ranked_question_slots(
-                self._profile(session_id), session_id=session_id
-            ),
-            firewall=FIREWALL,
-            next_candidate=next_candidate_slot,
-        )
-        if question_slot:
-            result["pending_slot"] = question_slot
-        result["duplicate_check"] = duplicate_check
-        questions = question_candidates_from_result(result)
+        # ── LCD / IFP 与 LED **在这条链路上彻底隔离**（计划 §二十四/§二十九）──
+        # 实测（2026-09-28）：LCD 决策层已经算出 ask_purpose，但收口层的 LED
+        # DialoguePolicy 把问题改回 environment / size(width x height) / installation，
+        # 客户看到的还是 LED 问句（"Policy=ASK(environment) 与销售层准备的问句(purpose)
+        # 不一致 → 以 Policy 为准"）。所以 LCD 会话**不跑** LED 的重复提问闸门与
+        # Policy 对齐：下一问只认 LCD 决策层（lcd_action）。
+        lcd_turn_active = bool(result.get("lcd_action")) or str(
+            result.get("product_domain") or ""
+        ).upper() in ("LCD", "IFP")
+        if lcd_turn_active:
+            duplicate_check = "lcd_chain"
+            result["duplicate_check"] = duplicate_check
+            questions = question_candidates_from_result(result)
+            logger.info(
+                "[LCD] 跳过 LED 的重复提问闸门 / Policy 对齐 —— 下一问由 LCD 决策层决定"
+                "（slot=%s）",
+                question_slot or "-",
+            )
+        else:
+            question_slot, duplicate_check = apply_question_firewall(
+                result,
+                session_id=session_id,
+                coverage=coverage,
+                previous_question=previous_question,
+                newly_filled=newly_filled,
+                ranked_slots=ranked_question_slots(
+                    self._profile(session_id), session_id=session_id
+                ),
+                firewall=FIREWALL,
+                next_candidate=next_candidate_slot,
+            )
+            if question_slot:
+                result["pending_slot"] = question_slot
+            result["duplicate_check"] = duplicate_check
+            questions = question_candidates_from_result(result)
 
-        # Phase 1（计划 §16.2）+ 计划 v2.9.3 §五/§六：问哪一项由对话层收口
-        question_slot, questions = align_question_with_policy(
-            result,
-            selected_action=selected_action,
-            question_slot=question_slot,
-            duplicate_check=duplicate_check,
-        )
+            # Phase 1（计划 §16.2）+ 计划 v2.9.3 §五/§六：问哪一项由对话层收口
+            question_slot, questions = align_question_with_policy(
+                result,
+                selected_action=selected_action,
+                question_slot=question_slot,
+                duplicate_check=duplicate_check,
+            )
         question_slot, questions = align_question_with_type_gate(
             result,
             question_slot=question_slot,
@@ -242,8 +306,11 @@ class ResponseCoordinator:
             conflicts=(result.get("requirements") or {}).get("conflicts"),
             newly_filled_slots=newly_filled,
             missing_slots=result.get("missing_slots") or [],
-            question_candidates=ranked_question_slots(
-                self._profile(session_id), session_id=session_id
+            # LCD 会话的候选问题来自 LCD 决策层（不许把 LED 槽位塞进偏好记录）
+            question_candidates=(
+                list((result.get("lcd_action") or {}).get("missing_fields") or [])
+                if lcd_turn_active
+                else ranked_question_slots(self._profile(session_id), session_id=session_id)
             ),
             momentum_slot=momentum.slot,
             previous_question_slot=previous_slot,
@@ -285,6 +352,8 @@ class ResponseCoordinator:
             question_slot=question_slot,
             questions=questions,
             profile_slots=profile_slot_map(self._profile(session_id)),
+            # LCD 决策层算出的下一问不受 LED 时代的"承接额度"约束
+            protect_question=lcd_turn_active,
         )
         if (
             continuation.density == MINIMAL
@@ -394,6 +463,15 @@ class ResponseCoordinator:
             profile = self._profile(session_id)
             if profile is None or not getattr(profile, "vision_confirmation_pending", None):
                 return ""
+            if str(getattr(profile, "display_type", "") or "").upper() in ("LCD", "IFP"):
+                from .image_confirmation import prompt_from_profile
+                from src.rag.reply_composer import reply_language
+
+                lcd_sentence = prompt_from_profile(
+                    profile, language=reply_language(message)
+                )
+                if lcd_sentence:
+                    return lcd_sentence
             from src.rag.reply_composer import reply_language, vision_confirmation_sentence
 
             return vision_confirmation_sentence(profile, reply_language(message), 0)

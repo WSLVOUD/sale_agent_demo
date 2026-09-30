@@ -104,6 +104,7 @@ def retrieval_node(state: SolutionState) -> SolutionState:
         return {**state, "products": []}
     
     from ....rag.hard_filter import build_hard_constraints
+    from ....models.requirement import RequirementProfile
     from ....rag.query_understanding import understand_query
 
     requirement = dict(state.get("requirement", {}) or {})
@@ -114,6 +115,47 @@ def retrieval_node(state: SolutionState) -> SolutionState:
     profile = state.get("requirement_profile")
     understanding = understand_query(message, history=history, profile=profile)
     query = understanding.retrieval_query or _build_search_query(state)
+    # ── LCD / IFP：检索式要带上 LCD 自己的事实 ─────────────────────────────
+    # 实测 2026-09-30：LCD 档案的检索式只有 "LCD display"，26 台广告机把
+    # 视频墙系列挤出 top-20 → 3x3 拼接墙推荐成了普通商用显示器。
+    # 这里把"拼接/尺寸/场景/分辨率"补进检索式（只是检索词，不改档案）。
+    search_profile = profile if isinstance(profile, RequirementProfile) else None
+    # 客户明说 LCD、但要手写白板 → **实际该查的是 IFP**（客户口径 2026-09-30）。
+    # 以前这里硬按档案里的 display_type=LCD 查，于是从 LCD 语料里挑出一台普通
+    # 商用显示器推给"要手写白板的会议室"（实测把 P65 推了出去）。
+    effective_type = ""
+    if search_profile is not None:
+        try:
+            from ....dialogue.lcd_decision import effective_display_type
+
+            effective_type = effective_display_type(search_profile)
+        except Exception:  # pragma: no cover - 防御式
+            effective_type = ""
+    if search_profile is not None and (
+        getattr(search_profile, "display_type", "") or ""
+    ).upper() in ("LCD", "IFP"):
+        extras = []
+        if effective_type == "IFP":
+            extras.append("interactive flat panel touchscreen whiteboard")
+        if getattr(search_profile, "lcd_is_splicing", None) is True:
+            extras.append("video wall splicing narrow bezel")
+        elif getattr(search_profile, "lcd_is_splicing", None) is False:
+            extras.append("single display")
+        size = getattr(search_profile, "lcd_size_inch", None)
+        if size:
+            extras.append(f"{int(size)} inch panel")
+        category = str(getattr(search_profile, "lcd_category", "") or "")
+        if category == "monitoring":
+            extras.append("control room monitoring 7x24")
+        elif category == "advertising":
+            extras.append("advertising machine digital signage")
+        elif category == "conference_education":
+            extras.append("meeting room interactive")
+        resolution = str(getattr(search_profile, "lcd_resolution", None) or "")
+        if resolution:
+            extras.append(resolution)
+        if extras:
+            query = f"{query} {' '.join(extras)}".strip()
     logger.info(
         "Query understanding: lang=%s slots=%s → query=%r",
         understanding.language, understanding.slots, query[:120],
@@ -134,13 +176,25 @@ def retrieval_node(state: SolutionState) -> SolutionState:
         merged_profile if merged_profile is not None else requirement,
         message=message,
     )
+    # 硬过滤同样按"实际该查的产品类型"走（要手写白板 → IFP 语料）。
+    if effective_type and effective_type != str(constraints.display_type or "").upper():
+        logger.info(
+            "Hard filter 按实际产品类型收口：%s → %s（客户要手写/触控的交互平板）",
+            constraints.display_type, effective_type,
+        )
+        from dataclasses import replace as _replace
+
+        constraints = _replace(constraints, display_type=effective_type)
     logger.info("Hard filters: %s", constraints.describe())
 
     try:
         # 硬约束 → metadata filter；不做点间距/亮度的推断值过滤
         products = hybrid_search.search(
             query=query,
-            top_k=20,  # Retrieve more for reranking
+            # LCD 语料更大（47 条），多取一些，避免整个系列被挤出候选
+            top_k=30 if search_profile is not None and str(
+                getattr(search_profile, "display_type", "") or ""
+            ).upper() in ("LCD", "IFP") else 20,
             filters=constraints.chroma_where() or None,
             **constraints.search_kwargs(),
         )

@@ -827,9 +827,18 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
     # 多屏回复（一个项目多块屏）里每块屏各自有环境：室内那块的型号本来就是
     # 室内型号，不能拿"当前这块屏是室外"去整段过滤 —— 否则会出现
     # "只推荐了一块屏"（实测 bug：Screen 1 的整段回复被删掉，只剩 Screen 2）。
+    # 兜底话术的口径要跟着链路走（LCD / IFP 不能说"点间距 / 观看距离"）
+    try:
+        from src.memory.store import memory as _memory
+        from src.utils.product_family import product_family_of
+
+        _family = product_family_of(_memory.get_requirement_profile(request.session_id))
+    except Exception:  # pragma: no cover - 防御式
+        _family = ""
     response_text = sanitize_customer_response(
         result.get("response", ""),
         outdoor=is_outdoor and not result.get("multi_screen"),
+        product_family=_family,
     )
     # 语言护栏：策略=en 时绝不让中文发给客户（命中就用一次 LLM 重写成英文；
     # 重写不了就退回英文兜底话术，见下面的 not response_text 分支）
@@ -841,16 +850,45 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
         # 【客户口径】没有匹配结果时不说"找不到"，改成邀请客户放宽某个条件
         from src.rag.reply_composer import relaxation_answer, reply_language
 
-        if result.get("products"):
-            # 有产品但清洗后为空：说明回复里全是"不该出现的内容"（例如给室外推荐了
-            # 室内型号被过滤掉）。这种情况要把日志留清楚，不要静默换成兜底话术。
+        # 客户口径（2026-09-30 实测）：**"问需求"的轮次**如果正文被清空，要补的是
+        # "这一轮该问的那一项"，不是"放宽条件"话术 —— 后者只属于"推荐不出来"。
+        # （实测：LCD 会话里回复被清空 → 客户收到 "if one of the requirements can be
+        # relaxed …"，需求链直接断掉。）
+        pending_q = str(result.get("pending_question") or "").strip()
+        # pending_slot 也认：LCD 决策层已经算好下一问、Policy 却把 action 标成
+        # clarify_only 时，以前会判成"没在问"，然后拿"放宽条件"话术顶上（实测 2026-09-30）。
+        asking = (
+            bool(result.get("question_slot"))
+            or bool(result.get("pending_slot"))
+            or str(result.get("action") or "").lower()
+            in ("ask_only", "answer_then_ask", "ask", "answer_and_ask", "clarify_only")
+        )
+        if pending_q and asking:
             logger.warning(
-                "Response was emptied by sanitizer while %d products were returned; "
-                "falling back to the relaxation request (session=%s)",
-                len(result.get("products") or []),
-                request.session_id,
+                "Response was emptied but this turn must ask %s → falling back to the "
+                "required question (session=%s)",
+                result.get("question_slot") or "-", request.session_id,
             )
-        response_text = relaxation_answer(reply_language(request.question))
+            response_text = pending_q
+        else:
+            if result.get("products"):
+                # 有产品但清洗后为空：说明回复里全是"不该出现的内容"（例如给室外推荐了
+                # 室内型号被过滤掉）。这种情况要把日志留清楚，不要静默换成兜底话术。
+                logger.warning(
+                    "Response was emptied by sanitizer while %d products were returned; "
+                    "falling back to the relaxation request (session=%s)",
+                    len(result.get("products") or []),
+                    request.session_id,
+                )
+            # 客户口径（2026-09-30）：**已经选出型号了**就绝不能说"放宽某个条件我就能匹配"
+            # —— 那会让客户以为没推荐成功。先把型号给客户，实在没有型号才用放宽条件。
+            from src.rag.reply_composer import product_fallback_answer
+
+            response_text = product_fallback_answer(
+                result.get("products"), language=reply_language(request.question)
+            ) or relaxation_answer(
+                reply_language(request.question), product_family=_family
+            )
 
     logger.info("Response: %s...", response_text[:100])
     # v2.6 §24：对外只暴露"一个 turn → 一个 action → 一条回复"；

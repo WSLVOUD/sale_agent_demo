@@ -68,15 +68,27 @@ class TestLcdEntry:
         assert out.get("lcd_entry", {}).get("subtype") == "IFP"
         assert out.get("lcd_entry", {}).get("product_domain") == "LCD"
 
-    def test_lcd_policy_still_marks_the_requirement_chain_as_pending(self):
-        """计划 §十五：具体需求链暂留白 —— 策略层如实报告"未实现"，不假装能推。"""
+    def test_lcd_policy_now_delegates_to_the_single_decision_entry(self):
+        """计划《LCD_IFP_需求链路工程化整改计划》Phase 5：需求链已实现。
+
+        入口层（LCDPolicy）只做委托 —— 决策只有一处实现：lcd_decision。
+        """
+        from src.dialogue.lcd_decision import decide_lcd_next_action
         from src.dialogue.product_router import LCDPolicy, policy_for
+        from src.models.requirement import RequirementProfile
 
         policy = policy_for("LCD")
         assert isinstance(policy, LCDPolicy)
-        assert policy.implemented is False
-        assert policy.get_next_question(None) is None
-        assert policy.get_missing_requirements(None) == []
+        assert policy.implemented is True
+
+        profile = RequirementProfile.from_slots(
+            {"display_type": "LCD"}, explicit_keys={"display_type"}
+        )
+        expected = decide_lcd_next_action(profile)
+        assert policy.get_next_question(profile) == (expected.question or None)
+        assert policy.get_missing_requirements(profile) == expected.missing_fields
+        assert policy.can_recommend(profile) == bool(expected.confirmed)
+        # 没有档案时不做业务判断（不推产品）
         assert policy.can_recommend(None) is False
         assert policy.recommend(None) == []
 

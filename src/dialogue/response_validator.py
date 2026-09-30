@@ -55,6 +55,23 @@ _SLOT_KEYWORDS = (
     "viewing_distance",
     "size",
     "brightness",
+    # ── LCD / IFP 需求链（客户口径 2026-09-30）────────────────────────────
+    # 实测：LCD 链路里 Python 定的是 slot=lcd_layout（问排布），模型却问成
+    # "how do you want those panels arranged…"？不 —— 反过来，定的是 environment
+    # 却问成排布，客户答的"3x3"落到排布上，environment 永远收不到答案 →
+    # 需求链死循环、永远不推荐。以前这个"问错槽位"检查只覆盖 LED 槽位
+    # （_SLOT_KEYWORDS 里没有 lcd_*），所以 LCD 的问错槽位从来没被拦住。
+    "lcd_category",
+    "lcd_size",
+    "lcd_resolution",
+    "lcd_splicing",
+    "lcd_layout",
+    "lcd_bezel",
+    "lcd_touch",
+    "lcd_handwriting",
+    "lcd_tender",
+    "lcd_ops",
+    "lcd_camera",
 )
 
 # 客户已说过的事实短语（重复复述会被记为 repeated_known_facts）
@@ -95,6 +112,19 @@ REASK_PATTERNS: Dict[str, str] = {
     "pixel_pitch": r"pixel pitch|what pitch|\bp\s*\d(?:\.\d+)?\b",
     "environment": r"indoors or outdoors|indoor or outdoor",
     "installation": r"fixed install|permanent install|rental",
+    # ── LCD / IFP 需求链（客户口径 2026-09-30）────────────────────────────
+    # 实测：排布已经答过 "3x3"，AI 又连问了两次 —— 只有把这些槽位登记进
+    # REASK/ANSWER 表，"又问了一遍已经答过的项"才会被统计到。
+    "lcd_splicing": r"video wall|spliced|single display|拼接",
+    "lcd_layout": r"how many (?:columns|rows)|arrang|layout|排布",
+    "lcd_bezel": r"how narrow|bezel|seam|拼缝",
+    "lcd_size": r"what (?:screen )?size|how many inches|in inches|面板尺寸",
+    "lcd_resolution": r"\b4k\b|\b2k\b|resolution|分辨率",
+    "lcd_touch": r"\btouch",
+    "lcd_handwriting": r"whiteboard|handwriting|白板|手写",
+    "lcd_tender": r"tender|\bbid\b|招标",
+    "lcd_ops": r"\bops\b|电脑模块",
+    "lcd_camera": r"\bcamera|摄像头",
 }
 ANSWER_PATTERNS: Dict[str, str] = {
     "viewing_distance": r"\b\d+(?:\.\d+)?\s*(?:m|meters?|metres?|米)\b",
@@ -102,6 +132,21 @@ ANSWER_PATTERNS: Dict[str, str] = {
     "pixel_pitch": r"\bp\s*\d(?:\.\d+)?\b",
     "environment": r"\b(?:indoor|outdoor)s?\b|室内|室外",
     "installation": r"\b(?:fixed|permanent|rental)\b|固装|租赁",
+    # ── LCD / IFP 需求链 ──────────────────────────────────────────────────
+    "lcd_splicing": r"video wall|splic|single display|拼接",
+    "lcd_layout": (
+        r"\d{1,2}\s*(?:x|×|\*|by)\s*\d{1,2}"
+        r"|\d{1,2}\s*(?:rows?|行)"
+        r"|\d{1,2}\s*(?:cols?|columns?|列)"
+    ),
+    "lcd_bezel": r"\d+(?:[.,]\d+)?\s*mm",
+    "lcd_size": r"\d{2,3}\s*(?:\"|'|’|′|inch|inches|英寸|寸)|\b\d{2,3}\b",
+    "lcd_resolution": r"\b4k\b|\b2k\b|\buhd\b|\bfhd\b|\b1080p\b",
+    "lcd_touch": r"\btouch|触控|触摸",
+    "lcd_handwriting": r"whiteboard|handwriting|interactive|白板|手写",
+    "lcd_tender": r"tender|\bbid\b|招标|投标",
+    "lcd_ops": r"\bops\b|电脑模块",
+    "lcd_camera": r"\bcamera|webcam|摄像头",
 }
 _STOPWORDS = frozenset({
     "the", "and", "for", "with", "that", "this", "have", "will", "your", "you",
@@ -295,7 +340,10 @@ def validate_response(
         asked_slot = next(
             (
                 other for other in others
-                if all(word.lower() in lowered for word in _slot_keywords(other))
+                if any(
+                    all(word.lower() in lowered for word in group)
+                    for group in _keyword_groups(other)
+                )
             ),
             "",
         )
@@ -426,6 +474,31 @@ def _slot_keywords(slot: str):
         return question_keywords(slot)
     except Exception:  # pragma: no cover - 防御式
         return ()
+
+
+_CJK_RE = re.compile(r"[\u3400-\u9fff]")
+
+
+def _keyword_groups(slot: str):
+    """把一个槽位的关键词按语种分组：英文一组、中文一组。
+
+    为什么要分组（实测 2026-09-30）：旧写法是"**全部**关键词都要出现在回复里"，
+    而关键词表里中英文混排（例如 lcd_splicing = video wall / splic / single
+    display / 拼接 / 拼接墙），英文回复永远不可能同时命中中文词 —— 于是
+    "AI 问错槽位"这条检查在生产里从未生效，客户答的内容落到别的槽位上，
+    需求链就此死循环。
+
+    现在改成：**某一语种里全部命中**即算这个槽位被问了。
+    """
+    words = [str(word).strip() for word in _slot_keywords(slot) if str(word).strip()]
+    if not words:
+        return ()
+    groups = []
+    for is_cjk in (False, True):
+        subset = tuple(word for word in words if bool(_CJK_RE.search(word)) is is_cjk)
+        if subset:
+            groups.append(subset)
+    return tuple(groups)
 
 
 def _normalise_question_sentences(text: str) -> str:

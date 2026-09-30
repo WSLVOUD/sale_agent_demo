@@ -58,6 +58,17 @@ def router(state: SalesState) -> SalesState:
                 })
 
         # Call the Solution Agent
+        # 意图要按**销售层的决定**传下去：客户最后一句常常只是回答我们的问题
+        # （"no" / "personal"），让 Solution 自己去判会判成 others → 走自由问答 →
+        # 型号永远出不来（实测 2026-09-30，最后掉进 LED 口径的"放宽条件"兜底）。
+        profile = state.get("requirement_profile")
+        solution_intent = ""
+        try:
+            display_type = str(getattr(profile, "display_type", "") or "").upper()
+            if display_type in ("LCD", "IFP"):
+                solution_intent = "recommendation"
+        except Exception:  # pragma: no cover - 防御式
+            solution_intent = ""
         result = solution_runner.run(
             message=customer_message,
             history=history,
@@ -65,7 +76,8 @@ def router(state: SalesState) -> SalesState:
             additional_requirements=additional_reqs,
             # 【M7】把 Sales 的 RequirementProfile 直接交给 Solution，
             # 让它消费同一份需求，而不是自己再从对话重建一遍
-            profile=state.get("requirement_profile"),
+            profile=profile,
+            intent=solution_intent,
             # 客户是否已经拿到过推荐 + 已经给过哪些型号：
             # "另外推荐一款"要换一个没给过的型号，而不是重新问需求
             already_recommended=bool(state.get("already_recommended")),

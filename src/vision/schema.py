@@ -45,6 +45,17 @@ EXTRA_FIELDS: tuple[str, ...] = (
     "rental_hint",
     "curved_hint",
     "transparent_hint",
+    # ── LCD / IFP（《LCD_IFP_需求链路工程化整改计划》Phase 3）──────────────
+    # 图片能可靠看出来的 LCD 候选事实；"看见"不等于"客户需要"（计划 §五）。
+    "screen_size_inch",
+    "is_splicing",
+    "splicing_layout",
+    "screen_count",
+    "bezel_mm",
+    "camera_observed",
+    "touch_observed",
+    "handwriting_observed",
+    "application",
 )
 
 
@@ -90,6 +101,17 @@ class VisionRequirement(BaseModel):
     rental_hint: Optional[VisionField] = None
     curved_hint: Optional[VisionField] = None
     transparent_hint: Optional[VisionField] = None
+
+    # ── LCD / IFP 候选事实（计划 Phase 3）───────────────────────────────
+    screen_size_inch: Optional[VisionField] = None
+    is_splicing: Optional[VisionField] = None
+    splicing_layout: Optional[VisionField] = None
+    screen_count: Optional[VisionField] = None
+    bezel_mm: Optional[VisionField] = None
+    camera_observed: Optional[VisionField] = None
+    touch_observed: Optional[VisionField] = None
+    handwriting_observed: Optional[VisionField] = None
+    application: Optional[VisionField] = None
 
     # ── 元信息（只用于日志与排查）───────────────────────────────────────
     notes: str = ""

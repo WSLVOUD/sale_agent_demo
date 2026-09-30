@@ -68,6 +68,27 @@ def understand_node(state: SolutionState) -> SolutionState:
         }
 
     decision = check_recommendation_ready(profile)
+
+    # ── LCD / IFP：用 LCD 决策层判断就绪，不套 LED 的 Gate ──────────────────
+    # 实测 2026-09-30：LCD 需求齐全（3x3 / 65" / 3.5mm 拼缝 / 控制室），
+    # LED 的 Gate 仍然缺 'installation' → 反问 "Is it a permanent install, or is it
+    # for rental/events?"，客户永远等不到推荐。
+    if str(getattr(profile, "display_type", "") or "").upper() in ("LCD", "IFP"):
+        from ....dialogue.lcd_decision import decide_lcd_next_action
+
+        lcd_action = decide_lcd_next_action(profile)
+        logger.info(
+            "understand: LCD 档案 → ready=%s missing=%s (category=%s)",
+            lcd_action.confirmed, lcd_action.missing_fields, lcd_action.lcd_category,
+        )
+        return {
+            **state,
+            "requirement_not_ready": False,
+            "info_sufficient": bool(lcd_action.confirmed),
+            "missing_info": list(lcd_action.missing_fields),
+            "search_keywords": keywords,
+        }
+
     logger.info(
         "understand: 只读档案 → ready=%s missing=%s", decision.ready, decision.missing
     )
@@ -109,6 +130,20 @@ def clarify_node(state: SolutionState) -> SolutionState:
 
     _profile = state.get("requirement_profile")
     if isinstance(_profile, RequirementProfile):
+        # LCD / IFP：问什么由 LCD 决策层决定（计划 §二十四）
+        if str(getattr(_profile, "display_type", "") or "").upper() in ("LCD", "IFP"):
+            from ....dialogue.lcd_decision import decide_lcd_next_action
+
+            lcd_action = decide_lcd_next_action(_profile)
+            logger.info(
+                "Clarify(LCD): confirmed=%s slot=%s", lcd_action.confirmed, lcd_action.question_slot
+            )
+            return {
+                **state,
+                "pending_question": "" if lcd_action.confirmed else str(lcd_action.question or ""),
+                "next_action": "end" if lcd_action.confirmed else "ask",
+                "waiting_for_clarification": not lcd_action.confirmed,
+            }
         _decision = check_recommendation_ready(_profile)
         if _decision.ready:
             logger.info("Clarify: deterministic gate is ready -> no question this turn")
@@ -226,6 +261,37 @@ def recommendation_gate_node(state: SolutionState) -> SolutionState:
     decision = check_recommendation_ready(
         profile, variant_seed=len(state.get("messages", []) or [])
     )
+
+    # ── LCD / IFP：Gate 用 LCD 决策层（LED 的 missing 里含 installation / 视距，
+    # 对 LCD 没意义 —— 实测 2026-09-30：LCD 需求齐了仍被反问"固装还是租赁"）─────
+    if str(getattr(profile, "display_type", "") or "").upper() in ("LCD", "IFP"):
+        from ....dialogue.lcd_decision import decide_lcd_next_action
+
+        lcd_action = decide_lcd_next_action(profile)
+        logger.info(
+            "RecommendationGate(LCD): confirmed=%s missing=%s category=%s",
+            lcd_action.confirmed, lcd_action.missing_fields, lcd_action.lcd_category,
+        )
+        updates: Dict[str, Any] = {
+            "requirement_profile": profile,
+            "recommendation_gate": {
+                "ready": bool(lcd_action.confirmed),
+                "gate": "lcd_requirement",
+                "missing": list(lcd_action.missing_fields),
+                "reason": "LCD 需求链（LCD_IFP 整改计划）",
+                "next_question": lcd_action.question or None,
+                "lcd_category": lcd_action.lcd_category,
+            },
+        }
+        if lcd_action.confirmed:
+            updates["next_action"] = "retrieve"
+            updates["pending_question"] = ""
+        else:
+            updates["next_action"] = "clarify"
+            updates["pending_question"] = str(lcd_action.question or "")
+            updates["waiting_for_clarification"] = True
+        return {**state, **updates}
+
     logger.info(
         "RecommendationGate: ready=%s missing=%s reason=%s",
         decision.ready, decision.missing, decision.reason,

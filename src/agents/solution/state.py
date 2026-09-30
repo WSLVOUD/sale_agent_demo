@@ -135,3 +135,18 @@ class SolutionState(TypedDict):
     # ── v2.0 Phase 4/9：两个 Gate 的判定结果 ────────────────────────────────
     recommendation_gate: Optional[Dict[str, Any]]
     calculation_gate: Optional[Dict[str, Any]]
+
+    # ── 2026-09-30：补上"实际在用但没声明"的通道 ────────────────────────────
+    # LangGraph 只把 schema 里声明过的键带出图；这些键以前是静默丢失的：
+    #   · product_domain / turn_kind → 自由问答（others）拿不到产品域，
+    #     LCD/IFP 场景的措辞约束等于没生效；
+    #   · reflection_max_* → 反射预算配置被丢掉，节点只能读默认值；
+    #   · waiting_for_clarification → clarify 流程标记丢失。
+    # 护栏：tests/architecture/test_architecture_sales_state_channels.py
+    product_domain: str
+    turn_kind: str
+    waiting_for_clarification: bool
+    reflection_max_rounds: int
+    reflection_max_tokens: int
+    reflection_max_time_ms: int
+    reflection_no_improve_stop: int

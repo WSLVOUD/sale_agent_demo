@@ -57,6 +57,27 @@ _CORRECTION_RE = re.compile(
     r"其实|不是|改成|应该是|纠正",
     re.IGNORECASE,
 )
+
+# 客户用一个"光秃秃的 no"回答我们上一轮的**是非问句** → 那是否定回答，不是"纠正"。
+# 客户口径（2026-09-30 实测）：客户答 "no,personal" 被判成 CORRECTION
+# → Policy 走 clarify_only → 需求链算好的下一问被吞掉 → 回复为空
+# → 掉进"放宽某个条件"兜底话术（客户："需求都答对了为什么会冒出这句话？"）。
+_BARE_DENIAL_RE = re.compile(
+    r"^\s*(?:no|nope|not really|nah|不需要|不用|没有|不用了)\b",
+    re.IGNORECASE,
+)
+
+# 这些槽位本身是"是非题"，客户一个 no 就是在回答它
+_YES_NO_SLOTS = frozenset(
+    {
+        "lcd_splicing",
+        "lcd_touch",
+        "lcd_handwriting",
+        "lcd_tender",
+        "lcd_ops",
+        "lcd_camera",
+    }
+)
 _OBJECTION_RE = re.compile(
     r"\b(?:too expensive|too much|why so|cheaper|discount|can't afford)\b|"
     r"太贵|为什么这么|便宜点|打折|预算不够",
@@ -159,6 +180,23 @@ def detect_speech_act(
     objection = bool(_OBJECTION_RE.search(text))
     correction = bool(_CORRECTION_RE.search(text))
     confirmation = bool(_CONFIRM_RE.match(text))
+
+    # 客户用 "no" 回答我们上一轮的是非问句（"Is this a tender project?" / "Do you
+    # need an OPS slot?"）→ 这是**否定回答**，不是纠正。短句才算，避免把
+    # "no, actually we want..." 这种真纠正也算进来。
+    bare_denial = bool(
+        str(last_asked_slot or "") in _YES_NO_SLOTS
+        and len(text) <= 24
+        and _BARE_DENIAL_RE.match(text)
+    )
+    if bare_denial:
+        return SpeechActResult(
+            speech_act=ANSWER_REQUIREMENT,
+            field=str(last_asked_slot),
+            value=False,
+            confidence=0.8,
+            evidence=text[:120],
+        )
 
     # ① 客户提问（优先级最高）：价格 / 交期 > 产品 > 泛问
     if question_kinds:

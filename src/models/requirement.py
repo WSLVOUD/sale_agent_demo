@@ -52,6 +52,21 @@ SLOT_TO_FIELD: Dict[str, str] = {
     "brightness": "brightness_min_nit",
     "budget": "budget_level",
     "price_preference": "price_preference",
+    # LCD / IFP 链路槽位（计划 Phase 2；不影响 LED 的 SLOT_ORDER / Gate）
+    "lcd_category": "lcd_category",
+    "lcd_size": "lcd_size_inch",
+    "lcd_resolution": "lcd_resolution",
+    "lcd_splicing": "lcd_is_splicing",
+    "lcd_layout": "lcd_splicing_layout",
+    "lcd_screen_count": "lcd_screen_count",
+    "lcd_bezel": "lcd_bezel_mm",
+    "lcd_touch": "lcd_touch_required",
+    "lcd_handwriting": "lcd_handwriting_required",
+    "lcd_tender": "lcd_tender_project",
+    "lcd_ops": "lcd_ops_required",
+    "lcd_camera": "lcd_camera_required",
+    "lcd_camera_observed": "lcd_camera_observed",
+    "lcd_room_type": "lcd_room_type",
 }
 
 # 同一字段最多主动询问次数（Phase 5：超过就不再问）
@@ -281,6 +296,35 @@ class RequirementProfile(BaseModel):
     resolution_raw: str = ""
     resolution_requirement: Optional[Dict[str, Any]] = None
 
+    # ── LCD / IFP 需求链（《LCD_IFP_需求链路工程化整改计划》Phase 2）───────
+    # 说明：LED 链路用"英寸大小无关的宽高（米）+ 点间距 + 视距"，LCD/IFP 用
+    # "英寸尺寸 + 分辨率 + 拼接/触控/招投标/OPS/摄像头"。两套字段**并存但不混用**
+    # （LED 核心链路的字段与顺序一律不动，见计划 §二十九 LED Chain = Frozen）。
+    #
+    # 复用已有字段：purpose=使用场景、audience_count=人数、vision_*=图片看到的、
+    # conflicts/conflict_slots=图片与文字冲突。
+    lcd_category: Optional[str] = None          # monitoring/advertising/normal/conference_education/unknown
+    lcd_size_inch: Optional[float] = Field(None, gt=0, le=500)
+    # 尺寸来源：customer_explicit / customer_confirmed / image_observed / inferred / recommended
+    lcd_size_source: Optional[str] = None
+    lcd_resolution: Optional[str] = None        # 2K / 4K（客户明确优先，否则按尺寸规则）
+    lcd_resolution_source: Optional[str] = None
+    lcd_is_splicing: Optional[bool] = None
+    lcd_splicing_layout: Optional[str] = None   # 如 "6x2"
+    lcd_screen_count: Optional[int] = Field(None, ge=1, le=1000)
+    lcd_bezel_mm: Optional[float] = Field(None, ge=0, le=100)
+    lcd_touch_required: Optional[bool] = None
+    lcd_handwriting_required: Optional[bool] = None
+    lcd_tender_project: Optional[bool] = None
+    lcd_ops_required: Optional[bool] = None
+    # 客户**需要**摄像头 vs 图片**看到**摄像头（看见 ≠ 需要，计划 §五）
+    lcd_camera_required: Optional[bool] = None
+    lcd_camera_observed: Optional[bool] = None
+    # 触控 / 手写：图片"看到"与客户"需要"同样分开（看见 ≠ 需要）
+    lcd_touch_observed: Optional[bool] = None
+    lcd_handwriting_observed: Optional[bool] = None
+    lcd_room_type: Optional[str] = None         # control room / meeting room / classroom / lobby …
+
     # ── 软条件事实 ──────────────────────────────────────────────────────
     budget_level: Optional[BudgetLevel] = None
     pixel_pitch_mm: Optional[float] = Field(None, gt=0, le=20)
@@ -325,6 +369,9 @@ class RequirementProfile(BaseModel):
     # 图片识别出的字段里，**还没跟客户确认过**的那些（字段名）。
     # 下一轮客户回复后（确认或纠正）就清空，并把他确认过的值标记为客户确认。
     vision_confirmation_pending: List[str] = Field(default_factory=list)
+    # 客户看了图片识别结果以后说"不对"，但没说哪里不对 → 下一轮要问他哪里不对。
+    # （客户口径 2026-09-30：客户说不对，不能当成"没反对"，要请他指出来的。）
+    vision_confirmation_denied: List[str] = Field(default_factory=list)
     # 图片当时"看到"的值（用于对比客户是否纠正了它）：field -> value
     vision_assertions: Dict[str, Any] = Field(default_factory=dict)
     # 客户纠正图片识别的记录："image said indoor, customer said outdoor"
@@ -427,6 +474,38 @@ class RequirementProfile(BaseModel):
         if specials:
             data["special_requirements"] = specials
             sources["special_requirements"] = "explicit"
+
+        # LCD / IFP 链路字段（计划 Phase 2）：只复制**确实传进来**的值，
+        # 不写任何默认值 —— "没说是 LCD" 不能变成 "LCD=False"。
+        for slot_name, field_name in (
+            ("lcd_category", "lcd_category"),
+            ("lcd_size", "lcd_size_inch"),
+            ("lcd_size_source", "lcd_size_source"),
+            ("lcd_resolution", "lcd_resolution"),
+            ("lcd_resolution_source", "lcd_resolution_source"),
+            ("lcd_splicing", "lcd_is_splicing"),
+            ("lcd_layout", "lcd_splicing_layout"),
+            ("lcd_screen_count", "lcd_screen_count"),
+            ("lcd_bezel", "lcd_bezel_mm"),
+            ("lcd_touch", "lcd_touch_required"),
+            ("lcd_handwriting", "lcd_handwriting_required"),
+            ("lcd_tender", "lcd_tender_project"),
+            ("lcd_ops", "lcd_ops_required"),
+            ("lcd_camera", "lcd_camera_required"),
+            ("lcd_camera_observed", "lcd_camera_observed"),
+            ("lcd_room_type", "lcd_room_type"),
+        ):
+            value = slots.get(slot_name, slots.get(field_name))
+            if value is None:
+                continue
+            data[field_name] = value
+            # 调用方可能用**槽位名**（lcd_splicing）也可能用**字段名**（lcd_is_splicing）
+            # 标记 explicit —— 两种都要认，否则客户明说的 LCD 事实会被当成推断。
+            sources[field_name] = (
+                "explicit"
+                if (slot_name in explicit or field_name in explicit)
+                else "inferred"
+            )
 
         return cls(**data, sources=sources)
 
@@ -598,6 +677,30 @@ class RequirementProfile(BaseModel):
         ):
             if name in self.special_requirements:
                 facts[slot] = True
+        # ── LCD / IFP 事实（计划 Phase 2）：只带"有值"的字段，不编造 ────────
+        for field_name in (
+            "lcd_category",
+            "lcd_size_inch",
+            "lcd_size_source",
+            "lcd_resolution",
+            "lcd_resolution_source",
+            "lcd_is_splicing",
+            "lcd_splicing_layout",
+            "lcd_screen_count",
+            "lcd_bezel_mm",
+            "lcd_touch_required",
+            "lcd_handwriting_required",
+            "lcd_tender_project",
+            "lcd_ops_required",
+            "lcd_camera_required",
+            "lcd_camera_observed",
+            "lcd_touch_observed",
+            "lcd_handwriting_observed",
+            "lcd_room_type",
+        ):
+            value = getattr(self, field_name, None)
+            if value is not None:
+                facts[field_name] = value
         if self.series_id:
             facts["series_id"] = self.series_id
         if self.model:
@@ -1048,6 +1151,12 @@ class RequirementProfile(BaseModel):
                 # 新图片带来的待确认列表覆盖旧的；没有新图片时保留原来的
                 if value:
                     data[key] = list(value)
+                continue
+
+            if key == "vision_confirmation_denied":
+                # 客户说"不对"的字段：只有新值才覆盖，否则保留（下一轮继续问他哪里不对）
+                if value or not current:
+                    data[key] = list(value or [])
                 continue
 
             if key == "vision_assertions":

@@ -185,6 +185,30 @@ def _explicit_type(text: str) -> str:
     return ""
 
 
+def explicit_type_in(text: str) -> str:
+    """客户这句话里**明说**的屏幕类型（LED / IFP 归一为 LED，LCD/IFP 归一为 LCD）。
+
+    用途（《LCD_IFP_需求链路工程化整改计划》§九/§十九，与 LED 侧同类修复一致）：
+    "i need a lcd display" 这种**报产品类型**的说法必须按"需求采集"处理，
+    不能判成"产品提问"送去自由问答 —— 否则 LCD 需求链根本进不去（实测踩过）。
+    """
+    text = str(text or "")
+    if not text:
+        return ""
+    display_type = _explicit_type(text)
+    if display_type:
+        return display_type
+    # IFP / 交互平板 / 白板 属于 LCD 子类型（只用于"是不是在报类型"的判断）
+    if re.search(
+        r"\b(ifp|interactive flat panel|interactive whiteboard|whiteboard)\b"
+        r"|交互平板|会议平板|白板",
+        text,
+        re.IGNORECASE,
+    ):
+        return LCD
+    return ""
+
+
 def _far_viewing(text: str, threshold_m: float = 6.0) -> bool:
     for match in _DISTANCE_RE.finditer(text):
         try:

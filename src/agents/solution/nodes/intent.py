@@ -25,11 +25,44 @@ def _last_user_message(state: SolutionState) -> str:
     return ""
 
 
+def _lcd_requirements_are_complete(state: SolutionState) -> bool:
+    """LCD / IFP 需求是不是已经采集齐全（可以给推荐了）。
+
+    客户口径（2026-09-30）实测：需求问完之后，客户最后一句往往只是回答我们的问题
+    （"no" / "personal" 这种光秃秃的答复）。按字面判意图会落到 others → 走自由问答 →
+    型号永远出不来，最后掉进 LED 口径的"放宽条件"兜底话术。
+    所以只要档案显示 LCD/IFP 的需求已经齐了，这一轮就是"给推荐"。
+    """
+    profile = state.get("requirement_profile")
+    if profile is None:
+        return False
+    display_type = str(getattr(profile, "display_type", "") or "").upper()
+    if display_type not in ("LCD", "IFP"):
+        return False
+    try:
+        from ....dialogue.lcd_decision import decide_lcd_next_action
+
+        return bool(decide_lcd_next_action(profile).confirmed)
+    except Exception:  # pragma: no cover - 防御式
+        return False
+
+
 def intent_node(state: SolutionState) -> SolutionState:
     """Classify the turn unless the caller already established recommendation intent."""
     message = _last_user_message(state)
     caller_intent = str(state.get("intent") or "")
-    if caller_intent in ("recommendation", "product_question", "conversation", "others"):
+    if caller_intent in ("product_question", "conversation"):
+        # 客户真在问问题 / 闲聊 → 先回答，不要拿推荐打断
+        intent = caller_intent
+        logger.info("Preserving caller-established intent: %s", intent)
+    elif _lcd_requirements_are_complete(state):
+        # 需求齐全 + 客户没在提问 → 这一轮必须给推荐
+        intent = "recommendation"
+        logger.info(
+            "LCD/IFP requirements complete → intent=recommendation (message=%r)",
+            message[:60],
+        )
+    elif caller_intent in ("recommendation", "product_question", "conversation", "others"):
         # 上游（Sales / Orchestrator）已经定好意图就别再判一遍：
         # 否则"客户在问别的事"会被重新判成 recommendation，又走推荐/反问。
         intent = caller_intent

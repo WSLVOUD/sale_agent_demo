@@ -313,6 +313,31 @@ class MemoryStore:
         if session_id in self._sessions:
             self._sessions[session_id]["recommendation"] = None
 
+    # ── LCD 屏幕锁定（客户口径 2026-09-30：品类定下来 → 需求问完 → 锁定屏幕）──
+    # 锁定内容 = 型号 + 这一轮需求的事实指纹。指纹没变就复用同一个型号，
+    # 客户改了需求（尺寸 / 分辨率 / 拼接…）指纹就对不上，自动重新选型。
+
+    def get_lcd_lock(self, session_id: str) -> Dict[str, Any]:
+        """取本会话锁定的 LCD 屏幕（没有则返回 {}）。"""
+        if session_id not in self._sessions:
+            return {}
+        return dict(self._sessions[session_id].get("lcd_lock") or {})
+
+    def set_lcd_lock(self, session_id: str, payload: Any) -> None:
+        """锁定 LCD 屏幕（型号 + 事实指纹 + 命中理由）。"""
+        self._ensure(session_id)
+        self._sessions[session_id]["lcd_lock"] = dict(payload or {})
+        logger.info(
+            "Locked LCD screen for session %s: %s",
+            session_id,
+            (payload or {}).get("model"),
+        )
+
+    def clear_lcd_lock(self, session_id: str) -> None:
+        """解除 LCD 屏幕锁定（需求重置 / 换项目时用）。"""
+        if session_id in self._sessions:
+            self._sessions[session_id]["lcd_lock"] = None
+
     def reset_requirement_state(self, session_id: str) -> None:
         """清空一次咨询的全部中间状态：累计需求 + 结构化档案 + 推荐记录。
 
@@ -324,6 +349,7 @@ class MemoryStore:
         self._sessions[session_id]["requirements"] = {}
         self._sessions[session_id]["requirement_profile"] = None
         self._sessions[session_id]["recommendation"] = None
+        self._sessions[session_id]["lcd_lock"] = None
         logger.info("Reset requirement state for session: %s", session_id)
 
     def get_size(self, session_id: str) -> int:

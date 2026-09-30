@@ -132,6 +132,7 @@ def apply_continuation_budget(
     questions: Any = None,
     profile_slots: Any = (),
     speech_act: Any = None,
+    protect_question: bool = False,
 ) -> "tuple[str, list]":
     """把"承接额度"结论落进 result（从 Orchestrator 迁入，计划 §二/§五）。
 
@@ -153,6 +154,15 @@ def apply_continuation_budget(
     logger = logging.getLogger(__name__)
 
     data = result if isinstance(result, dict) else {}
+    # ── LCD / IFP 的下一问不受"承接额度"约束（客户口径 2026-09-30）──────────
+    # 它是 LED 时代的规则（"客户说无关的话 → 先只承接一轮"）。LCD 决策层既然已经
+    # 算出了下一问，就不允许被这条规则清空 —— 实测：客户答 "meeting"，被判成
+    # 无关闲聊 → 承接额度生效 → 屏幕尺寸那一问被清掉，客户只收到一句接话。
+    if protect_question and question_slot:
+        logger.info(
+            "[Continuation] LCD 链路的下一问不受承接额度约束（slot=%s）", question_slot
+        )
+        return question_slot, list(questions or [])
     ack_streak = int(getattr(conversation, "ack_streak", 0) or 0)
     ack_limit = configured_ack_streak_limit()
     off_topic = bool(data.get("offtopic_turn"))

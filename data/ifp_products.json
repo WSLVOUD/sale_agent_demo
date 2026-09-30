@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "display_type": "IFP",
   "source": "LCD display.txt",
-  "notes": "IFP 交互平板（Omni G4/G4C、K4/K4C）。原文件把它们混在 LCD 里，这里拆出来单独成库；资料没给的字段（价格 / 适用面积）留空，不编。",
+  "notes": "IFP 交互平板（Omni G4/G4C、K4/K4C）",
   "products": [
     {
       "product_id": "Omni-G4-G4C",

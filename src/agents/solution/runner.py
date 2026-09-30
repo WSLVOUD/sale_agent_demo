@@ -152,6 +152,62 @@ def routing_requirements(
     return profile_to_legacy(profile) or requirements
 
 
+def _profile_from(result: Any, initial_state: Any) -> Any:
+    """从 result / initial_state 里取需求档案（取到就返回）。"""
+    profile = None
+    for source in (result, initial_state):
+        if isinstance(source, dict):
+            profile = source.get("requirement_profile") or profile
+    return profile
+
+
+def _profile_family(result: Any, initial_state: Any) -> str:
+    """这一轮属于哪条产品链路（led / lcd / ifp）—— 给兜底话术选口径。"""
+    try:
+        from ...utils.product_family import product_family_of
+
+        return product_family_of(_profile_from(result, initial_state))
+    except Exception:  # pragma: no cover - 防御式
+        return ""
+
+
+def _is_lcd_like_profile(profile: Any) -> bool:
+    """档案是不是 LCD / IFP 会话（这两条走自己的选型链路）。
+
+    客户口径（2026-09-30）："完全把两个链路隔离开"—— 结构化产品查询那条路是按
+    LED 的字段（点间距 / 亮度 / 防护等级）找型号的，LCD / IFP 会话不能走进去。
+    LED 侧行为不变（这里只对 LCD/IFP 返回 True）。
+    """
+    if profile is None:
+        return False
+    display_type = str(
+        getattr(profile, "display_type", "")
+        or (profile.get("display_type") if isinstance(profile, dict) else "")
+        or ""
+    ).upper()
+    return display_type in ("LCD", "IFP")
+
+
+def _profile_needs_ifp(result: Any, initial_state: Any) -> bool:
+    """需求档案是不是明确要交互平板（IFP）。
+
+    这是 IFP 安全网的**主路径**：客户自己说了要手写 / 触控（且是会议教育场景），
+    或者档案里的产品类型就是 IFP。关键词判定只作为兜底 —— 客户把 "meeting"
+    拼成 "metting" 不该让系统把自己选出来的交互平板删掉（实测 2026-09-30）。
+    """
+    try:
+        from ...dialogue.lcd_decision import is_ifp_requirement
+    except Exception:  # pragma: no cover - 防御式
+        return False
+    profile = _profile_from(result, initial_state)
+    if profile is None:
+        return False
+    try:
+        return bool(is_ifp_requirement(profile))
+    except Exception:  # pragma: no cover - 防御式
+        return False
+
+
 class SolutionAgentRunner:
     """Runner class for the Solution Agent.
     
@@ -347,6 +403,9 @@ class SolutionAgentRunner:
             # （原 Router 的同款保护：实测"教堂+室内+5m"后回一句价格偏好会被
             # 判成参数查询，绕过"环境+视距→点间距"规则表）
             and not has_structured_requirement(requirements)
+            # LCD / IFP 会话**永远**不走这条：结构化查询是按 LED 字段找型号的，
+            # 走进去就会拿 LED 的候选去回答 LCD 客户（客户口径 2026-09-30：两条链路完全隔离）。
+            and not _is_lcd_like_profile(profile)
         ):
             from src.config import config as _cfg
             from src.rag.query_understanding import extract_slots
@@ -416,22 +475,41 @@ class SolutionAgentRunner:
             answer = _strip_markdown(answer)
 
             # IFP safety net
+            #
+            # 客户口径（2026-09-30）：**关键词只能是兜底**。以前这里只看客户原话里有没有
+            # IFP 关键词，于是客户把 "meeting" 打成 "metting"（拼写错），
+            # has_ifp_intent 就判成 False → 把系统自己按需求选出来的交互平板连型号一起
+            # 删掉了，客户看到"我在准备推荐"却永远拿不到型号（实测）。
+            #
+            # 现在的主路径是**需求档案**：客户自己说了要手写/触控 + 会议教育场景
+            # （is_ifp_requirement，由语境理解 + 客户回答得出），这才是"客户要 IFP"的
+            # 依据；关键词判定退居兜底，只用来兜住档案没覆盖到的情况。
             customer_text = user_messages_text(initial_state.get("messages", []))
             response_products = result.get("products", [])
-            if not has_ifp_intent(user_text=customer_text):
+            if not _profile_needs_ifp(result, initial_state) and not has_ifp_intent(
+                user_text=customer_text
+            ):
                 answer = remove_unsupported_ifp_text(answer)
                 response_products = [p for p in response_products if not is_ifp_product(p)]
 
             # Remove internal implementation wording
             final_requirement = result.get("requirement", initial_state.get("requirement", {})) or {}
             from ...rag.rerank import sanitize_customer_response
-            answer = sanitize_customer_response(answer, outdoor=bool(final_requirement.get("outdoor")))
+            family = _profile_family(result, initial_state)
+            answer = sanitize_customer_response(
+                answer,
+                outdoor=bool(final_requirement.get("outdoor")),
+                product_family=family,
+            )
 
             if not answer:
-                # 【客户口径】不说"找不到"，改成邀请客户放宽某个条件
-                from ...rag.reply_composer import relaxation_answer
+                # 【客户口径】不说"找不到"，改成邀请客户放宽某个条件。
+                # 但**口径要跟着链路走**：LCD / IFP 会话不能说"点间距 / 观看距离"。
+                from ...rag.reply_composer import product_fallback_answer, relaxation_answer
 
-                answer = relaxation_answer()
+                answer = product_fallback_answer(
+                    response_products
+                ) or relaxation_answer(product_family=family)
 
             # Keep compact format
             answer = "\n".join(line.strip() for line in answer.splitlines() if line.strip())

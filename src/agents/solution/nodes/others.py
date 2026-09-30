@@ -213,6 +213,14 @@ def others_node(state: SolutionState) -> SolutionState:
                 "answer the customer's question using ONLY the provided product data; "
                 "do not recommend a model, do not mention models unless the customer "
                 "named one, do not ask requirement questions"
+                # 客户口径（2026-09-28）：客户在问 LCD / IFP 时，不许自我贬低成"我们主要做 LED"
+                # （实测："we actually work mainly with LED screens" 把 LCD 客户劝退）。
+                + (
+                    "; the customer is looking at LCD / IFP products — never say we mainly "
+                    "work with LED, never steer them back to LED, treat LCD as our own product line"
+                    if str(state.get("product_domain") or "").upper() in ("LCD", "IFP")
+                    else ""
+                )
             ),
             known_facts=list(requirement_lines(guard_source)),
             recent_dialogue=recent_dialogue,
@@ -229,12 +237,12 @@ def others_node(state: SolutionState) -> SolutionState:
         free_context.answer = products_text
         answer = generate_response(free_context, llm=get_llm(temperature=0.7))
         if not answer:
-            # 兜底不能把内部标记（"（未检索到相关产品资料）"）发给客户
+            # 兜底绝不能把内部检索片段（"[产品资料 N] …"）发给客户（实测踩过）
             answer = (
-                products_text
-                if product_chunks
-                else "I don't have the specifics on that right now - let me check with "
-                "our team and come back to you."
+                "Let me double-check that with our team and come back to you."
+                if not product_chunks
+                else "I don't have the exact spec in front of me on that one — "
+                "let me confirm with our engineering team and come back to you."
             )
         # 客户没点名型号 → 自由问答里不给型号（型号只由推荐链路给出）
         answer, removed_models = strip_model_mentions(

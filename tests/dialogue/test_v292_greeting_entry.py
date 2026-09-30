@@ -269,16 +269,24 @@ class TestProductPolicies:
         assert policy.get_missing_requirements(profile)
         assert policy.get_next_question(profile)
 
-    def test_lcd_and_ifp_are_placeholders_with_the_same_interface(self):
+    def test_lcd_and_ifp_share_the_same_interface_now_implemented(self):
+        """接口形状不变；LCD / IFP 的需求链已接入（LCD_IFP 整改计划 Phase 5）。"""
         from src.dialogue.product_router import policy_for
+        from src.models.requirement import RequirementProfile
 
+        profile = RequirementProfile.from_slots(
+            {"display_type": "LCD"}, explicit_keys={"display_type"}
+        )
         for domain in ("LCD", "IFP"):
             policy = policy_for(domain)
-            assert policy.implemented is False
-            # 接口齐备，但不实现业务逻辑（计划 §十二）
-            assert policy.get_requirement_profile() == {}
-            assert policy.get_missing_requirements() == []
-            assert policy.get_next_question() is None
-            assert policy.can_recommend() is False
-            assert policy.recommend() == []
+            assert policy.implemented is True
+            # 接口齐备，且都委托给同一个决策入口（没有第二套实现）
+            assert policy.get_requirement_profile(profile)
+            assert policy.get_missing_requirements(profile)
+            assert policy.get_next_question(profile)
+            assert policy.can_recommend(profile) is False   # 还缺需求，不能推
+            assert policy.recommend(profile) == []          # 推荐仍由 RAG / 引擎负责
             assert policy.validate("anything") == []
+            # 没有档案时不做业务判断
+            assert policy.get_requirement_profile() == {}
+            assert policy.get_next_question() is None

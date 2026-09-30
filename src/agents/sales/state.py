@@ -105,9 +105,36 @@ class SalesState(TypedDict):
     # LCD 入口 / 类型闸门的留痕（供 orchestrator、日志与审计读取）
     lcd_entry: Dict[str, Any]
     product_type_gate: Dict[str, Any]
+    # ── LCD / IFP 需求链的决策结果（《LCD_IFP 整改计划》Phase 5）─────────────
+    # 【必须写在 schema 里】和上面 display_type_decision 同一个坑：LangGraph 只把
+    # **声明过的键**带出图，没声明的键会在节点之间被丢掉。
+    # 实测 2026-09-30：requirement_mining 明明算出了
+    # "Do you need a video wall (spliced screens) or single displays?"，
+    # 但 script_generator 拿不到 lcd_action → 走旧兜底 → 回复空 → 被 API 的
+    # "放宽条件"话术顶上，客户看到的既不是问题也不是承接。
+    lcd_action: Dict[str, Any]
 
     # ── 本轮客户说的是与需求无关的话（只"接住"这句话，再继续问需求）──────
     offtopic_turn: bool
 
     # 本轮"回应客户这句话"的口语回应（LLM 生成，只影响措辞，不参与 Gate 判定）
     acknowledgement: str
+
+    # ── 2026-09-30：把"实际在用但从没声明"的键补进 schema ───────────────────
+    # LangGraph 只把**声明过的键**带出图（同一个坑见上面 display_type_decision 的
+    # 注释）。下面这些键在节点之间本来是**静默丢失**的：
+    #   · pitch_resolution / recommendation / screen_calculation / recommendation_gate
+    #     → 表达层拿不到，LLM 只能自己编或只说半句；
+    #   · response_action / response_source / service_faq_answered → 留痕与收口判断失效；
+    #   · greeting_entry / greeting_sent_this_turn / legacy_reply_path → 招呼与旧链路标记失效。
+    # 护栏：tests/architecture/test_architecture_sales_state_channels.py 会检查这一点。
+    greeting_entry: bool
+    greeting_sent_this_turn: bool
+    legacy_reply_path: bool
+    pitch_resolution: Dict[str, Any]
+    recommendation: Dict[str, Any]
+    recommendation_gate: Dict[str, Any]
+    response_action: str
+    response_source: str
+    screen_calculation: Dict[str, Any]
+    service_faq_answered: str

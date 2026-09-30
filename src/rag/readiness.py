@@ -56,6 +56,18 @@ _HUMAN_SLOT_LABELS: Dict[str, str] = {
     "pitch": "the pixel pitch you have in mind (P2.5, P3, P5 ...)",
     "brightness": "the brightness you need",
     "installation_or_distance": "whether it will be a fixed installation or a rental",
+    # LCD / IFP（计划 Phase 5）：给 LLM 的英文说法（找不到槽位名时不许回落成 lcd_xxx）
+    "lcd_category": "what the screens will be used for",
+    "lcd_size": "the screen size you have in mind (in inches)",
+    "lcd_resolution": "whether you need 4K or 2K is enough",
+    "lcd_splicing": "whether you need a video wall or single displays",
+    "lcd_layout": "how the video wall should be arranged (for example 6x2)",
+    "lcd_bezel": "how narrow the bezel needs to be",
+    "lcd_touch": "whether you need touch functionality",
+    "lcd_handwriting": "whether you need handwriting or whiteboard capability",
+    "lcd_tender": "whether this is a tender project",
+    "lcd_ops": "whether you need an OPS slot",
+    "lcd_camera": "whether you need a camera for video meetings",
 }
 
 
@@ -506,8 +518,60 @@ def _strip_canned_preamble(text: str) -> str:
 # ── 问句"意图"（v2.7 修订：不再把整句模板丢给 LLM 照抄）────────────────────
 # 每个槽位：LLM 要表达的意思（intent）+ 必须出现的关键词（校验用）
 QUESTION_INTENTS: Dict[str, Dict[str, Any]] = {
+    # ── LCD / IFP 需求链（《LCD_IFP_需求链路工程化整改计划》Phase 5）──────────
+    "lcd_category": {
+        "intent": "了解这些 LCD 屏主要用在哪（监控 / 广告机 / 普通显示 / 会议教室…）",
+        "keywords": ("use", "used", "for", "application", "control room", "meeting",
+                     "advertising", "classroom", "用途", "场景"),
+    },
+    "lcd_size": {
+        "intent": "了解客户想要的屏幕尺寸（英寸）",
+        "keywords": ("inch", "size", "screen size", "英寸", "寸"),
+    },
+    "lcd_resolution": {
+        "intent": "确认分辨率要求（客户明确要 4K，还是 2K 够用）",
+        "keywords": ("4k", "2k", "resolution", "uhd", "分辨率"),
+    },
+    "lcd_splicing": {
+        "intent": "确认是拼接成视频墙，还是单体显示器",
+        "keywords": ("video wall", "splic", "single display", "拼接", "拼接墙"),
+    },
+    "lcd_layout": {
+        "intent": "确认拼接墙的排布（几列 × 几行）",
+        # "arrang*"：系统给的成句是 "How should the video wall be arranged (for example
+        # 6x2)?" —— 不含 "layout / column / row" 的话，问句意图校验会把**正确**的问句
+        # 判成"问的不是这件事"，LCD 每一轮都退化成模板话术（实测 2026-09-30）。
+        "keywords": ("layout", "arrang", "column", "row", "panel", "排布", "几乘"),
+    },
+    "lcd_bezel": {
+        "intent": "确认拼缝要求（客户没有指定时按 3.5mm 建议）",
+        "keywords": ("bezel", "seam", "拼缝", "边框"),
+    },
+    "lcd_touch": {
+        "intent": "确认是否需要触控功能",
+        "keywords": ("touch", "触控", "触摸"),
+    },
+    "lcd_handwriting": {
+        "intent": "确认是否需要手写 / 白板等互动功能（决定是否走 IFP）",
+        "keywords": ("whiteboard", "handwriting", "write", "interactive", "白板", "手写"),
+    },
+    "lcd_tender": {
+        "intent": "确认是不是招投标项目（需要招标文件）",
+        "keywords": ("tender", "bid", "招标", "投标"),
+    },
+    "lcd_ops": {
+        "intent": "确认是否需要 OPS 插拔式电脑模块",
+        "keywords": ("ops", "pc module", "电脑模块"),
+    },
+    "lcd_camera": {
+        "intent": "确认会议场景是否需要摄像头",
+        "keywords": ("camera", "webcam", "video conference", "摄像头"),
+    },
     "environment": {
-        "intent": "确认这块屏是室内用还是室外用（决定箱体与亮度）",
+        # 注意：这句会原样交给表达层 LLM 当"问这一项是为了什么"。
+        # 不能写"决定箱体与亮度" —— 那是 LED 口径，LCD 链路复用它时会说出
+        # "the cabinet and brightness…"这种 LED 话术（实测 2026-09-30）。
+        "intent": "确认这块屏是室内用还是室外用",
         "keywords": ("indoor", "outdoor", "inside", "outside", "室内", "室外", "户外"),
     },
     "installation": {

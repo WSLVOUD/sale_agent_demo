@@ -49,6 +49,14 @@ from .turn_store import (
     get_turn_store,
 )
 
+# "同内容重发"的判定窗口（秒）。客户口径（2026-09-30）实测：
+#   客户答招标问题 "no"，紧接着答 OPS 问题又是 "no" —— 指纹去重（同 session + 同文字，
+#   原来 TTL 10 分钟）把第二句当成"重发"直接丢弃；前端收到 duplicate=true 就**不渲染**，
+#   于是客户连发 6 个 "no" 全部"没有反应"。
+# 判定改成**语境优先**（见 _fingerprint_is_a_repeat）：同文字但回答的是另一个问题 → 新消息。
+# 这个窗口只兜底"拿不到问题上下文"的纯闲聊会话 —— 客户端重试 / 双击都在几秒内到达。
+DEFAULT_DUPLICATE_GRACE_SECONDS = 5.0
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_WAIT_SECONDS = 120.0
@@ -110,6 +118,7 @@ class TurnExecutor:
         wait_seconds: float = DEFAULT_WAIT_SECONDS,
         state_snapshot: Optional[Callable[[str], Any]] = None,
         state_restore: Optional[Callable[[str, Any], None]] = None,
+        duplicate_grace_seconds: float = DEFAULT_DUPLICATE_GRACE_SECONDS,
     ):
         self.runner = runner
         self.store = store or get_turn_store()
@@ -118,6 +127,8 @@ class TurnExecutor:
         self.inbox = inbox or get_message_inbox()
         self.dedup = deduplicator or get_message_deduplicator()
         self.wait_seconds = max(1.0, float(wait_seconds))
+        # 同内容消息算"重发"的时间窗口；超出这个窗口的同一句话按**新消息**处理
+        self._duplicate_grace_seconds = max(0.0, float(duplicate_grace_seconds))
         # 生成期间客户又发消息 → 这一版回复作废并重跑；重跑前必须把
         # "这一版留下的状态"（问了哪一项 / 问过几次 / 已答）退回去，
         # 否则重跑会以为那一项已经问过，转而去问另一个问题（= 连续两问的根因）。
@@ -197,6 +208,19 @@ class TurnExecutor:
             owner_id = self._fingerprint_turns.get(decision.fingerprint, "")
             owner = self.store.get(owner_id) if owner_id else None
             if owner is not None and owner.status == FAILED:
+                owner = None
+            # ── 同一句话 ≠ 重发（客户口径 2026-09-30）───────────────────────
+            # 客户用 "no" 回答了招标问题，紧接着又用 "no" 回答 OPS 问题 —— 这是两个
+            # 不同的回答，只是文字一样。只有"上一轮刚回完、客户又原样发一遍"才算重发。
+            if (
+                owner is not None
+                and decision.reason == "duplicate_payload_fingerprint"
+                and not self._fingerprint_is_a_repeat(owner, session)
+            ):
+                logger.info(
+                    "[TurnExecutor] session=%s 同一句话但回答的是**另一个问题** → 按新消息处理：%r",
+                    session, str(text or "")[:40],
+                )
                 owner = None
             if owner is not None:
                 return self._repeat_outcome(
@@ -431,6 +455,7 @@ class TurnExecutor:
         *,
         reason: str = "duplicate_message_id",
     ) -> TurnOutcome:
+        """把"重发"折算成上一轮的结果（客户只应该收到一条回复）。"""
         logger.info(
             "[TurnExecutor] session=%s message=%s 重复（%s）→ 复用 turn=%s",
             session_id, message_id, reason, owner.turn_id,
@@ -441,6 +466,47 @@ class TurnExecutor:
         if waited is not None:
             return waited
         return self._outcome_from_record(owner, duplicate=True, started=started)
+
+    def _fingerprint_is_a_repeat(self, owner: TurnRecord, session_id: str) -> bool:
+        """这条"同内容消息"还算不算重发？（客户口径 2026-09-30）
+
+        只看**上下文**：这句话回答的是不是**同一个问题**？
+
+            AI: Is this a tender project?   客户: no     ← 回答的是 lcd_tender
+            AI: Do you need an OPS slot?    客户: no     ← 回答的是 lcd_ops
+
+        文字一样、回答的问题不一样 → 这是**新消息**，不是重发。
+        （实测 bug：第二句 "no" 被指纹当成重发丢弃，前端收到 duplicate=true
+          就**不渲染任何气泡** → 客户连发 6 个 "no" 全部"没有反应"。）
+
+        判定顺序：
+
+            ① 还在处理 → 重发（并入同一轮，客户只收一条回复）；
+            ② 刚提交、还在重发窗口内（默认 5 秒）→ 重发（客户端重试 / 双击）；
+            ③ 拿得到"在回答哪一项" → 同一个问题才算重发；
+            ④ 什么上下文都没有（纯闲聊）→ 不算重发。
+        """
+        if owner.status != COMMITTED:
+            return True
+        committed_at = float(getattr(owner, "committed_at", 0.0) or 0.0)
+        if committed_at and (time.time() - committed_at) <= self._duplicate_grace_seconds:
+            return True
+        try:
+            current_question = str(
+                (self.store.previous_question(session_id) or {}).get("question_slot") or ""
+            )
+        except Exception:  # pragma: no cover - 防御式
+            current_question = ""
+        owner_question = ""
+        try:
+            owner_question = str(
+                ((owner.trace or {}).get("previous_question") or {}).get("question_slot") or ""
+            )
+        except Exception:  # pragma: no cover - 防御式
+            owner_question = ""
+        if current_question or owner_question:
+            return current_question == owner_question
+        return False
 
     def _build_trace(
         self,

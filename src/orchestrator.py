@@ -452,6 +452,8 @@ class DualAgentOrchestrator:
         )
         result.setdefault("product_subtype", str(sales_result.get("product_subtype") or ""))
         result.setdefault("product_entry", str(sales_result.get("product_entry") or ""))
+        # LCD / IFP 需求链的决策结果（下一问 / 缺什么 / 分支）——收口层据此隔离 LED 链路
+        result.setdefault("lcd_action", dict(sales_result.get("lcd_action") or {}))
         from .dialogue import dialogue_action_candidates
 
         result.setdefault("action_candidates", dialogue_action_candidates(sales_result))
@@ -565,12 +567,31 @@ class DualAgentOrchestrator:
         )
 
         # ① 售后口径 + 图片核对 + Guard 收口（原有链路，先算出"想说的话"）
+        # 这一轮如果是"问需求"（ask_only / answer_then_ask）且已经定了要问哪一项，
+        # 正文里必须真的出现那一问（LLM 漏写时由 finalize 补回）。
+        # 客户口径（2026-09-28）：**LCD / IFP 会话**里"已经定好要问的那一项"
+        # 必须真的出现在正文里（实测：LCD 入口轮 LLM 只写了一句 ack，问题被吞掉，
+        # 客户等不到下一问）。LED 侧口径保持不变（那一条链有自己的护栏与测试）。
+        lcd_turn_active = bool(result.get("lcd_action")) or str(
+            result.get("product_domain") or ""
+        ).upper() in ("LCD", "IFP")
+        require_question = (
+            lcd_turn_active
+            and bool(plan.questions)
+            and not result.get("products")
+            # 只要这一轮**确实定了要问哪一项**，那一问就必须真的出现在正文里。
+            # 不再看"动作名"白名单 —— 那是 LED 侧的口径：客户答一个 "no" 被通用层
+            # 标成 clarify_only 时，LCD 算好的下一问曾被整条吞掉（实测 2026-09-30）。
+            # LED 走不到这里（lcd_turn_active=False），口径不受影响。
+            and bool(str(plan.question_slot or "").strip())
+        )
         text = self._response_coordinator().finalize(
             plan.text,
             session_id=session_id,
             message=message,
             questions=plan.questions,
             service_faq_answered=str(result.get("service_faq_answered") or ""),
+            require_question=require_question,
         )
         # ② v2.7 §15/§16 + 型号闸门：正文加工统一在回复层（ResponseCoordinator）
         text = self._response_coordinator().postprocess_final(

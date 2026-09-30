@@ -199,8 +199,18 @@ def rerank_node(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def sanitize_customer_response(text: str, *, outdoor: bool = False) -> str:
+def sanitize_customer_response(
+    text: str, *, outdoor: bool = False, product_family: str = ""
+) -> str:
     """Remove internal-data disclosures and environment-conflicting sentences."""
+    if not text:
+        return text
+
+    # 客户口径（2026-09-28）：内部标记块（"[产品资料 1] …"）绝不能发给客户。
+    # 实测：自由问答的兜底把检索片段原样拼进回复，客户看到一屏内部字段。
+    from src.utils.text import strip_internal_blocks
+
+    text = strip_internal_blocks(str(text))
     if not text:
         return text
 
@@ -226,7 +236,8 @@ def sanitize_customer_response(text: str, *, outdoor: bool = False) -> str:
 
         if has_no_product_phrase(text):
             logger.info("Rewriting 'no matching product' reply into a relaxation request")
-            return relaxation_answer()
+            # 口径跟着链路走：LCD / IFP 会话不能说"点间距 / 观看距离"
+            return relaxation_answer(product_family=product_family)
     except Exception:  # pragma: no cover - 防御式
         pass
 

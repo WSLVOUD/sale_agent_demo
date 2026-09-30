@@ -138,25 +138,62 @@ class LEDPolicy(ProductPolicy):
 
 
 class LCDPolicy(ProductPolicy):
-    """LCD：入口 + 接口（完整需求链后续实现，计划 §九）。"""
+    """LCD：需求链入口 —— 决策交给 `lcd_decision`（唯一入口，计划 Phase 5）。"""
 
     def __init__(self) -> None:
         super().__init__(
             product_domain=LCD,
-            implemented=False,
-            notes="Placeholder：需求问题顺序 / Gate / 推荐 / 计算 / Reflection 待实现",
+            implemented=True,
+            notes="需求链：lcd_decision.decide_lcd_next_action（场景分支 + 分辨率规则 + 唯一 Next Action）",
         )
+
+    def get_requirement_profile(self, profile: Any = None) -> Dict[str, Any]:
+        from .lcd_decision import decide_lcd_next_action
+
+        if profile is None:
+            # 没有档案 → 不产生业务判断（接口契约：返回空）
+            return {}
+        action = decide_lcd_next_action(profile)
+        return action.to_dict()
+
+    def get_missing_requirements(self, profile: Any = None) -> List[str]:
+        from .lcd_decision import decide_lcd_next_action
+
+        return list(decide_lcd_next_action(profile).missing_fields)
+
+    def get_next_question(self, profile: Any = None) -> Optional[str]:
+        from .lcd_decision import decide_lcd_next_action
+
+        question = str(decide_lcd_next_action(profile).question or "")
+        return question or None
+
+    def can_recommend(self, profile: Any = None) -> bool:
+        from .lcd_decision import decide_lcd_next_action
+
+        return bool(decide_lcd_next_action(profile).confirmed)
 
 
 class IFPPolicy(ProductPolicy):
-    """IFP：入口 + 接口（完整需求链后续实现，计划 §十）。"""
+    """IFP：LCD 子类型 —— 同一套决策，额外覆盖 Tender / OPS / Camera（计划 §十六）。"""
 
     def __init__(self) -> None:
         super().__init__(
             product_domain=IFP,
-            implemented=False,
-            notes="Placeholder：需求问题顺序 / Gate / 推荐 / 计算 / Reflection 待实现",
+            implemented=True,
+            notes="需求链：lcd_decision（会议/教育分支 + Tender / OPS / Camera）",
         )
+
+    def get_requirement_profile(self, profile: Any = None) -> Dict[str, Any]:
+        return LCDPolicy().get_requirement_profile(profile)
+
+    def get_missing_requirements(self, profile: Any = None) -> List[str]:
+        return LCDPolicy().get_missing_requirements(profile)
+
+    def get_next_question(self, profile: Any = None) -> Optional[str]:
+        return LCDPolicy().get_next_question(profile)
+
+    def can_recommend(self, profile: Any = None) -> bool:
+        return LCDPolicy().can_recommend(profile)
 
 
 _POLICIES = {

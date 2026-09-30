@@ -515,6 +515,228 @@ def _ensure_degraded_note(answer: str, slots, language: str = "en") -> str:
     return f"{text}\n\n{note}"
 
 
+_LCD_LOCK_FIELDS: tuple = (
+    "lcd_category",
+    "lcd_size_inch",
+    "lcd_resolution",
+    "lcd_is_splicing",
+    "lcd_splicing_layout",
+    "lcd_screen_count",
+    "lcd_bezel_mm",
+    "lcd_touch_required",
+    "lcd_handwriting_required",
+    "lcd_ops_required",
+    "lcd_camera_required",
+    "environment",
+    "installation",
+)
+
+
+def _lcd_fingerprint(profile: Any) -> Dict[str, Any]:
+    """LCD 选型真正吃的那些字段（客户改了其中任何一个 → 需要重新选型）。"""
+    return {name: getattr(profile, name, None) for name in _LCD_LOCK_FIELDS}
+
+
+def _locked_lcd_candidate(
+    state: SolutionState, profile: Any, raw_products: List[Any]
+):
+    """上一轮已经锁定、并且需求指纹没变的屏幕 → 直接复用（不重新选型）。
+
+    客户口径（2026-09-30）："根据对应品类推进需求询问，然后锁定屏幕" —— 屏幕一旦
+    锁定，后续轮次（补充说明、问价、确认）都应该还是同一个型号，不能又换一个。
+    """
+    try:
+        from ....memory.store import memory
+    except Exception:  # pragma: no cover - 防御式
+        return None
+    session_id = str(state.get("session_id") or "")
+    if not session_id:
+        return None
+    locked = memory.get_lcd_lock(session_id)
+    if not locked:
+        return None
+    if locked.get("fingerprint") != _lcd_fingerprint(profile):
+        return None
+    model = str(locked.get("model") or "").strip()
+    if not model:
+        return None
+    for item in raw_products or []:
+        metadata = dict(
+            getattr(item, "metadata", None)
+            or (item.get("metadata") if isinstance(item, dict) else {})
+            or {}
+        )
+        name = str(metadata.get("model") or metadata.get("product_id") or "").strip()
+        if name != model:
+            continue
+        if str(metadata.get("display_type") or "").upper() not in ("LCD", "IFP"):
+            continue
+        logger.info("LCD recommend: reusing locked screen %s", model)
+        return item, metadata, list(locked.get("reasons") or [])
+    return None
+
+
+def _store_lcd_lock(state: SolutionState, profile: Any, model: str, reasons: List[str]) -> None:
+    """锁定屏幕：型号 + 事实指纹一起存，指纹变了才允许换型号。"""
+    try:
+        from ....memory.store import memory
+    except Exception:  # pragma: no cover - 防御式
+        return
+    session_id = str(state.get("session_id") or "")
+    if not session_id or not model:
+        return
+    memory.set_lcd_lock(
+        session_id,
+        {
+            "model": model,
+            "fingerprint": _lcd_fingerprint(profile),
+            "reasons": list(reasons or []),
+            "category": str(getattr(profile, "lcd_category", "") or ""),
+        },
+    )
+
+
+def _recommend_lcd(state: SolutionState, profile: Any, raw_products: List[Any]) -> SolutionState:
+    """LCD / IFP 的推荐：从检索到的候选里挑最合适的一个，用事实把结论说出来。
+
+    与 LED 的区别：不碰点间距 / 箱体，不做观看距离推导；只按
+    "拼接需求 → 尺寸 → 分辨率 → 拼缝" 从产品数据里选（计划 §十二）。
+    """
+    from ....rag.lcd_recommendation import layout_text, select_lcd_candidate
+
+    # ① 已经锁定过、且需求没变 → 沿用同一个型号（锁定屏幕）
+    picked = _locked_lcd_candidate(state, profile, raw_products)
+    # ② 否则重新选型
+    if picked is None:
+        picked = select_lcd_candidate(profile, list(raw_products or []))
+    if picked is None:
+        # 没有可用候选 → 按客户口径不说"找不到"，邀请放宽一个条件
+        # 注意：一定是 **LCD 口径**的放宽条件（尺寸 / 拼缝 / 分辨率），
+        # 不能出现 LED 的点间距 / 观看距离（客户口径 2026-09-30）。
+        from ....rag.reply_composer import relaxation_answer
+
+        logger.warning("LCD recommend: no usable candidate among %d docs", len(raw_products or []))
+        return {
+            "recommendation": relaxation_answer(
+                product_family="ifp" if is_ifp_requirement(profile) else "lcd"
+            ),
+            "products": [],
+            "next_action": "reflect",
+        }
+
+    product, metadata, reasons = picked
+    model = str(metadata.get("model") or metadata.get("product_id") or "").strip()
+    # 锁定屏幕（客户口径 2026-09-30）：型号 + 事实指纹入库，后续轮次复用同一个型号
+    _store_lcd_lock(state, profile, model, reasons)
+    layout = layout_text(profile)
+    facts: List[str] = []
+    size = str(metadata.get("display_size_inch") or "").strip()
+    if size:
+        facts.append(f"{size} panels")
+    resolution = str(metadata.get("resolution") or "").strip()
+    if resolution:
+        facts.append(f"{resolution} resolution")
+    bezel = str(metadata.get("bazel_mm") or "").strip()
+    if bezel:
+        facts.append(f"{bezel} bezel")
+    brightness = metadata.get("brightness_nit")
+    if brightness:
+        facts.append(f"{int(brightness)}nit brightness")
+
+    text = _express_lcd_recommendation(
+        model=model,
+        facts=facts,
+        reasons=reasons,
+        layout=layout,
+        profile=profile,
+        state=state,
+    )
+    logger.info("LCD recommend: model=%s layout=%s", model, layout or "-")
+    return {
+        **state,
+        "products": [product],
+        "recommendation": text,
+        "recommendation_result": {
+            "status": "RECOMMENDED",
+            "selected_model": model,
+            "lcd_category": getattr(profile, "lcd_category", ""),
+        },
+        "next_action": "end",
+    }
+
+
+LCD_RECOMMEND_PROMPT = """You are a sales engineer for commercial LCD displays. Write the
+recommendation reply for the customer.
+
+Product family of the selected model: {product_family}
+Selected model (already decided by the system — do not change it): {model}
+Verified product facts: {facts}
+Video wall layout (already decided, do not recompute): {layout}
+Why it fits: {reasons}
+Customer's category: {category}
+
+Rules:
+1. Mention the selected model with its full model code.
+2. Use only the verified facts above — never invent specs, prices or lead times.
+3. If a layout is given, state the panel count for that layout.
+3b. Call the product by the correct family above: an interactive flat panel must never be
+   described as a plain LCD monitor, and a commercial monitor must not be called interactive.
+4. Do not ask any requirement questions (the requirement is complete).
+5. Plain text, no markdown, no bullet lists, no more than 4 sentences.
+6. Do not say "based on my records" or reveal internal data sources.
+
+Reply:"""
+
+
+def _express_lcd_recommendation(
+    *,
+    model: str,
+    facts: List[str],
+    reasons: List[str],
+    layout: str,
+    profile: Any,
+    state: SolutionState,
+) -> str:
+    """把 LCD 结论表达成销售话术（LLM 一次；失败退化为模板）。"""
+    fallback_facts = ", ".join(facts) if facts else "commercial-grade panels"
+    layout_line = f" For your {layout}, that is the panel count you need." if layout else ""
+    # 选中的是交互平板还是普通商用显示器 —— 话术必须说对（客户口径 2026-09-30：
+     # 要手写白板的会议室，不能推了普通 LCD 还叫它 LCD）
+    try:
+        from ....dialogue.lcd_decision import is_ifp_requirement
+
+        product_family = (
+            "interactive flat panel (IFP, touch + whiteboard)"
+            if is_ifp_requirement(profile)
+            else "commercial LCD display"
+        )
+    except Exception:  # pragma: no cover - 防御式
+        product_family = "commercial LCD display"
+    fallback = (
+        f"{model} is the closest fit for your requirement: {fallback_facts}."
+        + layout_line
+        + " Shall I prepare the quotation?"
+    )
+    try:
+        prompt = LCD_RECOMMEND_PROMPT.format(
+            product_family=product_family,
+            model=model,
+            facts=fallback_facts,
+            layout=layout or "not applicable (single displays)",
+            reasons="; ".join(reasons) or "matches the confirmed requirement",
+            category=str(getattr(profile, "lcd_category", "") or "normal"),
+        )
+        response = get_llm(temperature=0.3).invoke(prompt)
+        text = (response.content if hasattr(response, "content") else str(response)).strip()
+        text = re.sub(r"```[a-zA-Z]*", "", text).replace("```", "").strip()
+        text = text.replace("**", "").replace("__", "")
+        if text and model in text:
+            return text
+    except Exception as error:  # pragma: no cover - 网络/额度问题
+        logger.warning("LCD recommendation expression failed: %s", error)
+    return fallback
+
+
 def recommend_node(state: SolutionState) -> SolutionState:
     """Phase 10：确定性选型 → RAG 证据 → 工程计算 → 一次 LLM 表达。
 
@@ -524,6 +746,8 @@ def recommend_node(state: SolutionState) -> SolutionState:
     改造后：``RecommendationEngine`` 用真实产品数据做确定性选型，
     工程参数由 ``screen_calculator`` 计算，LLM 只把结论表达成销售话术
     （全程 1 次 LLM 调用，失败时退化为模板）。
+
+    LCD / IFP 走 `_recommend_lcd`（LED 引擎按点间距/箱体选型，对 LCD 不适用）。
     """
     requirement = state.get("requirement", {}) or {}
     raw_products = state.get("products", []) or []
@@ -540,6 +764,13 @@ def recommend_node(state: SolutionState) -> SolutionState:
         slots = state.get("understood_slots") or {}
         if slots:
             profile = profile.merge(RequirementProfile.from_slots(slots))
+
+    # ── LCD / IFP：走自己的选型路径（《LCD_IFP 整改计划》Phase 6/§十二）──────
+    # LED 的 RecommendationEngine 按点间距/箱体选型，对 LCD 完全不适用
+    # （实测 2026-09-30：LCD 需求齐全时这里仍然回 "Is it a permanent install, or
+    # rental/events?" —— 那是 LED 的 Gate 在问，客户永远等不到推荐）。
+    if str(getattr(profile, "display_type", "") or "").upper() in ("LCD", "IFP"):
+        return _recommend_lcd(state, profile, raw_products)
 
     # ── 2. 统一推荐入口：RecommendationService（Gate → 确定性选型）────────
     selection = _get_service().recommend(profile=profile, top_k=3)
@@ -573,8 +804,10 @@ def recommend_node(state: SolutionState) -> SolutionState:
             # 【客户口径】不说"目录里没有匹配的产品"，而是邀请客户放宽某个条件，
             # 并点出最可能卡住的那几项（环境/安装方式/亮度/点间距）。
             from ....rag.reply_composer import relaxation_answer
+            from ....utils.product_family import product_family_of
 
-            message = relaxation_answer()
+            # 口径跟着链路走：LCD / IFP 会话不能冒出"点间距 / 观看距离"（LED 口径）。
+            message = relaxation_answer(product_family=product_family_of(profile))
         else:
             message = (
                 "Could you tell me the scenario and whether it is indoors or outdoors? "
