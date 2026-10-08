@@ -31,7 +31,8 @@ MISSING_LABELS: Dict[str, str] = {
     "environment": "whether it will be installed indoors or outdoors",
     "purpose": "the application scenario",
     "content_type": "whether the screen will play video, show images, or both",
-    "installation": "whether it is a fixed installation or for rental/events",
+    # 【客户口径 2026-10】问客户只说安装形态，不说 "rental"
+    "installation": "whether it is a fixed installation or a modular quick-release cabinet",
     "pixel_pitch": "the pixel pitch you have in mind (P2.5, P3, P5 ...)",
     "viewing_distance": "roughly how far viewers will stand from the screen",
     "price_preference": "whether the price or the quality matters more to you",
@@ -55,7 +56,8 @@ _HUMAN_SLOT_LABELS: Dict[str, str] = {
     "target_height_mm": "the screen height",
     "pitch": "the pixel pitch you have in mind (P2.5, P3, P5 ...)",
     "brightness": "the brightness you need",
-    "installation_or_distance": "whether it will be a fixed installation or a rental",
+    # 【客户口径 2026-10】问客户只说安装形态，不说 "rental"
+    "installation_or_distance": "whether it will be a fixed installation or a modular quick-release cabinet",
     # LCD / IFP（计划 Phase 5）：给 LLM 的英文说法（找不到槽位名时不许回落成 lcd_xxx）
     "lcd_category": "what the screens will be used for",
     "lcd_size": "the screen size you have in mind (in inches)",
@@ -166,23 +168,29 @@ QUESTION_VARIANTS: Dict[str, Dict[str, tuple[str, ...]]] = {
         ),
     },
     "installation": {
+        # 【客户口径 2026-10】问客户时**不许出现 "rental"** —— 那是我们的内部口径
+        # （路由里照记 installation=rental / is_rental）。对客户只说**安装形态**：
+        # 固定安装，还是块状快拆（可以一块块拆装搬走）。
         "en": (
-            "Is it a permanent install, or is it for rental/events?",
-            "Will the screen stay fixed on site, or is it a rental?",
-            "Just so I quote the right setup — is this a fixed install or a rental?",
-            "Fixed installation or rental — which one is it for you?",
-            "Is this a long-term installation, or do you need it for rental/events?",
-            "Should I plan this as a permanent install or a rental?",
-            "Quick one — fixed install or rental?",
-            "Permanent install or rental — which one fits your project?",
+            "Will it be a fixed installation, or a modular quick-release cabinet you can "
+            "take apart and move?",
+            "Does the screen stay installed on site, or do you need the kind you can break "
+            "down and carry?",
+            "Just so I quote the right setup — fixed installation, or the modular "
+            "quick-release build?",
+            "Fixed installation, or modular quick-release — which one fits your project?",
+            "Is this a long-term installation, or a cabinet you'll assemble and take down?",
+            "Should I plan this as a permanent installation, or a quick-release modular one?",
+            "Quick one — fixed installation or modular quick-release?",
+            "Permanent installation, or the block-by-block quick-release kind?",
         ),
         "zh": (
-            "是固定安装，还是租赁/活动用？",
-            "这块屏是固装还是租赁？",
-            "安装方式是长期固定，还是临时租赁？",
-            "这块屏是固定在现场，还是要租用/活动用的？",
-            "简单确认下——固定安装还是租赁？",
-            "这个是长期固定的项目，还是租赁/活动用的？",
+            "是固定安装，还是块状快拆的（可以一块块拆下来搬走）？",
+            "这块屏是固定安装的，还是块状快拆的？",
+            "安装方式是长期固定安装，还是块状快拆、方便拆装搬运的？",
+            "这块屏是固定在现场，还是块状快拆、可以拆下来搬走的？",
+            "简单确认下——固定安装，还是块状快拆的？",
+            "这个是长期固定安装的项目，还是块状快拆、需要经常拆装搬运的？",
         ),
     },
     # 点间距：先问客户有没有指定 P 值（有就按客户的选型；没有就转问观看距离）

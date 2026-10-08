@@ -39,7 +39,8 @@ HARD_SLOTS: tuple[str, ...] = (
 # 复问硬性条件时的"为什么需要知道"（英文，一句话）
 HARD_WHY: dict[str, str] = {
     "environment": "indoor and outdoor screens use different cabinets and brightness",
-    "installation": "fixed and rental cabinets are built differently",
+    # 【客户口径 2026-10】对客户只说安装形态，不说 "rental"
+    "installation": "fixed and quick-release cabinets are built differently",
     "pixel_pitch": "the pitch decides how sharp the image looks from where people sit",
     "viewing_distance": "the viewing distance tells me which pixel pitch is enough",
     "size": "the screen size decides the cabinet and module layout",
