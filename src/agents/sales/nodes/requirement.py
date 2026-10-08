@@ -1,7 +1,7 @@
 """requirement_mining node - progressive requirement mining."""
 import logging
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -268,19 +268,28 @@ def _is_question_message(message: str) -> bool:
     return looks_like_question(message)
 
 
-_ACK_PROMPT = """你是 LED 显示屏产品的销售，正在微信上和客户聊天。
-客户刚说的这句话**与产品需求无关**（寒暄、闲聊、感叹、题外话、随口一提等）。
-请只回应这句话本身，像真人销售一样自然接一句（最多两句，口语化）。
+_ACK_PROMPT = """你是 LED/LCD 显示屏产品的销售，正在微信上和客户聊天。
+客户刚说的这句话**与产品需求无关**（寒暄、闲聊、感叹、题外话、随口一提，
+甚至是新闻、天气、"你有鞋子吗"这类完全跑题的话）。
+
+请像真人销售一样自然接一句（最多两句，口语化），**并且一定要把话头带回我们的产品**。
 
 硬性规则：
-1. 只"接住"这句话：表示听到了 / 表示理解 / 顺着他的话头轻轻应一句。
-2. **绝对不要**回答任何知识性、技术性问题；不要解释任何概念；不要给参数、型号、价格、方案或建议；
-   不要输出任何我们没有依据的信息。
-3. **不要提问**（系统会另外接一个需求问题，避免一句话里出现两个问题）。
-4. 不要复述客户整句话；不要客套话堆砌；不要说"作为AI / 作为助手"。
-5. 每次换一种说法，不要固定句式，可以让语气自然一点。
-6. 语言要求：{language_rule}
-7. 直接输出这一句回应，不要 JSON、不要引号、不要解释。"""
+1. 先"接住"这句话：表示听到了 / 表示理解 / 顺着他的话头轻轻应一句 —— 但不许敷衍到
+   只剩客套（"Got it" / "noted" 这种单独成句就是敷衍）。
+2. **必须收在"回到客户的屏幕需求"上**：用一句自然的过渡把话题拉回来，
+   例如回到他已经说过的场景 / 尺寸 / 用途，或提一句"选屏"这件事本身。
+   不要把话题停在闲聊上就结束。
+3. **不要问两个问题**：如果系统会给这一轮另外接一个需求问题，你只负责接话 + 过渡；
+   自己不要重复问一遍需求。
+4. **绝对不要**回答任何知识性、技术性问题（新闻、时事、鞋子、电视剧……一律不展开、
+   不评论、不给建议）；不要给参数、型号、价格、方案。
+5. **不许和上下文冲突**：客户之前说过的情况（室内/户外、LED/LCD、尺寸、用途）必须一致，
+   不许出现相反或无关的产品说法；也不要凭空冒出型号或报价。
+6. 不要复述客户整句话；不要客套话堆砌；不要说"作为AI / 作为助手"。
+7. 每次换一种说法，不要固定句式，可以让语气自然一点。
+8. 语言要求：{language_rule}
+9. 直接输出这一句回应，不要 JSON、不要引号、不要解释。"""
 
 # 客户这句话是不是"我们该正面回答的"（产品/规格/价格/交期/公司信息）
 _PRODUCT_TERMS_RE = re.compile(
@@ -306,6 +315,75 @@ _ZH_BUSINESS_TERMS_RE = re.compile(
     r"能(?:不)?能做|可以(?:不)?可以|支持吗|有.{0,4}吗",
     re.IGNORECASE,
 )
+
+
+# 换产品大类时要作废的"上一类别"需求事实：
+# LED 用点间距/亮度/箱体，LCD 用英寸尺寸/拼接/拼缝 —— 两套口径互不通用，
+# 不清掉就会把旧类别的槽位带进新链路。
+_CROSS_FAMILY_FIELDS: tuple = (
+    "pixel_pitch_mm", "brightness_min_nit", "brightness_max_nit",
+    "lcd_category", "lcd_size_inch", "lcd_size_source",
+    "lcd_resolution", "lcd_resolution_source",
+    "lcd_is_splicing", "lcd_splicing_layout", "lcd_screen_count",
+    "lcd_bezel_mm", "lcd_touch_required", "lcd_handwriting_required",
+    "lcd_tender_project", "lcd_ops_required", "lcd_camera_required",
+    "lcd_room_type",
+)
+
+
+def _sync_profile_display_type(state: Any, profile: Any) -> List[str]:
+    """把 ProductTypeRouter 已确认的产品类型同步进需求档案（客户口径 2026-10）。
+
+    为什么要这一步：产品类型有两个存放处 ——
+
+        state["display_type_decision"]   ProductTypeRouter 的结论（问句 / 链路分流用它）
+        profile.display_type             需求档案（**检索与推荐**用它）
+
+    客户改口时只更新了前者，后者留着旧值 → 客户说"我要 LED"，问句按 LED 走，
+    最后却推了 LCD 屏（实测：DS-O-75 户外 LCD 广告机）。
+
+    规则：
+      · 只在**客户已确认**（locked / CONFIRMED）时同步，推断值不写进档案；
+      · 只处理"换了产品大类"（LED ↔ LCD/IFP）；IFP 是 LCD 的子类型，
+        由 LCD 链路自己判，这里不把 IFP 降级成 LCD；
+      · 换大类时清掉上一类别的需求事实（两套口径互不通用）。
+
+    返回被清掉的字段名（供日志 / 测试）。
+    """
+    if profile is None:
+        return []
+    decision = state.get("display_type_decision") or {}
+    decided = str(decision.get("display_type") or "").upper()
+    confirmed = bool(decision.get("locked")) or (
+        str(decision.get("status") or "").upper() == "CONFIRMED"
+    )
+    if not confirmed or decided not in ("LED", "LCD"):
+        return []
+
+    current = str(getattr(profile, "display_type", None) or "").upper()
+    switched = (decided == "LED" and current in ("LCD", "IFP")) or (
+        decided == "LCD" and current == "LED"
+    )
+    if not switched:
+        return []
+
+    logger.info(
+        "[ProductType] 档案 display_type %s → %s（客户已确认改口，类型路由是唯一真值）",
+        current, decided,
+    )
+    profile.display_type = decided
+    sources = dict(getattr(profile, "sources", None) or {})
+    sources["display_type"] = "customer_explicit"
+    cleared: List[str] = []
+    for name in _CROSS_FAMILY_FIELDS:
+        if getattr(profile, name, None) is not None:
+            setattr(profile, name, None)
+            sources.pop(name, None)
+            cleared.append(name)
+    profile.sources = sources
+    if cleared:
+        logger.info("[ProductType] 换了产品大类 → 清掉上一类别的需求事实：%s", cleared)
+    return cleared
 
 
 def _is_product_or_business_question(message: str, *, last_asked_slot: str = "") -> bool:
@@ -543,6 +621,33 @@ def _lcd_requirement_action(state: Any, profile: Any, message: str):
     try:
         from ....dialogue.lcd_decision import lcd_turn
         from ....dialogue.lcd_category_understanding import understand_lcd_category
+
+        # ── 客户开始说"新的一块屏" → **不继承**上一块的需求事实（客户口径 2026-10）──
+        # 实测：客户先做展览会（exhibition / 3x3 拼接墙），后来说
+        # "我还需要一款屏幕，可有手写的会议室使用的" —— 旧实现把它当成同一块屏的
+        # 补充需求，场景仍是 exhibition、3x3 也留着，最后推成
+        # "你的展览会 3x3 拼接墙用 9 台会议平板"。
+        # 判定复用 LED 多屏那套显式信号（another / 还需要一款 / also need …），
+        # 只在"信号明确"时才开新条目，避免把"客户改需求"误判成第二块屏。
+        try:
+            from ....dialogue.lcd_decision import reset_lcd_requirement_facts
+            from ....rag.project_items import detect_new_item
+
+            is_new_item, why = detect_new_item(
+                str(message or ""),
+                profile,
+                already_recommended=bool(state.get("already_recommended")),
+            )
+            if is_new_item:
+                cleared = reset_lcd_requirement_facts(profile)
+                state["lcd_new_item"] = {"reason": why, "cleared": cleared}
+                logger.info(
+                    "[LCD] 客户开始说新的一块屏（%s）→ 不继承上一块的需求，"
+                    "已清 %d 个字段",
+                    why, len(cleared),
+                )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[LCD] new-item check failed: %s", exc)
 
         # 上一轮 AI 问的原话：客户答 "yes" 时要能接住其中的提案（3.5mm / 65" / 3x3）
         last_question = ""
@@ -1228,6 +1333,12 @@ ack 的写法（很重要，销售不能只会追问）：
             profile.display_type = None
             profile.sources.pop("display_type", None)
 
+        # ── 产品类型以 ProductTypeRouter 为**唯一真值**（客户口径 2026-10）──────────
+        # 实测 bug：客户先说 LCD，后改口 "i change my mind ,i need a led" ——
+        # 类型路由已经切成 LED（问句也按 LED 走），但档案里的 display_type 没跟着改，
+        # 仍是 LCD；检索与推荐都看档案，于是最后推的是 LCD 户外广告屏（DS-O-75）。
+        _sync_profile_display_type(state, profile)
+
         # 客户只报了一个长度（"129,2cm"）时，等他指认这是宽 / 高 / 对角线：
         #   - 说"宽度" → 记成宽度；说"高度" → 记成高度
         #   - 说"对角线" → 这个数字不能直接用于箱体排布，丢掉线索，回到"问宽高"
@@ -1396,14 +1507,29 @@ ack 的写法（很重要，销售不能只会追问）：
             ):
                 state["should_generate_solution"] = False
                 state["pending_question"] = ""
+                # 【客户口径 2026-10】客户是不是在**同意推进**（同意出报价）——
+                # 只靠关键词/词数猜不出来，必须结合上下文理解这一整句话。
+                # 这里做语义判定；判定不了（模型不可用）就保守当"不是"，绝不猜。
+                try:
+                    from ....dialogue.approval import understand_approval
+
+                    _approved = understand_approval(
+                        str(current_msg_text or ""),
+                        session_id=str(state.get("session_id") or ""),
+                    )
+                except Exception as exc:  # pragma: no cover - 防御式
+                    logger.warning("Approval understanding unavailable: %s", exc)
+                    _approved = None
+                state["quote_confirmation"] = _approved is True
                 if current_intent not in ("product_question", "others"):
                     # 保留"回答问题"语义，交给 Solution 的自由问答分支，
                     # 而不是被当成需求采集（否则又会绕回来推荐）
                     state["intent"] = "others"
                     current_intent = "others"
                 logger.info(
-                    "已推荐过且本轮无新需求（intent=%s）→ 先回答客户，不重复推荐",
+                    "已推荐过且本轮无新需求（intent=%s，语义判定同意推进=%s）→ 先回答客户，不重复推荐",
                     current_intent,
+                    _approved,
                 )
             else:
                 state["should_generate_solution"] = True

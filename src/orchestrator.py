@@ -394,34 +394,130 @@ class DualAgentOrchestrator:
         # Step 2.6: Catch-all others question
         elif next_action == "others":
             perf.route = "others"
-            logger.info("[%s] Others question: routing to Solution Agent for free-form RAG", session_id)
-            history = self._load_history(session_id)
-            solution_result = self.solution_agent.run(
-                message=message,
-                history=history,
-                session_id=session_id,
-                # 【关键】把本会话已经收集到的需求档案一起带过去：
-                # 否则 Solution 会只拿这一句话重建需求，又回头问"室内还是室外"（实测出现过）。
-                profile=self._stored_profile(session_id),
-                intent=str(sales_result.get("intent") or ""),
+            # ── 跑题 / 闲聊**不进产品 RAG**（客户口径 2026-10）──────────────────
+            # 实测链：客户问 "do u like watching TV"（需求已推荐完）→ 这里无条件送
+            # 产品 RAG → 检索回来 6 条**产品**片段 → 模型只能聊型号 →
+            # 校验器判 'customer_question_not_answered' → ModelGuard 又把型号全抹掉
+            # → 正文变空 → api 空回复兜底把型号说成"符合你需求的最接近型号"：
+            #     "Based on your requirements, the closest match is TW21-3216-P2.5."
+            # 所以：不是业务/产品问题 → 按语境接话并委婉拉回产品，且**不带产品**。
+            from .agents.sales.nodes.requirement import _is_product_or_business_question
+
+            # 只把**真正的跑题**挡下来：不是业务问题，且明显是"在聊别的"
+            # （成句的闲话 / 问句）。
+            # 短回答（"yes" / "ok" / "no"）不算跑题 —— 那是客户在接上一问，
+            # 仍要走正常回答路径（自由问答的提示词专门写了"短句要靠上下文理解"）。
+            _text = str(message or "").strip()
+            _words = len(_text.split())
+            _text_is_question = _text.endswith("?")
+            # ① 客户"同意推进"——**语义判定**，不是关键词/词数。
+            #    销售层用 LLM（带最近对话）理解客户这一整句话在做什么，结果放在
+            #    quote_confirmation 里透传过来（客户口径 2026-10：不能只靠关键词猜）。
+            #    客户口径：这时候应该是"我去准备报价单，请稍等"。
+            #    以前这种轮次被丢进自由问答，正文被清空后落到"放宽条件"的兜底话术：
+            #      "Let's take a slightly different angle, if one of the requirements can
+            #       be relaxed …" —— 和客户那句 "yes" 完全不搭（客户实测反馈）。
+            _affirm = bool(sales_result.get("quote_confirmation"))
+            if not _affirm:
+                # 【客户口径 2026-10】销售层没给出结论（或那条分支没走到）时，**在这里再判一次**。
+                # 教训：只依赖上游一个标志，上游漏一次就会退回"放宽条件"兜底，
+                # 客户会再次看到 "if one of the requirements can be relaxed …"（实测复现）。
+                # 只要本会话**已经给过推荐**，就把"客户这句话在做什么"交给模型结合上下文理解
+                # —— 不是关键词、不是词数，判不出来（None）就保守当"不是同意"。
+                _already_recommended = bool(
+                    getattr(self.memory_store, "has_recommendation", lambda *_: False)(session_id)
+                )
+                if _already_recommended:
+                    _approved = None
+                    try:
+                        from .dialogue.approval import understand_approval
+
+                        _approved = understand_approval(_text, session_id=session_id)
+                    except Exception as exc:  # pragma: no cover - 防御式
+                        logger.warning("Approval understanding failed: %s", exc)
+                    _affirm = _approved is True
+                    logger.info(
+                        "[%s] 语义判定『客户是否在同意推进』= %s（本轮 input=%r）",
+                        session_id, _approved, _text[:40],
+                    )
+            # ② 真正的跑题/闲聊（成句的闲话 / 问句）—— 不进产品 RAG。
+            #    短回答（"yes" / "ok" / "no"）不算跑题：那是客户在接上一问。
+            _chitchat = not _is_product_or_business_question(_text) and (
+                _words > 3 or _text_is_question
             )
-            perf.solution_route = solution_result.get("route", "agent")
-            perf.llm_calls += 1
-            answer = solution_result.get("answer", sales_result.get("response", ""))
-            result = {
-                "response": self._response_coordinator().compose_with_requirement_question(
-                    answer=answer,
-                    sales_result=sales_result,
+            if _affirm or _chitchat:
+                _purpose = "quote_confirmation" if _affirm else "chitchat"
+                logger.info(
+                    "[%s] %s → 按语境%s（不进产品 RAG）",
+                    session_id,
+                    "客户确认推进报价" if _affirm else "Off-topic/others",
+                    "回'报价单在准备'" if _affirm else "接话并拉回产品",
+                )
+                chat_reply = ""
+                try:
+                    from .dialogue.chat_reply import generate_chat_reply
+
+                    chat_reply = generate_chat_reply(
+                        _text,
+                        session_id=session_id,
+                        state=sales_result,
+                        purpose=_purpose,
+                    )
+                except Exception as exc:  # pragma: no cover - 防御式
+                    logger.warning("Chat reply failed: %s", exc)
+                if not chat_reply:
+                    # 模型不可用时的确定性兜底（多句轮换，绝不承诺价格/交期）
+                    from .rag.reply_composer import (
+                        off_topic_steer_answer,
+                        quote_confirmation_answer,
+                    )
+
+                    _seed = len(self._load_history(session_id))
+                    _lang = str(sales_result.get("language") or "") or None
+                    chat_reply = (
+                        quote_confirmation_answer(_lang, _seed)
+                        if _affirm
+                        else off_topic_steer_answer(_lang, _seed)
+                    )
+                result = {
+                    "response": chat_reply or sales_result.get("response", ""),
+                    "agent": "sales_quote_confirm" if _affirm else "sales_offtopic",
+                    "response_mode": "FALLBACK",
+                    "requirements": requirements,
+                    # 【关键】这两种轮次都**不带产品**：杜绝拿型号糊弄客户
+                    "products": [],
+                    "offtopic_turn": not _affirm,
+                    "next_action": "follow_up",
+                }
+            else:
+                logger.info("[%s] Others question: routing to Solution Agent for free-form RAG", session_id)
+                history = self._load_history(session_id)
+                solution_result = self.solution_agent.run(
                     message=message,
-                    seed=len(history),
+                    history=history,
                     session_id=session_id,
-                ),
-                "agent": "solution_others",
-                "response_mode": "FALLBACK",
-                "requirements": requirements,
-                "products": solution_result.get("products", []),
-                "next_action": "follow_up",
-            }
+                    # 【关键】把本会话已经收集到的需求档案一起带过去：
+                    # 否则 Solution 会只拿这一句话重建需求，又回头问"室内还是室外"（实测出现过）。
+                    profile=self._stored_profile(session_id),
+                    intent=str(sales_result.get("intent") or ""),
+                )
+                perf.solution_route = solution_result.get("route", "agent")
+                perf.llm_calls += 1
+                answer = solution_result.get("answer", sales_result.get("response", ""))
+                result = {
+                    "response": self._response_coordinator().compose_with_requirement_question(
+                        answer=answer,
+                        sales_result=sales_result,
+                        message=message,
+                        seed=len(history),
+                        session_id=session_id,
+                    ),
+                    "agent": "solution_others",
+                    "response_mode": "FALLBACK",
+                    "requirements": requirements,
+                    "products": solution_result.get("products", []),
+                    "next_action": "follow_up",
+                }
 
         # Step 3: Sales Agent handles alone (greeting, objection, need_query)
         else:
@@ -433,6 +529,30 @@ class DualAgentOrchestrator:
                 "products": [],
                 "next_action": next_action,
             }
+
+        # ── 最后一道闸门：**已经推荐过，就绝不允许出现"放宽条件"话术**（2026-10）──────
+        # 客户原话：「推荐完后，还是会出现这句话，帮我彻底的解决」。
+        # 为什么必须在收口处堵：它可能从多条内部路径漏出来 ——
+        #   · solution/runner 的空回答兜底（本轮没选出型号时）
+        #   · trigger_solution 分支（实测 "pls prepare the quotation for me" 走的就是它）
+        #   · api 的空回复兜底
+        # 逻辑上也讲不通：型号早就匹配过了，还说"放宽某个条件我就能匹配"
+        # 等于告诉客户没匹配上。所以在这里按**会话事实**（是否已推荐过）统一拦掉。
+        _resp_text = str(result.get("response") or "")
+        if _resp_text and (
+            bool(getattr(self.memory_store, "has_recommendation", lambda *_: False)(session_id))
+        ):
+            from .rag.reply_composer import is_relaxation_answer, quote_confirmation_answer
+
+            if is_relaxation_answer(_resp_text):
+                logger.warning(
+                    "[%s] 已推荐过却产出了'放宽条件'话术 → 换成推进报价的说法（input=%r）",
+                    session_id, str(message or "")[:40],
+                )
+                result["response"] = quote_confirmation_answer(
+                    str(sales_result.get("language") or "") or None,
+                    len(self._load_history(session_id)),
+                )
 
         # Emit structured performance log
         # v2.6 §16/§17：Dialogue Policy 的结果（SpeechAct + 唯一 Action）透传给收口层，

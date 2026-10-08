@@ -151,10 +151,15 @@ class TestFallbacksUseTheRightProductFamily:
 
         assert "pitch" in relaxation_answer().lower()
 
-        # ── test_product_fallback_names_the_model ──
+        # ── test_product_fallback_no_longer_names_the_model（契约更新 2026-10）──
+        # 旧契约：正文被清空时报出型号（"Based on your requirements, the closest
+        # match is …"）。客户口径已改：那句话在闲聊轮反复冒出来、把真正的回答盖掉
+        # （客户原话"总是遮挡了该回答的话"），客户只说了句 "yes" 也会被报一个型号
+        # → 等于凭空给一个匹配结果。现在两个调用点只邀请客户补充条件，
+        # 函数本身废弃、永远返回空串，不再产生任何型号文案。
         from src.rag.reply_composer import product_fallback_answer
 
-        text = product_fallback_answer(
+        assert product_fallback_answer(
             [
                 {
                     "metadata": {
@@ -164,10 +169,7 @@ class TestFallbacksUseTheRightProductFamily:
                     }
                 }
             ]
-        )
-
-        assert "Omni T65-K4/K4C" in text
-        assert "65" in text
+        ) == ""
         assert product_fallback_answer([]) == ""
 
         # ── test_no_product_rewrite_follows_the_family ──

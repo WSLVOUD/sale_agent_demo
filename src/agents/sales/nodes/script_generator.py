@@ -351,6 +351,13 @@ def _dialogue_llm():
         return None
 
 
+# 只用于内部路由、**绝不**出现在客户文案上下文里的 LCD 字段。
+# 客户口径（2026-10）：客户说展会（exhibition），内部品类判成 advertising，
+# 这个词一旦进入给 LLM 的上下文，模型就会把它当成客户的说法写进回复
+# （"For your advertising video wall…"）。品类只决定走哪条需求链。
+_INTERNAL_ONLY_LCD_FACTS: frozenset = frozenset({"lcd_category"})
+
+
 def _known_facts(state: SalesState) -> list:
     """客户已经确认的事实（给 LLM 当上下文，不让它自己猜）。"""
     profile = state.get("requirement_profile")
@@ -360,11 +367,18 @@ def _known_facts(state: SalesState) -> list:
     items = []
     # ── LCD / IFP（《LCD_IFP 整改计划》Phase 5/§二十六）───────────────────
     # 锁定事实要给到表达层：LLM 才知道"这些已经定了，不要再问"（§二十一）。
+    #
+    # 但**内部品类 token 不是客户事实**（客户口径 2026-10）：``lcd_category``
+    # 只决定走哪条需求链（monitoring / advertising / normal / conference_education），
+    # 不能进"给客户写话"的上下文 —— 实测客户全程说展会（exhibition），
+    # 这里却给了 ``use case=advertising``，模型就写成 "advertising video wall"，
+    # 客户从没说过广告。客户真正的使用场景由下面的 ``purpose`` 事实给出。
     lcd_action = state.get("lcd_action") or {}
     for field_name, value in (lcd_action.get("locked_facts") or {}).items():
+        if field_name in _INTERNAL_ONLY_LCD_FACTS:
+            continue
         if field_name.startswith("lcd_") and value not in (None, "", [], {}):
             label = {
-                "lcd_category": "use case",
                 "lcd_size_inch": "screen size",
                 "lcd_resolution": "resolution",
                 "lcd_is_splicing": "video wall (spliced)",
@@ -997,6 +1011,19 @@ def script_generator(state: SalesState) -> SalesState:
             lcd_action = state.get("lcd_action") or {}
             lcd_question = str(lcd_action.get("question") or "")
             lcd_slot = str(lcd_action.get("question_slot") or "")
+            # 客户口径（2026-10）：提示词里**不能**出现内部品类 token
+            # （monitoring / advertising / normal / conference_education）——
+            # 模型会把它当成客户的说法写进给客户的话（实测：客户说展会 exhibition，
+            # 文案却出现 "advertising video wall"）。这里给"客户自己的使用场景"。
+            # 内部品类只用来决定走哪条需求链，不参与对客户的措辞。
+            try:
+                from ....rag.reply_composer import purpose_phrase as _purpose_phrase
+
+                _customer_use = _purpose_phrase(
+                    getattr(state.get("requirement_profile"), "purpose", None), "en"
+                ) or "not stated by the customer"
+            except Exception:  # pragma: no cover - 防御式
+                _customer_use = "not stated by the customer"
             if lcd_action and lcd_action.get("confirmed"):
                 # 需求齐了 → 型号由 router（RAG / 推荐引擎）产出。
                 #
@@ -1056,8 +1083,9 @@ def script_generator(state: SalesState) -> SalesState:
                     allow_ack=True,
                     business_goal=(
                         "acknowledge the LCD choice and the customer's latest information, "
-                        "then ask exactly this one LCD requirement question "
-                        f"(LCD branch: {lcd_action.get('lcd_category')}); "
+                        "then ask exactly this one LCD requirement question; "
+                        f"the customer's use case is {_customer_use} (use it if you need to "
+                        "refer to their setting, never an internal category name); "
                         "do not ask any LED question (pixel pitch / viewing distance / screen "
                         "width-height) and do not re-ask anything already confirmed"
                     ),
@@ -1284,11 +1312,27 @@ def script_generator(state: SalesState) -> SalesState:
             state["next_action"] = "trigger_solution"
             logger.info("need_query: Ready Gate 已放行 → 触发推荐")
         else:
+            # 公司 / 办事处 / 代理 / 经销商 / 地址类提问：**先照公司资料回答**，
+            # 不要掉进"问场景"的兜底。
+            # 客户口径（2026-10）：客户在需求采集中间问"你们在印度尼西亚有代理商吗"，
+            # 当时 intent=need_query —— 公司信息以前只在 objection /
+            # product_question / others 三个分支里答，need_query 没有这条分支 →
+            # 走了自由问答，回成 "I'm not sure about Indonesia … let me check with
+            # our team"，而 data/company_profile.txt 里明明写着"没有代理商"。
+            # 这里**复用同一个 next_action 写点**（架构护栏 §18：表达层不新增决策权）。
+            _company_reply = ""
+            if _is_company_question(str(state.get("current_message") or "")):
+                _company_reply = _answer_company_question(state)
             # 客户口径：问场景不举例，直接问问题
-            response_text = "What will this display mainly be used for?"
+            response_text = _company_reply or "What will this display mainly be used for?"
             state["next_action"] = "ask"
             state["response"] = _strip_markdown(response_text)
-            logger.info("need_query: Gate 未就绪且无待问项 → 追问基础场景（不推荐）")
+            logger.info(
+                "need_query: %s",
+                "公司资料回答（代理/地址类提问）"
+                if _company_reply
+                else "Gate 未就绪且无待问项 → 追问基础场景（不推荐）",
+            )
 
     # Objection / Industry
     elif intent in ["objection", "industry"]:

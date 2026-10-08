@@ -340,6 +340,25 @@ class MultiScreenManager:
         if not should_start:
             return ""
 
+        # ── 客户**改主意**换产品大类 ≠ "再来一块屏"（客户口径 2026-10）──────────
+        # 实测：客户 LCD → "i change my mind , i need a led display" 之后，
+        # 多屏汇总仍然给出
+        #     Screen 1 (indoor / advertising): DS-M-75        ← 已经被放弃的 LCD
+        #     Screen 2 (outdoor / advertising): TW11-OD-P3
+        # 客户的原话是"我只要第二块"。
+        # 换大类是**替换**原来那块，不是并列多一块 —— 所以清掉已有条目、重新从第 1 块开始，
+        # 不做归档、也不复制旧需求（旧类别的口径对新类别不适用）。
+        if reason.startswith("display_type_switch"):
+            memory_store.set_project_items(session_id, [])
+            memory_store.set_active_item_index(session_id, 0)
+            if hasattr(memory_store, "clear_recommendation"):
+                memory_store.clear_recommendation(session_id)
+            logger.info(
+                "[%s] Multi-item: 客户改主意换产品大类（%s）→ 替换原来那块，不并列",
+                session_id, reason,
+            )
+            return reason
+
         # 客户口径（2026-09-28 第三次实测）：客户说"我要两块屏 / two screens"时，
         # 如果当前这块还**没有描述过任何屏幕**（没有环境 / 用途 / 尺寸 / 点间距），
         # 那就没有"上一块屏"可归档 —— 客户只是在说数量，不是"再来一块"。

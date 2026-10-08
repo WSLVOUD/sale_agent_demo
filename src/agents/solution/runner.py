@@ -501,13 +501,25 @@ class SolutionAgentRunner:
             )
 
             if not answer:
-                # 【客户口径】不说"找不到"，改成邀请客户放宽某个条件。
-                # 但**口径要跟着链路走**：LCD / IFP 会话不能说"点间距 / 观看距离"。
-                from ...rag.reply_composer import product_fallback_answer, relaxation_answer
+                # 【客户口径 2026-10】"能不能放宽某个条件"这句兜底**只属于"确实匹配不到"**。
+                # 客户原话：「推荐完后，还是会出现这句话，帮我彻底解决」。
+                # 型号都已经选出来了还说"放宽条件我就能匹配"，等于告诉客户没匹配上。
+                from ...rag.reply_composer import (
+                    quote_confirmation_answer,
+                    relaxation_answer,
+                )
 
-                answer = product_fallback_answer(
-                    response_products
-                ) or relaxation_answer(product_family=family)
+                if response_products:
+                    logger.warning(
+                        "Answer emptied while %d products were selected → proceed reply, "
+                        "never the relaxation line",
+                        len(response_products),
+                    )
+                    answer = quote_confirmation_answer()
+                else:
+                    # 真的一个型号都没匹配到，才允许邀请客户放宽条件；
+                    # 口径跟链路走（LCD / IFP 不说点间距 / 观看距离）。
+                    answer = relaxation_answer(product_family=family)
 
             # Keep compact format
             answer = "\n".join(line.strip() for line in answer.splitlines() if line.strip())

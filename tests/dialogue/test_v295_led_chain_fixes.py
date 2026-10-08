@@ -235,10 +235,15 @@ class TestNoRelaxationTalkDuringCollection:
     """放宽条件的话术只属于"匹配不到产品"，不该出现在正常采集轮。"""
 
     def test_relaxation_answer_is_not_used_by_the_sales_layer(self):
+        import re
+
         for rel in (
             "src/agents/sales/nodes/script_generator.py",
             "src/agents/sales/nodes/requirement.py",
             "src/orchestrator.py",
         ):
             text = open(os.path.join(project_root, rel), encoding="utf-8").read()
-            assert "relaxation_answer" not in text, rel
+            # 本意：销售层不许**用**"放宽条件"话术作答（那是"匹配不到"才有的口径）。
+            # 但允许**识别**它 —— 收口处有个拦截器 is_relaxation_answer，
+            # 用来拦住"已推荐过却冒出放宽条件"的情况（客户口径 2026-10）。
+            assert not re.search(r"(?<!is_)relaxation_answer\s*\(", text), rel

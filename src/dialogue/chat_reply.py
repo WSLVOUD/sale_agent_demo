@@ -36,15 +36,49 @@ Recent conversation (newest at the bottom):
 Write ONE short reply (1-2 sentences). Rules:
 1. **Answer what the customer actually said.** Acknowledge their remark in your own words.
    Never ignore it and never fall back on a generic "I can help you with displays" line.
+1b. **Always bring it back to our product.** Whatever they said (news, weather, shoes, TV,
+   a joke), acknowledge it briefly and then steer the conversation back to their screen
+   requirement or the quotation in the same breath. An acknowledgement that just ends —
+   "noted", "got it", "sounds like a busy day" — is NOT acceptable. Two sentences is
+   usually enough: one to take their point, one to come back to the display.
+1c. **Stay consistent with the conversation above.** Never introduce a product type,
+   indoor/outdoor setting, size or use case that contradicts what the customer already
+   said, and never invent a model or a price to sound helpful.
 2. Stay warm and human, like a real salesperson chatting between work items.
-3. Keep it favourable to us: professional, no over-promising, and — where it fits
-   naturally — steer the conversation back toward their screen requirement or the
-   quotation.
+3. Keep it favourable to us: professional, no over-promising.
 4. Never invent facts. Do not promise on-site installation, delivery dates, prices,
    warranties or specs that were not given to you.
 5. Do not repeat product specifications or re-pitch the model.
 6. Reply in the customer's language (English unless the customer wrote Chinese).
 7. Plain text only, no markdown, no bullet points, no emoji.
+
+Reply:"""
+
+
+_QUOTE_PROMPT = """You are Mike, a sales engineer at iSEMC (commercial LED / LCD displays).
+The customer has just given you the go-ahead: they want the quotation for the screen you
+already recommended. They may have been chatting about unrelated things for a few turns
+before this, and now they are back on topic.
+
+Customer's message: {message}
+
+Recent conversation (newest at the bottom):
+{recent}
+
+Write ONE short reply (1-2 sentences). Rules:
+1. Take the go-ahead naturally, in your own words, and make it clear you are putting the
+   quotation together and will send it over. The customer's message may be a bare "yes" —
+   read the conversation above to know **which** screen they are approving.
+2. Do **not** re-list the model or the tiling figures — they just approved them. Referring
+   to the project in a few words ("your outdoor church screen") is good: it shows you know
+   what they mean.
+3. Never invent facts. No price, no discount, no delivery date or lead time, no
+   certification, no stock, no warranty length. Only that it is being prepared and will
+   follow shortly.
+4. Warm and human, like a real salesperson — and **do not sound like a template**. Vary
+   the wording; never repeat a phrasing you have already used above.
+5. Reply in the customer's language (English unless the customer wrote Chinese).
+6. Plain text only, no markdown, no bullet points, no emoji.
 
 Reply:"""
 
@@ -55,8 +89,15 @@ def generate_chat_reply(
     session_id: str = "",
     recent: Optional[str] = None,
     state: Optional[Any] = None,
+    purpose: str = "chitchat",
 ) -> str:
-    """按语境生成一句闲聊回复；失败返回空串（调用方退回模板）。"""
+    """按语境生成一句闲聊回复；失败返回空串（调用方退回模板）。
+
+    ``purpose``：
+      · ``"chitchat"``（默认）—— 跑题/闲聊，接住 + 委婉拉回产品；
+      · ``"quote_confirmation"`` —— 客户对已推荐的屏幕说了 "yes / ok / go ahead"，
+        回一句"我去准备报价单，稍等"（客户口径 2026-10）。
+    """
     text = str(message or "").strip()
     if not text:
         return ""
@@ -68,10 +109,11 @@ def generate_chat_reply(
             recent = dialogue_window_text(sid, max_items=8) if sid else ""
         except Exception:  # pragma: no cover - 防御式
             recent = ""
+    template = _QUOTE_PROMPT if str(purpose or "") == "quote_confirmation" else _PROMPT
     try:
         from ..core.llm import get_llm
 
-        prompt = _PROMPT.format(
+        prompt = template.format(
             message=text[:300], recent=str(recent or "")[:1200] or "(none)"
         )
         response = get_llm(temperature=0.7).invoke(prompt)

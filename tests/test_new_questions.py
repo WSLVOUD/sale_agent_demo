@@ -287,8 +287,17 @@ class TestOffTopicAckUsesHigherTemperature:
         assert ack_systems, "应当有专门的接话调用"
         prompt = ack_systems[0]
         assert "绝对不要" in prompt and "知识性" in prompt, prompt
-        assert "不要提问" in prompt
-        assert "不要给参数、型号、价格、方案或建议" in prompt
+        assert "不要给参数、型号、价格、方案" in prompt, prompt
+        # ── 契约更新（客户口径 2026-10）──────────────────────────────────────
+        # 旧契约是"接话里**不要提问**"；但实测结果是每句都成死胡同
+        # （"Ha, got it, noted." 接完就没了，既不拉回产品也不推进）。
+        # 新契约：接话**必须把话头带回客户的屏幕需求**，只是不许一次问两个问题
+        # （需求问题由系统另外接上）。
+        assert "回到客户的屏幕需求" in prompt, prompt
+        assert "不要问两个问题" in prompt, prompt
+        # 与上下文冲突 / 凭空冒型号报价，同样禁止
+        assert "不许和上下文冲突" in prompt, prompt
+        assert "凭空冒出型号或报价" in prompt, prompt
 
     def test_ack_temperature_is_configurable(self):
         from src.config import config

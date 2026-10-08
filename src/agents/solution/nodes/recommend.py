@@ -1,5 +1,5 @@
 """Recommendation node - generates product recommendations."""
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 import re
 
@@ -596,19 +596,38 @@ def _store_lcd_lock(state: SolutionState, profile: Any, model: str, reasons: Lis
     )
 
 
-def _recommend_lcd(state: SolutionState, profile: Any, raw_products: List[Any]) -> SolutionState:
+def _recommend_lcd(
+    state: SolutionState,
+    profile: Any,
+    raw_products: List[Any],
+    *,
+    follow_up: bool = False,
+    previous_models: Optional[List[str]] = None,
+) -> SolutionState:
     """LCD / IFP 的推荐：从检索到的候选里挑最合适的一个，用事实把结论说出来。
 
     与 LED 的区别：不碰点间距 / 箱体，不做观看距离推导；只按
     "拼接需求 → 尺寸 → 分辨率 → 拼缝" 从产品数据里选（计划 §十二）。
+
+    ``follow_up``：客户在问"还有其他推荐吗" —— 这时**必须换一个没给过的型号**，
+    不能复用锁定款、也不能再讲一遍首选（客户口径 2026-10 实测：
+    客户连问三次"还有其他推荐的吗"，AI 三次都推同一款 Omni T65-K4/K4C）。
     """
+    from ....dialogue.lcd_decision import is_ifp_requirement
     from ....rag.lcd_recommendation import layout_text, select_lcd_candidate
 
+    already_seen = [str(name) for name in (previous_models or []) if str(name).strip()]
+
     # ① 已经锁定过、且需求没变 → 沿用同一个型号（锁定屏幕）
-    picked = _locked_lcd_candidate(state, profile, raw_products)
-    # ② 否则重新选型
+    #    但客户明确要"别的推荐"时**不能**沿用锁定款，否则就是重复推荐。
+    picked = None if follow_up else _locked_lcd_candidate(state, profile, raw_products)
+    # ② 否则重新选型；follow_up 时排除已经给客户看过的型号
     if picked is None:
-        picked = select_lcd_candidate(profile, list(raw_products or []))
+        picked = select_lcd_candidate(
+            profile,
+            list(raw_products or []),
+            exclude=already_seen if follow_up else (),
+        )
     if picked is None:
         # 没有可用候选 → 按客户口径不说"找不到"，邀请放宽一个条件
         # 注意：一定是 **LCD 口径**的放宽条件（尺寸 / 拼缝 / 分辨率），
@@ -628,20 +647,49 @@ def _recommend_lcd(state: SolutionState, profile: Any, raw_products: List[Any]) 
     model = str(metadata.get("model") or metadata.get("product_id") or "").strip()
     # 锁定屏幕（客户口径 2026-09-30）：型号 + 事实指纹入库，后续轮次复用同一个型号
     _store_lcd_lock(state, profile, model, reasons)
+    is_ifp = is_ifp_requirement(profile)
     layout = layout_text(profile)
+    if is_ifp:
+        # 硬护栏（客户口径 2026-10）：IFP 是**单块会议平板**，不能拼接 ——
+        # 任何情况下都不允许出现拼接排布 / 箱体数（"你的 3x3 要用 9 台会议平板"）。
+        layout = ""
     facts: List[str] = []
+    # 客户口径（2026-10）：只有**拼接墙**才用 "panels"（多块面板）的说法；
+    # 单屏需求说 "Panels" 会让客户以为要拼（实测："65\" panels …" 后面还跟了拼缝）。
+    splicing = _splicing_requirement(profile) and not is_ifp
     size = str(metadata.get("display_size_inch") or "").strip()
     if size:
-        facts.append(f"{size} panels")
+        facts.append(f"{size} panels" if splicing else f"{size}-inch screen")
     resolution = str(metadata.get("resolution") or "").strip()
     if resolution:
         facts.append(f"{resolution} resolution")
+    bezel_value = _bezel_mm(metadata)
     bezel = str(metadata.get("bazel_mm") or "").strip()
     if bezel:
         facts.append(f"{bezel} bezel")
     brightness = metadata.get("brightness_nit")
     if brightness:
         facts.append(f"{int(brightness)}nit brightness")
+
+    # 拼缝事实（客户口径 2026-10）：**确定性地**告诉模型"达没达到客户要求"，
+    # 以及"这条缝是可见的"。实测两个硬伤：
+    #   · 客户要 0.88mm，选了 3.5mm 的 H6530LN-B，话术却说 "meeting your seam requirement"；
+    #   · 把 LCD 拼接说成 "seamless / no visible seams"（产品数据明写 seam is visible）。
+    seam_facts = _seam_facts(profile, metadata, bezel_value)
+
+    # 语境：最近一段对话。客户口径（2026-10）：话术要结合语境、每次别用同一套模板；
+    # 之前 LCD 推荐提示词**完全没有对话上下文**，模型只能套固定句式。
+    conversation = ""
+    try:
+        from ....memory.history_window import dialogue_window_text
+
+        session_id = str(state.get("session_id") or "")
+        if session_id:
+            conversation = dialogue_window_text(session_id) or ""
+    except Exception:  # pragma: no cover - 防御式
+        conversation = ""
+    if not conversation:
+        conversation = user_messages_text(state.get("messages", []))
 
     text = _express_lcd_recommendation(
         model=model,
@@ -650,6 +698,15 @@ def _recommend_lcd(state: SolutionState, profile: Any, raw_products: List[Any]) 
         layout=layout,
         profile=profile,
         state=state,
+        follow_up=follow_up,
+        seam_facts=seam_facts,
+        # 只有"客户要拼接"且面板缝确实可见时，才允许跟客户谈拼缝
+        seam_is_visible=_seam_is_visible(metadata) and splicing,
+        seam_met=_seam_requirement_met(profile, bezel_value),
+        product_family_override=_lcd_product_family(profile, metadata),
+        bezel_mm=bezel_value,
+        conversation=conversation,
+        splicing_requirement=splicing,
     )
     logger.info("LCD recommend: model=%s layout=%s", model, layout or "-")
     return {
@@ -665,6 +722,214 @@ def _recommend_lcd(state: SolutionState, profile: Any, raw_products: List[Any]) 
     }
 
 
+_BEZEL_NUMBER_RE = re.compile(r"(\d+(?:[.,]\d+)?)")
+# LCD 拼接**一定有可见拼缝** —— 产品数据也是这么写的。
+# 实测（客户 2026-10）：话术把 3x3 拼接墙说成 "seamless / no visible seams"，
+# 和产品资料直接矛盾。这里是确定性的措辞护栏（不是关键词路由）。
+_SEAMLESS_CLAIM_RE = re.compile(
+    r"\bseamless\b|\bno visible seams?\b|\bwithout (?:any )?seams?\b|"
+    r"\bframeless\b|\bbezel[-\s]?less\b|\binvisible bezels?\b|"
+    r"无缝|无边框|没有拼缝|无拼缝|拼缝不可见",
+    re.IGNORECASE,
+)
+
+# 声称"满足拼缝要求"的说法（只在**真的满足**时才允许出现）
+_SEAM_MET_CLAIM_RE = re.compile(
+    r"\bmeet(?:s|ing)? (?:your |the )?(?:seam|bezel)[^.!?]*|"
+    r"\b(?:satisf\w+|match\w+) (?:your |the )?(?:seam|bezel)[^.!?]*|"
+    r"\bwithin your[^.!?]*seam[^.!?]*|"
+    r"满足[^。！？]*(?:拼缝|缝隙)|达到[^。！？]*(?:拼缝|缝隙)",
+    re.IGNORECASE,
+)
+
+
+def _bezel_mm(metadata: Dict[str, Any]) -> Optional[float]:
+    """产品数据里的拼缝/边框宽度（mm）。认 bazel_mm（数据里的旧拼写）与 bezel_mm。"""
+    raw = metadata.get("bazel_mm") or metadata.get("bezel_mm")
+    if raw in (None, "", [], {}):
+        return None
+    match = _BEZEL_NUMBER_RE.search(str(raw))
+    if not match:
+        return None
+    try:
+        return float(match.group(1).replace(",", "."))
+    except ValueError:  # pragma: no cover - 防御式
+        return None
+
+
+def _seam_is_visible(metadata: Dict[str, Any]) -> bool:
+    """这条缝对客户是不是可见的（LCD 拼接一律可见）。"""
+    note = str(metadata.get("splicing_note") or "")
+    if note and re.search(r"not seamless|seam is visible|visible", note, re.IGNORECASE):
+        return True
+    # LCD 产品默认按"缝可见"处理；IFP 不拼接。
+    return str(metadata.get("display_type") or "").upper() in ("LCD", "IFP")
+
+
+def _splicing_requirement(profile: Any) -> bool:
+    """这一轮客户要的是不是**拼接墙**（客户口径 2026-10：只有拼接才谈拼缝 / 排布）。"""
+    return getattr(profile, "lcd_is_splicing", None) is True
+
+
+def _seam_facts(profile: Any, metadata: Dict[str, Any], bezel_mm: Optional[float]) -> str:
+    """把"实际拼缝 vs 客户要求"写成**确定性**事实交给模型（不许它自己推断）。
+
+    客户口径（2026-10）：
+      · 客户要 0.88mm、选了 3.5mm 的型号，话术却说 "meeting your seam requirement"
+        —— 编造事实，这里直接写清达没达到；
+      · **客户没说拼接就不要提拼缝**。单屏需求下把"tiled panel / 拼缝可见"塞给模型，
+        它就会跟客户聊一块他根本没打算拼的屏（实测原话：
+        "…350nit brightness. The seam between panels stays visible."）。
+    """
+    parts: List[str] = []
+    splicing = _splicing_requirement(profile)
+    if bezel_mm is not None:
+        parts.append(f"selected panel bezel = {bezel_mm:g}mm")
+    want = getattr(profile, "lcd_bezel_mm", None)
+    if want not in (None, "", [], {}):
+        try:
+            want_value = float(want)
+        except (TypeError, ValueError):
+            want_value = None
+        if want_value is not None:
+            parts.append(f"customer asked for <= {want_value:g}mm")
+            if bezel_mm is None:
+                parts.append("we cannot confirm the selected panel meets that")
+            elif bezel_mm <= want_value + 0.05:
+                parts.append("it DOES meet the customer's seam requirement")
+            else:
+                parts.append(
+                    "it does NOT meet the customer's seam requirement — do not claim it does"
+                )
+    # 只有"客户要拼接"时，拼缝可见性才是这一轮该讲的事实
+    if splicing:
+        if _seam_is_visible(metadata):
+            parts.append("this is a tiled LCD panel: the seam between panels is visible")
+        note = str(metadata.get("splicing_note") or "").strip()
+        if note:
+            parts.append(f"product data says: {note}")
+    else:
+        parts.append(
+            "the customer did NOT ask for a tiled wall — do not mention seams, tiling "
+            "or multi-panel layouts"
+        )
+    return "; ".join(parts) or "not specified in the product data"
+
+
+def _lcd_product_family(profile: Any, metadata: Dict[str, Any]) -> str:
+    """型号属于哪一类 —— 话术必须说准（客户口径 2026-10）。
+
+    实测：客户要拼接墙，备选推了 P65（P 系列**单屏商用显示器**，产品数据里
+    ``is_splicing=False``），话术却把它说成 "video wall … seamless visual surface"。
+    P 系列虽然 ``splicing_supported=True``（能拼），但拼缝/边框是**明显可见**的，
+    不能叫视频墙面板。
+    """
+    try:
+        from ....dialogue.lcd_decision import is_ifp_requirement
+
+        if is_ifp_requirement(profile):
+            return "interactive flat panel (IFP, touch + whiteboard)"
+    except Exception:  # pragma: no cover - 防御式
+        pass
+    if bool(metadata.get("is_splicing")):
+        return "LCD video wall panel (designed for splicing into a wall)"
+    if metadata.get("splicing_supported"):
+        return (
+            "commercial LCD monitor (a single display; it can be tiled, but the frames "
+            "and seams between panels stay clearly visible — it is not a video wall panel)"
+        )
+    return "commercial LCD monitor (a single display, not for tiling)"
+
+
+def _requested_bezel(profile: Any) -> Optional[float]:
+    """客户要求的拼缝上限（mm）；没提返回 None。"""
+    want = getattr(profile, "lcd_bezel_mm", None)
+    if want in (None, "", [], {}):
+        return None
+    try:
+        return float(want)
+    except (TypeError, ValueError):
+        return None
+
+
+def _seam_truth_sentence(
+    *,
+    seam_is_visible: bool,
+    seam_met: bool,
+    bezel_mm: Optional[float],
+    want_bezel_mm: Optional[float],
+    splicing_requirement: bool = True,
+) -> str:
+    """确定性模板里那句"拼缝实话"（不含任何编造/夸大）。
+
+    客户口径（2026-10）：客户要 0.88mm、面板是 3.5mm 时，话术必须说实话，
+    不能声称"满足要求"；LCD 拼接也不能说"无缝"。
+    另外：**客户没要拼接就一个字都别提拼缝**（实测原话：
+    "…350nit brightness. The seam between panels stays visible."——客户只买一块单屏）。
+    """
+    if not splicing_requirement:
+        return ""
+    parts: List[str] = []
+    if not seam_met and bezel_mm is not None and want_bezel_mm is not None:
+        parts.append(
+            f"Its bezel is {bezel_mm:g}mm, so it does not reach the {want_bezel_mm:g}mm "
+            "seam you asked for — a tighter seam needs a different panel."
+        )
+    if seam_is_visible:
+        parts.append("The seam between panels stays visible.")
+    return (" " + " ".join(parts)) if parts else ""
+
+
+def _seam_requirement_met(profile: Any, bezel_mm: Optional[float]) -> bool:
+    """选中的面板拼缝**是否真的达到**客户要求（确定性判断，客户口径 2026-10）。
+
+    客户没提拼缝 → True（没有可比的要求）。客户提了、但我们拿不到面板拼缝
+    → False（说不清就不能声称满足）。
+    """
+    want = getattr(profile, "lcd_bezel_mm", None)
+    if want in (None, "", [], {}):
+        return True
+    try:
+        want_value = float(want)
+    except (TypeError, ValueError):
+        return True
+    if bezel_mm is None:
+        return False
+    return bezel_mm <= want_value + 0.05
+
+
+def _guard_lcd_seam_claims(
+    text: str,
+    *,
+    seam_is_visible: bool,
+    seam_met: bool,
+    bezel_mm: Optional[float] = None,
+    want_bezel_mm: Optional[float] = None,
+) -> str:
+    """确定性护栏：把与产品数据矛盾的**说法**改成实话（不是删句子）。
+
+    客户口径（2026-10）：可以让模型润色，但绝不允许编造事实。所以这里采取
+    "就地改写"而不是"整句删除"——删句子会把型号和参数一起删掉，回复就空了。
+
+      · LCD 拼接一定有可见拼缝 → "seamless / frameless / 无缝" 一律改写成"拼缝可见"；
+      · 面板拼缝**没达到**客户要求 → 把"满足您的拼缝要求"改写成实际拼缝数字 +
+        说明更窄的做不到。
+    """
+    cleaned = str(text or "")
+    if not cleaned:
+        return cleaned
+    # 只做"从句级"改写（语法安全）。"无缝"这类词一律留给调用方退模板，
+    # 因为词级替换会写出 "gives you a with a visible seam visual surface" 这种病句。
+    if not seam_met and _SEAM_MET_CLAIM_RE.search(cleaned):
+        want = f"{want_bezel_mm:g}mm" if want_bezel_mm is not None else "the requested"
+        # 句子通常已经写了实际拼缝，这里只补"达不到"的实话，避免重复念数字
+        cleaned = _SEAM_MET_CLAIM_RE.sub(
+            f"but it does not reach the {want} seam you asked for",
+            cleaned,
+        )
+    return cleaned.strip()
+
+
 LCD_RECOMMEND_PROMPT = """You are a sales engineer for commercial LCD displays. Write the
 recommendation reply for the customer.
 
@@ -673,19 +938,61 @@ Selected model (already decided by the system — do not change it): {model}
 Verified product facts: {facts}
 Video wall layout (already decided, do not recompute): {layout}
 Why it fits: {reasons}
-Customer's category: {category}
-
+What the customer told us they will use it for: {use_case}
+Seam / bezel facts (authoritative — do not reinterpret): {seam_facts}
+Recent conversation (for context and tone only — never copy sentences from it):
+{conversation}
+{follow_up_line}
 Rules:
 1. Mention the selected model with its full model code.
 2. Use only the verified facts above — never invent specs, prices or lead times.
 3. If a layout is given, state the panel count for that layout.
 3b. Call the product by the correct family above: an interactive flat panel must never be
    described as a plain LCD monitor, and a commercial monitor must not be called interactive.
+3c. Describe the product in terms of what the CUSTOMER said they will use it for
+   ("{use_case}"). Use the customer's own kind of place/scene, not our internal wording.
+   Never call it "advertising", "monitoring", "digital signage" or any other category name
+   unless the customer used that word themselves — an exhibition booth is an exhibition
+   booth, not an advertising wall. If no use case is given above, do not name one.
+3d. Read the seam/bezel facts literally. If they say the seam DOES NOT meet what the customer
+   asked for, you must NOT claim it meets/satisfies/matches their seam requirement — state the
+   actual bezel figure and that it is the closest available, and that going tighter needs a
+   different panel. Never promise a seam figure the facts do not confirm.
+3e. These are LCD panels: a tiled wall ALWAYS shows the seam between panels. Never call it
+   "seamless", "frameless", "no visible seams", "bezel-less" or "invisible bezel".
 4. Do not ask any requirement questions (the requirement is complete).
 5. Plain text, no markdown, no bullet lists, no more than 4 sentences.
 6. Do not say "based on my records" or reveal internal data sources.
+7. Write it in your own words, for this conversation: react to what the customer actually
+   said (see the recent conversation) instead of reciting a fixed template. Do not reuse the
+   opening, the sentence pattern or the closing you used in your earlier replies. Polishing
+   the wording is welcome; changing any fact is not.
 
 Reply:"""
+
+
+def _customer_use_case(profile: Any) -> str:
+    """客户自己说的使用场景（**不是**内部品类 token）。
+
+    客户口径（2026-10）：LCD 推荐话术以前把 ``profile.lcd_category``
+    （monitoring / advertising / normal / conference_education）当"客户品类"
+    写进提示词，模型就照抄成 "For your advertising video wall…"。
+    客户全程说的是展会（exhibition），却被告知是"广告视频墙"。
+
+    档案里 ``purpose`` 就是"客户说的使用场景"（见 models/requirement.py），
+    这里把它转成客户口径的说法（唯一词表在 reply_composer._PURPOSE_LABELS），
+    **绝不**回退到内部品类名 —— 内部品类只用来决定走哪条需求链，
+    不该出现在客户文案里。
+    """
+    purpose = getattr(profile, "purpose", None)
+    if purpose in (None, "", [], {}):
+        return ""
+    try:
+        from ....rag.reply_composer import purpose_phrase
+
+        return str(purpose_phrase(purpose, "en") or "").strip()
+    except Exception:  # pragma: no cover - 防御式
+        return str(purpose).strip()
 
 
 def _express_lcd_recommendation(
@@ -696,8 +1003,16 @@ def _express_lcd_recommendation(
     layout: str,
     profile: Any,
     state: SolutionState,
+    follow_up: bool = False,
+    seam_facts: str = "not specified in the product data",
+    seam_is_visible: bool = True,
+    seam_met: bool = True,
+    product_family_override: str = "",
+    bezel_mm: Optional[float] = None,
+    conversation: str = "",
+    splicing_requirement: bool = True,
 ) -> str:
-    """把 LCD 结论表达成销售话术（LLM 一次；失败退化为模板）。"""
+    """把 LCD 结论表达成客户话术（LLM 一次；失败退化为模板）。"""
     fallback_facts = ", ".join(facts) if facts else "commercial-grade panels"
     layout_line = f" For your {layout}, that is the panel count you need." if layout else ""
     # 选中的是交互平板还是普通商用显示器 —— 话术必须说对（客户口径 2026-09-30：
@@ -712,10 +1027,28 @@ def _express_lcd_recommendation(
         )
     except Exception:  # pragma: no cover - 防御式
         product_family = "commercial LCD display"
+    if product_family_override:
+        product_family = product_family_override
     fallback = (
         f"{model} is the closest fit for your requirement: {fallback_facts}."
         + layout_line
+        + _seam_truth_sentence(
+            seam_is_visible=seam_is_visible,
+            seam_met=seam_met,
+            bezel_mm=bezel_mm,
+            want_bezel_mm=_requested_bezel(profile),
+            splicing_requirement=splicing_requirement,
+        )
         + " Shall I prepare the quotation?"
+    )
+    use_case = _customer_use_case(profile)
+    # 客户在问"还有其他推荐吗" → 这是**备选款**，不要说成"我重新给您选了一款"，
+    # 也不要再把上一款拿出来对比（客户口径 2026-10）。
+    follow_up_line = (
+        "The customer has already seen our first suggestion and is asking for another "
+        "option — present this one as an alternative, and do not repeat the previous model.\n"
+        if follow_up
+        else ""
     )
     try:
         prompt = LCD_RECOMMEND_PROMPT.format(
@@ -724,14 +1057,41 @@ def _express_lcd_recommendation(
             facts=fallback_facts,
             layout=layout or "not applicable (single displays)",
             reasons="; ".join(reasons) or "matches the confirmed requirement",
-            category=str(getattr(profile, "lcd_category", "") or "normal"),
+            # 给客户**自己的**场景，不给内部品类 token（见 _customer_use_case）
+            use_case=use_case or "not stated by the customer",
+            follow_up_line=follow_up_line,
+            # 拼缝事实由 Python 确定性给出，模型只能照实说
+            seam_facts=seam_facts,
+            # 语境：最近对话（客户口径 2026-10：话术要结合语境，不要每次同一套模板）
+            conversation=conversation or "(no earlier turns available)",
         )
         response = get_llm(temperature=0.3).invoke(prompt)
         text = (response.content if hasattr(response, "content") else str(response)).strip()
         text = re.sub(r"```[a-zA-Z]*", "", text).replace("```", "").strip()
         text = text.replace("**", "").replace("__", "")
-        if text and model in text:
+        # 事实护栏：把"满足拼缝要求"这种与产品数据矛盾的**从句**就地改成实话。
+        # "无缝"这类词不做词级替换（会破坏语法），检测到就直接退确定性模板。
+        want_bezel_value = _requested_bezel(profile)
+        text = _guard_lcd_seam_claims(
+            text,
+            seam_is_visible=seam_is_visible,
+            seam_met=seam_met,
+            bezel_mm=bezel_mm,
+            want_bezel_mm=want_bezel_value,
+        )
+        # 护栏之后仍然带着与事实矛盾的说法（无缝 / 谎称满足）→ 用确定性模板：
+        # 模板只陈述产品数据里的事实，不含任何"无缝/满足"式断言。
+        if (
+            text
+            and model in text
+            and (not seam_is_visible or not _SEAMLESS_CLAIM_RE.search(text))
+            and (seam_met or not _SEAM_MET_CLAIM_RE.search(text))
+        ):
             return text
+        if text:
+            logger.info(
+                "LCD recommendation wording rejected by the seam fact guard → 用确定性模板"
+            )
     except Exception as error:  # pragma: no cover - 网络/额度问题
         logger.warning("LCD recommendation expression failed: %s", error)
     return fallback
@@ -765,12 +1125,27 @@ def recommend_node(state: SolutionState) -> SolutionState:
         if slots:
             profile = profile.merge(RequirementProfile.from_slots(slots))
 
+    # ── 客户这轮是不是在问"还有别的推荐吗"（换一个型号）────────────────────
+    # 只有"客户之前已经拿到过推荐"时，'另外推荐一款'才等于'换一个型号'；
+    # 用**本轮消息**判断（不能用整段历史，否则后面每一轮都会一直换型号）。
+    # 注意：必须放在 LCD 分支**之前** —— 以前这段在 LCD 分流之后，LCD 永远走不到，
+    # 于是"还有其他推荐吗"每次都把同一个型号再讲一遍（客户口径 2026-10 实测）。
+    current_message = str(state.get("current_message") or "")
+    follow_up = bool(_ALTERNATIVES_RE.search(current_message)) and bool(
+        state.get("already_recommended")
+    )
+    previous_models = list(state.get("previous_recommended_models") or [])
+
     # ── LCD / IFP：走自己的选型路径（《LCD_IFP 整改计划》Phase 6/§十二）──────
     # LED 的 RecommendationEngine 按点间距/箱体选型，对 LCD 完全不适用
     # （实测 2026-09-30：LCD 需求齐全时这里仍然回 "Is it a permanent install, or
     # rental/events?" —— 那是 LED 的 Gate 在问，客户永远等不到推荐）。
     if str(getattr(profile, "display_type", "") or "").upper() in ("LCD", "IFP"):
-        return _recommend_lcd(state, profile, raw_products)
+        return _recommend_lcd(
+            state, profile, raw_products,
+            follow_up=follow_up,
+            previous_models=previous_models,
+        )
 
     # ── 2. 统一推荐入口：RecommendationService（Gate → 确定性选型）────────
     selection = _get_service().recommend(profile=profile, top_k=3)
@@ -893,12 +1268,7 @@ def recommend_node(state: SolutionState) -> SolutionState:
     degraded_slots = list(selection.get("unknown_requirements") or [])
     # 客户这轮问的是"还有没有别的推荐" → 用"备选 + 邀请补充需求"的格式，
     # 不重讲首选、不催尺寸、不提价格（客户口径）。
-    # 只有"客户之前已经拿到过推荐"时，'另外推荐一款'才等于'换一个型号'；
-    # 用**本轮消息**判断（不能用整段历史，否则后面每一轮都会一直换型号）。
-    current_message = str(state.get("current_message") or "")
-    follow_up = bool(_ALTERNATIVES_RE.search(current_message)) and bool(
-        state.get("already_recommended")
-    )
+    # follow_up / current_message 已在函数开头算好（LCD 分支也要用）。
     # v2.1：尺寸已经延后/客户不说时，不要在本轮再问尺寸（问了就是重复）
     ask_size = (not calc_decision.ready) and bool(calc_decision.next_question)
     answer = _express_recommendation(

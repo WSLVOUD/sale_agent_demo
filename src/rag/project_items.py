@@ -22,9 +22,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 # ── "还有一块屏"的显式信号 ──────────────────────────────────────────────
 _NEW_ITEM_PATTERNS = (
     # 英文
-    r"\banother\s+(?:one|screen|display|led|lcd|panel|unit|set)\b",
+    r"\banother\s+(?:one|screen|display|led|lcd|panel|unit|set|piece)\b",
     r"\bsecond\s+(?:screen|display|led|lcd|panel|unit|one)\b",
     r"\bone\s+more\s+(?:screen|display|led|lcd|panel|unit)\b",
+    r"\b(?:need|want|require)\s+(?:one\s+)?more\b",
+    r"\b(?:need|want|require)\s+another\b",
     r"\btwo\s+(?:screens|displays|leds|lcds|panels|units)\b",
     r"\b(?:2|two)\s+x\s+(?:screen|display|led)",
     r"\balso\s+(?:need|want|looking)\b",
@@ -34,6 +36,10 @@ _NEW_ITEM_PATTERNS = (
     r"再(?:来|要|加|做|装)一?[块个台]",
     r"第二块|第二个位置|另一个位置|其他位置|别的?位置",
     r"还要(?:一?块|一?个|加)",
+    # 客户口径 2026-10 实测说法："我还需要一款屏幕，可有手写的会议室使用的"
+    # （"还需要一款"以前匹配不到 → 被当成同一块屏的补充需求，场景/拼接事实全继承）
+    r"还\s*需要\s*(?:一|两|几)?\s*(?:款|块|个|台|种)",
+    r"再\s*要\s*(?:一|两|几)?\s*(?:款|块|个|台)",
     r"两块|两个位置|两台",
     r"门口|入口处?|大门口|正门|店招|门头",
 )

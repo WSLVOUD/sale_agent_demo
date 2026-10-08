@@ -148,6 +148,29 @@ _PURPOSE_LABELS: Dict[str, Dict[str, str]] = {
     },
 }
 
+
+def purpose_phrase(value: Any, language: Optional[str] = None) -> str:
+    """客户说的使用场景 → **客户能看到的说法**（唯一词表：``_PURPOSE_LABELS``）。
+
+    用途：给"面向客户的提示词"提供说人话的场景。提示词里**不能**出现内部
+    品类 token（``advertising`` / ``monitoring`` / ``normal`` /
+    ``conference_education``）—— 模型会把它们当成客户的说法照抄进文案。
+
+    实测（2026-10）：客户全程说 "exhibition"（展会），内部品类判成
+    ``advertising``，推荐提示词里写了 ``Customer's category: advertising``，
+    模型就写成 "For your **advertising** video wall…" —— 客户从没说过广告。
+    改成传 ``purpose_phrase("exhibition")`` = "an exhibition" 之后，模型才有
+    正确的"客户要拿它干什么"可依据。
+
+    认不出 token 时原样返回，不编造场景。
+    """
+    if value in (None, "", [], {}):
+        return ""
+    lang = _lang(language)
+    labels = _PURPOSE_LABELS.get(lang) or {}
+    token = str(value).strip()
+    return labels.get(token) or labels.get(token.lower()) or token
+
 _ENVIRONMENT_LABELS = {
     "en": {"indoor": "indoor", "outdoor": "outdoor", "semi_outdoor": "semi-outdoor"},
     "zh": {"indoor": "室内", "outdoor": "室外", "semi_outdoor": "半户外"},
@@ -769,37 +792,97 @@ def product_fallback_answer(
     *,
     language: Optional[str] = None,
 ) -> str:
-    """正文被清空、但系统**确实选出了型号**时的确定性兜底。
+    """【已废弃，客户口径 2026-10】正文被清空时**不再**报"最接近的型号"。
 
-    客户口径（2026-09-30）：这种情况绝不能说"放宽某个条件我就能匹配" ——
-    型号已经出来了，直接把型号给客户。见 ``api`` 里的空回复分支。
+    以前这里会输出 "Based on your requirements, the closest match is {model}.
+    Shall I prepare the quotation?"。实测它在闲聊轮反复出现、把真正的回答盖掉
+    （客户原话："总是遮挡了该回答的话"），而且客户只说了句 "yes" 也会被报一个型号，
+    等于凭空给一个匹配结果。两个调用点（api 空回复分支、solution runner）已改为
+    只邀请客户补充条件，本函数保留签名仅为兼容，永远返回空串，**不再产生任何型号文案**。
     """
-    model = ""
-    size = ""
-    resolution = ""
-    try:
-        for item in products or []:
-            metadata = (
-                item.get("metadata") if isinstance(item, dict) else getattr(item, "metadata", None)
-            ) or {}
-            model = str(metadata.get("model") or metadata.get("product_id") or "").strip()
-            size = str(metadata.get("display_size_inch") or "").strip()
-            resolution = str(metadata.get("resolution") or "").strip()
-            if model:
-                break
-    except Exception:  # pragma: no cover - 防御式
-        return ""
-    if not model:
-        return ""
-    bits = [bit for bit in (f"{size} panel" if size else "", f"{resolution} resolution" if resolution else "") if bit]
-    detail = f" ({', '.join(bits)})" if bits else ""
-    zh = str(_lang(language)).startswith("zh")
-    if zh:
-        return f"按您的需求，最合适的是 {model}{detail}。需要我准备报价吗？"
-    return (
-        f"Based on your requirements, the closest match is {model}{detail}. "
-        "Shall I prepare the quotation?"
+    return ""
+
+
+# 跑题/闲聊的确定性兜底说法（接住 + 委婉拉回产品，**不含任何型号与事实**）
+_OFF_TOPIC_STEER: Dict[str, tuple] = {
+    "en": (
+        "Happy to chat — and whenever you're ready, tell me the screen size and where it "
+        "is going, and I'll put the right model together for you.",
+        "Good to hear from you. Whenever you want to pick the screen back up, the size and "
+        "the installation setting are all I need to line up the right model.",
+        "Noted — and no rush on my side. When you're ready to continue, just tell me the "
+        "screen size and where it will be installed and I'll take it from there.",
+    ),
+    "zh": (
+        "随时聊 —— 您方便时告诉我屏幕尺寸和装在哪里，我就把合适的型号配给您。",
+        "收到。想继续选屏的时候，把尺寸和安装场景告诉我就行，我这边接着帮您配型号。",
+        "没问题，不着急。等您想继续了，告诉我屏幕尺寸和安装位置，我马上帮您选。",
+    ),
+}
+
+
+def is_relaxation_answer(text: str) -> bool:
+    """这段回复是不是"放宽条件"的确定性兜底文案（精确匹配全部变体）。
+
+    用途**不是**判断客户说了什么（那必须靠语义理解），而是拦住**我们自己**生成的
+    固定模板 —— 它由本模块的文案表产生，所以在这里精确比对最可靠，也不会误伤
+    正常回复。客户口径 2026-10：推荐完之后这句话反复出现，必须能可靠识别并拦掉。
+    """
+    key = " ".join(str(text or "").split()).strip().lower()
+    if not key:
+        return False
+    for table in (_RELAXATION_ANSWERS, _RELAXATION_ANSWERS_LCD):
+        for variants in table.values():
+            for variant in variants:
+                if " ".join(str(variant).split()).strip().lower() == key:
+                    return True
+    return False
+
+
+def off_topic_steer_answer(language: Optional[str] = None, seed: int = 0) -> str:
+    """跑题/闲聊的确定性兜底：接住 + 委婉拉回产品，**不带任何型号与事实**。
+
+    客户口径（2026-10）：客户问 "do u like watching TV"，正文却变成
+    "Based on your requirements, the closest match is TW21-3216-P2.5." ——
+    把型号包装成"他需求的答案"就是凭空捏造。宁可只给一句过渡，也不许报型号。
+    """
+    variants = _OFF_TOPIC_STEER.get(_lang(language)) or _OFF_TOPIC_STEER["en"]
+    return variants[seed % len(variants)]
+
+
+# 客户"同意推进"时的确定性兜底（多句轮换，**不承诺价格 / 交期**）
+_QUOTE_CONFIRMATION: Dict[str, tuple] = {
+    "en": (
+        "Perfect — I'll get the quotation put together for your screen and send it over "
+        "shortly.",
+        "Great, thanks for confirming. I'll start on the quotation now and come back to "
+        "you with it as soon as it's ready.",
+        "Noted, and thank you. I'm putting the quotation together for that screen — I'll "
+        "send it over in a moment.",
+        "Sounds good. Let me pull the quotation together for you now and follow up with it "
+        "shortly.",
+    ),
+    "zh": (
+        "好的，我这就把这块屏的报价单整理出来，稍后发您。",
+        "收到，谢谢确认。我现在就去准备报价单，弄好马上发您。",
+        "没问题，报价单我这就去做，稍等片刻给您。",
+        "好的，我这就把报价整理好，随后发您。",
+    ),
+}
+
+
+def quote_confirmation_answer(language: Optional[str] = None, seed: int = 0) -> str:
+    """客户"同意推进报价"时的确定性兜底（多句轮换）。
+
+    客户口径（2026-10）：推荐完之后客户回来一句 "yes"，应该得到"我去准备报价单，请稍等"，
+    **不是** relaxation_answer 的"能不能放宽某个条件" —— 那句话和客户的确认完全不搭
+    （客户实测反馈）。这里也刻意不只写一句，避免每次都是同一句死板话术。
+    绝不承诺价格 / 折扣 / 交期日期。
+    """
+    variants = (
+        _QUOTE_CONFIRMATION.get(_lang(language)) or _QUOTE_CONFIRMATION["en"]
     )
+    return variants[seed % len(variants)]
 
 
 # ── Phase 15：Best-effort 推荐时"缺了什么 + 会影响什么"的自然说法 ────────────

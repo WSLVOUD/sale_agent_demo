@@ -82,6 +82,11 @@ class SalesState(TypedDict):
     # 本会话已经推荐过的型号（"另外推荐一款"时换一个没给过的）
     previous_recommended_models: List[str]
 
+    # ── 客户开始说"新的一块屏"（客户口径 2026-10）──────────────────────────
+    # {"reason": "explicit_multi_item", "cleared": [...]} —— 这一轮清掉了上一块屏的
+    # 哪些需求事实（新的一块屏**不继承**上一块的需求）。留痕供日志 / 测试查。
+    lcd_new_item: Dict[str, Any]
+
     # ── 本轮是否带了图片（图片识别结果要跟客户确认一次）──────────────────
     vision_applied: bool
     # ── 本轮图片识别出的关键信息（计划 v2.9.4 §六）───────────────────────
@@ -116,6 +121,12 @@ class SalesState(TypedDict):
 
     # ── 本轮客户说的是与需求无关的话（只"接住"这句话，再继续问需求）──────
     offtopic_turn: bool
+
+    # ── 客户在**同意推进**（语义判定，不是关键词）──────────────────────────
+    # 已推荐过之后，客户回来说"yes / 可以 / 就这个 / go ahead"这类话 ——
+    # 到底是在同意出报价，还是在回答某个需求问题，必须结合上下文理解整句话。
+    # 由 requirement 节点用 LLM（带最近对话）判定，orchestrator 据此回"报价在准备"。
+    quote_confirmation: bool
 
     # 本轮"回应客户这句话"的口语回应（LLM 生成，只影响措辞，不参与 Gate 判定）
     acknowledgement: str

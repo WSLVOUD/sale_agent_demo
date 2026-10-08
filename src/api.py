@@ -870,23 +870,43 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
                 result.get("question_slot") or "-", request.session_id,
             )
             response_text = pending_q
-        else:
-            if result.get("products"):
-                # 有产品但清洗后为空：说明回复里全是"不该出现的内容"（例如给室外推荐了
-                # 室内型号被过滤掉）。这种情况要把日志留清楚，不要静默换成兜底话术。
-                logger.warning(
-                    "Response was emptied by sanitizer while %d products were returned; "
-                    "falling back to the relaxation request (session=%s)",
-                    len(result.get("products") or []),
-                    request.session_id,
-                )
-            # 客户口径（2026-09-30）：**已经选出型号了**就绝不能说"放宽某个条件我就能匹配"
-            # —— 那会让客户以为没推荐成功。先把型号给客户，实在没有型号才用放宽条件。
-            from src.rag.reply_composer import product_fallback_answer
+        elif result.get("offtopic_turn"):
+            # ── 跑题/闲聊轮：正文被清空也**绝不许**报型号（客户口径 2026-10）────────
+            # 实测：客户问 "do u like watching TV"，被清空后这里用 product_fallback_answer
+            # 把型号说成"符合你需求的最接近型号"—— 那就是凭空捏造。
+            # 跑题轮只给"接住 + 拉回"的过渡，宁可没有型号。
+            from src.rag.reply_composer import off_topic_steer_answer
 
-            response_text = product_fallback_answer(
-                result.get("products"), language=reply_language(request.question)
-            ) or relaxation_answer(
+            logger.warning(
+                "Response was emptied on an off-topic turn → steering reply, "
+                "no model reported (session=%s)",
+                request.session_id,
+            )
+            response_text = off_topic_steer_answer(reply_language(request.question))
+        elif result.get("products"):
+            # ── 已经选出型号 → **绝不允许**"能不能放宽条件"（客户口径 2026-10）──────
+            # 客户原话：「推荐完后，还是会出现这句话，帮我彻底解决」。
+            # 逻辑上也讲不通：型号都已经匹配出来了，还说"放宽某个条件我就能匹配"，
+            # 等于告诉客户"没匹配上"。这句兜底只属于"确实匹配不到"的情形。
+            from src.rag.reply_composer import quote_confirmation_answer
+
+            logger.warning(
+                "Response was emptied by sanitizer while %d products were returned → "
+                "proceed reply, never the relaxation line (session=%s)",
+                len(result.get("products") or []),
+                request.session_id,
+            )
+            response_text = quote_confirmation_answer(reply_language(request.question))
+        else:
+            # 客户口径（2026-10）：**彻底不报"最接近的型号"**。
+            # 以前这里用 product_fallback_answer 把型号包装成
+            # "Based on your requirements, the closest match is …" —— 实测它在闲聊轮
+            # 反复冒出来，把真正的回答盖掉（客户原话："总是遮挡了该回答的话"），
+            # 而且客户只是说了句 "yes" 也会被报一个型号，属于凭空捏造。
+            # 正文既然被清空了，就老实邀请客户补充条件，绝不编一个"匹配结果"。
+            from src.rag.reply_composer import relaxation_answer
+
+            response_text = relaxation_answer(
                 reply_language(request.question), product_family=_family
             )
 

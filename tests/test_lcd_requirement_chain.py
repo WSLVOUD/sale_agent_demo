@@ -479,7 +479,13 @@ class TestLcdReplyLayerWiring:
         facts = _known_facts({"requirement_profile": profile, "lcd_action": action.to_dict()})
 
         assert any("video wall" in item for item in facts), facts
-        assert any("use case=monitoring" in item for item in facts), facts
+        # 客户口径（2026-10）：交给表达层的是**客户自己的场景**，不是内部品类 token。
+        # 以前这里断言 "use case=monitoring" —— 内部品类被当成"客户的使用场景"喂给
+        # 写话的模型，于是模型把它当客户的说法写进回复（实测：客户全程说展会
+        # exhibition，推荐文案却出现 "advertising video wall"）。
+        # 现在：客户场景来自 purpose；内部品类只决定走哪条需求链，不进客户文案。
+        assert any("purpose=control room" in item for item in facts), facts
+        assert not any("monitoring" in item for item in facts), facts
         assert any("resolution=" in item for item in facts) or True  # 未定分辨率时不出现也正常
 
     def test_reply_prompt_carries_the_lcd_branch_and_one_question_rule(self, monkeypatch):

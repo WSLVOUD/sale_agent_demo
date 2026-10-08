@@ -34,6 +34,29 @@ def _normalize_role(role: str) -> str:
     return mapping.get(role, role)
 
 
+def _product_model_name(item: Any) -> str:
+    """从推荐结果里取型号名（dict / Document / 产品对象都认）。
+
+    LCD/IFP 的推荐结果是 LangChain ``Document``，型号写在 ``metadata`` 里
+    （``model`` 或 ``product_id``）——不能只看对象上的 ``.model``。
+    """
+    if item in (None, "", [], {}):
+        return ""
+    if isinstance(item, dict):
+        direct = item.get("model") or item.get("name") or item.get("series")
+        if direct:
+            return str(direct)
+        metadata = item.get("metadata") or {}
+    else:
+        direct = getattr(item, "model", None)
+        if direct:
+            return str(direct)
+        metadata = getattr(item, "metadata", None) or {}
+    if isinstance(metadata, dict):
+        return str(metadata.get("model") or metadata.get("product_id") or "")
+    return ""
+
+
 def _to_message_dict(msg: Any) -> Dict[str, str]:
     """把 dict / LangChain message 对象统一转成 {role, content}。"""
     if isinstance(msg, dict):
@@ -278,16 +301,18 @@ class MemoryStore:
         """记录"本会话已经给过产品推荐"，供下一轮判断客户是否在换产品。
 
         只保留型号名，避免把整份产品对象留在会话里。
+
+        型号来源要认全（客户口径 2026-10）：LED 给的是 dict（``model``），
+        LCD/IFP 给的是检索到的 **Document**（型号在 ``metadata`` 里）——
+        以前只取 ``item.model``，LCD 一律取不到 → 记录成空列表，
+        于是"还有其他推荐吗"永远换不了型号（实测日志：``Marked ... ([])``）。
         """
         self._ensure(session_id)
         models: List[str] = []
         for item in products or []:
-            if isinstance(item, dict):
-                model = item.get("model") or item.get("name") or item.get("series")
-            else:
-                model = getattr(item, "model", None)
-            if model and str(model) not in models:
-                models.append(str(model))
+            model = _product_model_name(item)
+            if model and model not in models:
+                models.append(model)
         self._sessions[session_id]["recommendation"] = {
             "delivered": True,
             "models": models[:10],
@@ -343,6 +368,11 @@ class MemoryStore:
 
         客户在拿到推荐之后要换产品 / 换项目 / 改需求时调用，
         让 Sales Agent 回到"从零开始采集需求"的状态。
+
+        客户口径（2026-10）：**多屏条目也要一起清**。实测客户从 LCD 改主意要 LED，
+        重置后旧的 LCD 那块仍留在 project_items 里，于是汇总回复变成
+        "Screen 1 (indoor/advertising): DS-M-75 + Screen 2 (outdoor/advertising): TW11-OD-P3"
+        —— 客户要的只有第二块。
         """
         if session_id not in self._sessions:
             return
@@ -350,6 +380,9 @@ class MemoryStore:
         self._sessions[session_id]["requirement_profile"] = None
         self._sessions[session_id]["recommendation"] = None
         self._sessions[session_id]["lcd_lock"] = None
+        # 多屏条目（一块屏一条）+ 当前活跃下标：换产品/换项目后不该再有"上一块屏"
+        self._sessions[session_id]["project_items"] = []
+        self._sessions[session_id]["active_item_index"] = 0
         logger.info("Reset requirement state for session: %s", session_id)
 
     def get_size(self, session_id: str) -> int:

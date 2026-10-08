@@ -203,7 +203,18 @@ class TurnExecutor:
                 owner = None
             if owner is not None:
                 return self._repeat_outcome(owner, session, message_id, started)
-        decision = self.dedup.check(session, message_id=ids[0], text=text, images=images)
+        # 语境 = 这句话在回答哪一项（上一轮问的槽位）。它进指纹，所以
+        # "同一个 no 回答不同问题" 不会碰撞成重发（客户口径 2026-10）。
+        current_slot = ""
+        try:
+            current_slot = str(
+                (self.store.previous_question(session) or {}).get("question_slot") or ""
+            )
+        except Exception:  # pragma: no cover - 防御式
+            current_slot = ""
+        decision = self.dedup.check(
+            session, message_id=ids[0], text=text, images=images, context=current_slot
+        )
         if decision.is_duplicate:
             owner_id = self._fingerprint_turns.get(decision.fingerprint, "")
             owner = self.store.get(owner_id) if owner_id else None
@@ -243,6 +254,7 @@ class TurnExecutor:
             text=text,
             images=images,
             fingerprint=decision.fingerprint,
+            context=current_slot,
         )
         for extra in items[1:]:
             self.dedup.remember(
@@ -479,18 +491,22 @@ class TurnExecutor:
         （实测 bug：第二句 "no" 被指纹当成重发丢弃，前端收到 duplicate=true
           就**不渲染任何气泡** → 客户连发 6 个 "no" 全部"没有反应"。）
 
-        判定顺序：
+        判定顺序（**语境优先，时间窗口只兜底**）：
 
             ① 还在处理 → 重发（并入同一轮，客户只收一条回复）；
-            ② 刚提交、还在重发窗口内（默认 5 秒）→ 重发（客户端重试 / 双击）；
-            ③ 拿得到"在回答哪一项" → 同一个问题才算重发；
+            ② 回答的是**另一个问题** → 新消息（多快都算）；
+            ③ 语境拿不到、或确实是同一个问题 → 刚提交的重发窗口内（默认 5 秒）
+               → 重发（客户端重试 / 双击）；
             ④ 什么上下文都没有（纯闲聊）→ 不算重发。
         """
         if owner.status != COMMITTED:
             return True
-        committed_at = float(getattr(owner, "committed_at", 0.0) or 0.0)
-        if committed_at and (time.time() - committed_at) <= self._duplicate_grace_seconds:
-            return True
+
+        # ── ③ 语境优先：这句话回答的是不是**同一个问题**？────────────────────
+        # 必须排在时间窗口**之前**（客户口径 2026-10 实测）：客户答招标 "no"，
+        # AI 接着问 OPS，客户 3 秒内又答 "no" —— 文字相同、问题不同。
+        # 如果先看"5 秒内"就判成重发 → 消息被丢弃 → 返回 duplicate=true →
+        # 前端不渲染 → 客户看到的就是"发一个 no 没反应，得再发一个才动"。
         try:
             current_question = str(
                 (self.store.previous_question(session_id) or {}).get("question_slot") or ""
@@ -504,6 +520,17 @@ class TurnExecutor:
             )
         except Exception:  # pragma: no cover - 防御式
             owner_question = ""
+        if current_question and owner_question and current_question != owner_question:
+            # 回答的是另一个问题 → 新消息（多快都算，与时间无关）
+            return False
+
+        # ② 语境拿不到、或确实是同一个问题 → 再看"刚提交的重发窗口"
+        # （客户端重试 / 双击都在几秒内到达）
+        committed_at = float(getattr(owner, "committed_at", 0.0) or 0.0)
+        if committed_at and (time.time() - committed_at) <= self._duplicate_grace_seconds:
+            return True
+
+        # ④ 同文字 + 同一个问题（或在窗口之外）→ 才算重发
         if current_question or owner_question:
             return current_question == owner_question
         return False

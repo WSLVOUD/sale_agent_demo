@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -113,29 +113,63 @@ def select_lcd_candidate(
     candidates: List[Any],
     *,
     to_dict=None,
+    exclude: Iterable[str] = (),
 ) -> Optional[Tuple[Any, Dict[str, Any], List[str]]]:
-    """从检索到的候选里挑一个 LCD 型号；挑不出返回 None。"""
+    """从检索到的候选里挑一个 LCD 型号；挑不出返回 None。
+
+    ``exclude``：已经给客户看过的型号 —— 客户问"还有其他推荐吗"时要**换一个**
+    （客户口径 2026-10）。排除后如果没有候选了，就退回不排除（宁可重复给一次，
+    也不能因为"都推荐过"而给不出任何型号）。
+    """
     if not candidates:
         return None
-    best: Optional[Tuple[float, Any, Dict[str, Any], List[str]]] = None
-    for item in candidates:
-        metadata = dict(getattr(item, "metadata", None) or (item.get("metadata") if isinstance(item, dict) else {}) or {})
-        if str(metadata.get("display_type") or "").upper() not in ("LCD", "IFP"):
-            continue
-        score, reasons = score_lcd_candidate(profile, metadata)
-        if best is None or score > best[0]:
-            best = (score, item, metadata, reasons)
+
+    def _model_of(metadata: Dict[str, Any]) -> str:
+        return str(metadata.get("model") or metadata.get("product_id") or "").strip()
+
+    def _best(skip: set) -> Optional[Tuple[float, Any, Dict[str, Any], List[str]]]:
+        found = None
+        for item in candidates:
+            metadata = dict(
+                getattr(item, "metadata", None)
+                or (item.get("metadata") if isinstance(item, dict) else {})
+                or {}
+            )
+            if str(metadata.get("display_type") or "").upper() not in ("LCD", "IFP"):
+                continue
+            if skip and _model_of(metadata) in skip:
+                continue
+            score, reasons = score_lcd_candidate(profile, metadata)
+            if found is None or score > found[0]:
+                found = (score, item, metadata, reasons)
+        return found
+
+    excluded = {str(name).strip() for name in (exclude or ()) if str(name).strip()}
+    best = _best(excluded) if excluded else None
+    if best is None:
+        best = _best(set())
     if best is None:
         return None
     logger.info(
-        "LCD/IFP select: model=%s score=%.1f reasons=%s",
+        "LCD/IFP select: model=%s score=%.1f reasons=%s%s",
         best[2].get("model"), best[0], best[3],
+        f" (excluded {sorted(excluded)})" if excluded else "",
     )
     return best[1], best[2], best[3]
 
 
 def layout_text(profile: Any) -> str:
-    """拼接排布的确定性描述（客户给了排布就不再问，计划 §十）。"""
+    """拼接排布的确定性描述（客户给了排布就不再问，计划 §十）。
+
+    客户口径（2026-10）：**只有"客户要拼接屏"时才允许出现排布 / 箱体数**。
+    IFP（会议平板）根本无法拼接，任何情况下都不许出现"3x3 / 9 panels"这种话。
+
+    这里用 ``lcd_is_splicing`` 作为唯一前置条件（而不是去 import dialogue 层的
+    ``is_ifp_requirement`` —— 架构护栏规定 rag 不能伸手进 dialogue / agents）。
+    不是拼接需求 → 一律返回空。
+    """
+    if not bool(getattr(profile, "lcd_is_splicing", None)):
+        return ""
     layout = str(getattr(profile, "lcd_splicing_layout", None) or "").strip()
     count = getattr(profile, "lcd_screen_count", None)
     if not layout:

@@ -289,6 +289,90 @@ def category_is_locked(profile: Any) -> bool:
     return source in _LOCKED_CATEGORY_SOURCES
 
 
+# 只属于"拼接屏"需求的字段（客户口径 2026-10）：
+#   IFP（会议平板）**不能拼接** —— 只有客户要拼接屏时，排布 / 箱体数 / 拼缝
+#   才允许出现在档案和话术里。
+#   实测：客户先做展览会的 3x3 拼接墙，后来又要一块会议平板，旧的拼接事实留在
+#   档案里 → 推荐话术变成"你的 3x3 拼接墙要用 9 台会议平板"（硬伤）。
+_SPLICING_ONLY_FIELDS: frozenset = frozenset(
+    {"lcd_is_splicing", "lcd_splicing_layout", "lcd_screen_count", "lcd_bezel_mm"}
+)
+
+
+def _enforce_ifp_cannot_splice(profile: Any) -> List[str]:
+    """IFP → 清掉只属于拼接屏的事实，并把它标成"不是拼接墙"。
+
+    返回被清掉的字段名（供留痕 / 测试）。
+    """
+    if profile is None or not is_ifp_requirement(profile):
+        return []
+    dropped: List[str] = []
+    sources = dict(getattr(profile, "sources", None) or {})
+    for field_name in ("lcd_splicing_layout", "lcd_screen_count", "lcd_bezel_mm"):
+        if getattr(profile, field_name, None) not in (None, "", [], {}):
+            setattr(profile, field_name, None)
+            sources.pop(field_name, None)
+            dropped.append(field_name)
+    if getattr(profile, "lcd_is_splicing", None) is not False:
+        profile.lcd_is_splicing = False
+        sources.pop("lcd_is_splicing", None)
+        dropped.append("lcd_is_splicing")
+    if dropped:
+        profile.sources = sources
+    return dropped
+
+
+# 新开一块屏时**不继承**上一块的需求事实（客户口径 2026-10）：
+# 只保留 product type（display_type，链路不变），其余场景 + LCD 需求项全部清空，
+# 让它按新这块屏重新问一遍。实测：客户先做展览会（exhibition / 3x3 拼接墙），
+# 后来又说"我还需要一款屏幕，可有手写的会议室使用的" —— 旧实现把这些当成同一块屏的
+# 补充需求，于是场景仍是 exhibition、3x3 拼接事实也留着，
+# 最后推荐话术变成"你的展览会 3x3 拼接墙用 9 台会议平板"。
+_NEW_ITEM_CLEARED_FIELDS: tuple = (
+    # 场景 / 安装
+    "purpose", "environment", "installation",
+    # 内部品类（由语境理解重新判定）
+    "lcd_category", "lcd_room_type",
+    # 屏体需求
+    "lcd_size_inch", "lcd_size_source", "lcd_resolution", "lcd_resolution_source",
+    "lcd_is_splicing", "lcd_splicing_layout", "lcd_screen_count", "lcd_bezel_mm",
+    "lcd_touch_required", "lcd_handwriting_required",
+    "lcd_tender_project", "lcd_ops_required", "lcd_camera_required",
+    # 图片识别出来的需求（属于上一块屏）
+    "vision_size_hint_mm", "vision_notes", "vision_confirmation_pending",
+    "vision_confirmation_denied", "vision_assertions", "vision_corrections",
+)
+
+
+def reset_lcd_requirement_facts(profile: Any) -> List[str]:
+    """客户开始说**新的一块屏** → 清掉上一块的需求事实（只留产品类型）。
+
+    客户口径（2026-10）："不继承上一块的需求"。
+    返回被清掉的字段名（供留痕 / 测试）。
+    """
+    if profile is None:
+        return []
+    cleared: List[str] = []
+    sources = dict(getattr(profile, "sources", None) or {})
+    for field_name in _NEW_ITEM_CLEARED_FIELDS:
+        value = getattr(profile, field_name, None)
+        if value in (None, "", [], {}, ()):
+            continue
+        setattr(profile, field_name, None)
+        sources.pop(field_name, None)
+        cleared.append(field_name)
+    if cleared:
+        profile.sources = sources
+    # 图文冲突属于上一块屏，一并清掉
+    if getattr(profile, "conflicts", None):
+        profile.conflicts = []
+        cleared.append("conflicts")
+    if getattr(profile, "conflict_slots", None):
+        profile.conflict_slots = []
+        cleared.append("conflict_slots")
+    return cleared
+
+
 def _locked_facts(profile: Any, sources: Dict[str, str]) -> Dict[str, Any]:
     """已经定下来的事实（计划 §二十一）——给表达层，让它不要再问。
 
@@ -299,6 +383,8 @@ def _locked_facts(profile: Any, sources: Dict[str, str]) -> Dict[str, Any]:
         了接下来问哪些问题，表达层必须当它已经定了，否则又会回头问用途。
     """
     locked: Dict[str, Any] = {}
+    # IFP 不能拼接 → 拼接类事实一律不交给表达层（见 _SPLICING_ONLY_FIELDS）
+    skip_splicing = is_ifp_requirement(profile)
     for field_name in (
         "display_type", "environment", "installation", "purpose",
         "lcd_category", "lcd_size_inch", "lcd_resolution", "lcd_is_splicing",
@@ -306,6 +392,8 @@ def _locked_facts(profile: Any, sources: Dict[str, str]) -> Dict[str, Any]:
         "lcd_touch_required", "lcd_handwriting_required",
         "lcd_tender_project", "lcd_ops_required", "lcd_camera_required",
     ):
+        if skip_splicing and field_name in _SPLICING_ONLY_FIELDS:
+            continue
         value = getattr(profile, field_name, None)
         if value in (None, "", [], {}):
             continue
@@ -695,6 +783,11 @@ def lcd_turn(
         fact_signal=fact_signal if fact_signal is not None else category_signal,
     )
     stats = apply_lcd_facts(profile, facts)
+    # IFP（会议平板）不能拼接 → 清掉档案里残留的拼接事实（客户口径 2026-10）。
+    # 放在入档之后：这样"客户先要拼接墙、后来改要会议平板"的旧事实不会漏出去。
+    dropped_splicing = _enforce_ifp_cannot_splice(profile)
+    if dropped_splicing:
+        stats.setdefault("dropped", []).extend(dropped_splicing)
     if answered:
         stats["answered_previous"] = answered
     cleared = _clear_resolved_conflicts(profile, facts)
