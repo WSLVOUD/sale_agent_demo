@@ -108,6 +108,94 @@ def test_07_advertising_touch():
     assert action.question_slot != "lcd_touch"
 
 
+def test_07b_advertising_must_ask_indoor_or_outdoor():
+    """客户口径 2026-09-30：广告**必须问室内还是室外**，不许拿模型猜的顶替。
+
+    实测：客户只说 "advertise"，语境理解顺手补了 environment=outdoor（客户没说），
+    系统于是跳过室内外，最后推了一台户外广告机（DS-O-75）。
+    """
+    signal = {
+        "category": ADVERTISING,
+        "confidence": 0.9,
+        "facts": {"environment": "outdoor"},
+        "evidence": {"environment": "advertise"},  # 客户原话里只有这个词，推不出户外
+    }
+    profile, action = lcd_turn(_p(), "advertise", category_signal=signal)
+
+    assert action.question_slot == "environment", action.question_slot
+    assert (profile.sources or {}).get("environment") == "understanding", (
+        "模型推的环境只能算软事实"
+    )
+
+
+def test_07c_advertising_honours_the_customer_stated_environment():
+    """客户自己说了（inside/outside）→ 不再重复问，直接按它继续。"""
+    signal = {
+        "category": ADVERTISING,
+        "confidence": 0.9,
+        "facts": {"environment": "indoor"},
+        "evidence": {"environment": "for inside use"},
+    }
+    profile, action = lcd_turn(
+        _p(), "advertising screen for inside use", category_signal=signal
+    )
+
+    assert profile.environment == "indoor"
+    assert (profile.sources or {}).get("environment") == "explicit"
+    assert action.question_slot == "lcd_size", action.question_slot
+
+
+def test_07d_answered_environment_is_never_downgraded_and_never_re_asked():
+    """客户答过 indoor/outdoor 之后，模型再从上下文里"顺手给一次"不能把它洗成软事实。
+
+    实测（2026-09-30，客户原文）：
+        AI: 室内还是室外？→ 客户: outdoor → AI: 尺寸？→ 客户: 75'' →
+        AI: **又问了一遍 "Will they be used indoors or outdoors?"**
+    根因：下一轮语境理解又返回了一次 environment=outdoor（来源 understanding），
+    把客户侧来源 explicit 覆盖掉了 → 广告分支的硬闸门以为"客户没答过"，于是又问。
+    """
+    def _sig(facts, evidence):
+        return {"category": ADVERTISING, "confidence": 0.9,
+                "facts": facts, "evidence": evidence}
+
+    profile = _p()
+    # 1) 客户说 advertising：模型顺手猜了 outdoor → 软事实，照问
+    profile, action = lcd_turn(
+        profile, "i need a lcd display for advertising",
+        category_signal=_sig({"environment": "outdoor"}, {"environment": "advertising"}),
+    )
+    assert action.question_slot == "environment"
+    assert (profile.sources or {}).get("environment") == "understanding"
+
+    # 2) 客户回答 outdoor → 客户侧来源，下一问是尺寸
+    profile, action = lcd_turn(
+        profile, "outdoor",
+        category_signal=_sig({"environment": "outdoor"}, {"environment": "outdoor"}),
+    )
+    assert (profile.sources or {}).get("environment") == "explicit"
+    assert action.question_slot == "lcd_size"
+
+    # 3) 客户答尺寸：模型又把 environment=outdoor 带回来（证据来自上一句）
+    profile, action = lcd_turn(
+        profile, "75''",
+        category_signal=_sig(
+            {"screen_size_inch": 75.0, "environment": "outdoor"},
+            {"screen_size_inch": "75", "environment": "outdoor use"},
+        ),
+    )
+    assert (profile.sources or {}).get("environment") == "explicit", "客户侧来源不许被降级"
+    assert action.question_slot == "lcd_touch", action.question_slot
+
+    # 4) 客户答触控 → 需求齐全
+    profile, action = lcd_turn(
+        profile, "yes i need touch",
+        category_signal=_sig({"touch": True, "environment": "outdoor"},
+                             {"touch": "touch", "environment": "outdoor use"}),
+    )
+    assert profile.lcd_touch_required is True
+    assert action.confirmed is True, action.missing_fields
+
+
 # ── 8~9 Normal LCD ──────────────────────────────────────────────────────────
 
 def test_08_normal_lcd_with_size():

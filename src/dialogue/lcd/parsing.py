@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .resolution import _normalize_resolution
 
@@ -112,6 +112,9 @@ class LcdFacts:
     # 品类的来源：understanding（语境理解，客户口径要求的主路径）
     #            / keyword（关键词兜底，只在语境理解不可用时用）
     category_source: str = ""
+    # 语境理解给出、但**客户原话里没有证据**的字段（模型自己推的）。
+    # 这些字段只能当"软事实"：不能直接当成客户已经回答（见 lcd_decision 的硬闸门）。
+    understood_fields: Set[str] = field(default_factory=set)
     room_type: str = ""
     size_inch: Optional[float] = None
     resolution: str = ""
@@ -129,7 +132,11 @@ class LcdFacts:
     installation: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        return {k: v for k, v in self.__dict__.items() if v not in (None, "", UNKNOWN)}
+        return {
+            k: v
+            for k, v in self.__dict__.items()
+            if v not in (None, "", UNKNOWN) and not (k == "understood_fields" and not v)
+        }
 
 def extract_lcd_facts(
     message: str,
@@ -318,29 +325,148 @@ def extract_lcd_facts(
     # ── 语境理解为主、关键词为兜底（客户口径 2026-09-30）──────────────────
     # 上面那些正则只是兜底值：模型读了"我们问过什么 + 客户答过什么 + 这一句"
     # 之后的结论，覆盖它们。模型没提到的字段才继续用正则的结果。
-    _apply_understood_facts(facts, fact_signal)
+    # 正则已经抽到的字段先留个底：语境理解给出**同一个值**时不算"模型推的"
+    # （客户原话本来就支持它，只是模型也说了一遍）。
+    keyword_facts = {
+        key: value
+        for key, value in facts.__dict__.items()
+        if key != "understood_fields" and value not in (None, "", UNKNOWN, [])
+    }
+    _apply_understood_facts(facts, fact_signal, text, keyword_facts=keyword_facts)
     return facts
 
 
-def _apply_understood_facts(facts: LcdFacts, signal: Optional[Dict[str, Any]]) -> None:
-    """把语境理解给出的事实覆盖到候选事实上（只认认得的字段与合法取值）。"""
+_EVIDENCE_HINTS: Dict[str, Dict[Any, Tuple[str, ...]]] = {
+    "environment": {
+        "indoor": ("indoor", "inside", "室内"),
+        "outdoor": ("outdoor", "outside", "室外", "户外"),
+    },
+    "installation": {
+        "fixed": ("fixed", "permanent", "wall mount", "wall-mount", "固定", "固装"),
+        "rental": ("rental", "rent", "租赁", "租用"),
+    },
+    "is_splicing": {
+        True: ("splic", "video wall", "拼接", "多块", "tiled"),
+        False: ("single", "单体", "不拼接", "standalone"),
+    },
+}
+
+
+def _evidence_supports(field: str, value: Any, evidence_text: str) -> bool:
+    """证据本身能不能支持这个值（判断不了就放行，避免过度收紧）。"""
+    text = str(evidence_text or "").lower()
+    if field in _EVIDENCE_HINTS:
+        hints = _EVIDENCE_HINTS[field].get(value)
+        if hints is None:
+            return True
+        return any(hint in text for hint in hints)
+    if field == "screen_size_inch":
+        try:
+            number = str(int(float(value)))
+        except (TypeError, ValueError):
+            return True
+        return number in text
+    if field == "bezel_mm":
+        try:
+            number = str(float(value)).rstrip("0").rstrip(".")
+        except (TypeError, ValueError):
+            return True
+        return number in text
+    if field == "splicing_layout":
+        digits = re.findall(r"\d{1,2}", str(value))
+        return bool(digits) and all(d in text for d in digits)
+    if field == "resolution":
+        wanted = _normalize_resolution(value)
+        if wanted == "4K":
+            return any(h in text for h in ("4k", "uhd", "2160"))
+        if wanted == "2K":
+            return any(h in text for h in ("2k", "1080", "fhd"))
+        return True
+    # 布尔类（触控 / 手写 / 摄像头 / OPS / 招标）：证据里要出现对应的词
+    if field in ("touch", "handwriting", "camera", "ops", "tender"):
+        keywords = {
+            "touch": ("touch", "触控", "触摸"),
+            "handwriting": ("handwriting", "whiteboard", "write", "书写", "手写", "白板"),
+            "camera": ("camera", "cam", "摄像头", "镜头"),
+            "ops": ("ops", "pc module", "电脑模块"),
+            "tender": ("tender", "bid", "招标", "投标"),
+        }[field]
+        return any(word in text for word in keywords)
+    return True
+
+
+def _apply_understood_facts(
+    facts: LcdFacts,
+    signal: Optional[Dict[str, Any]],
+    message: str = "",
+    *,
+    keyword_facts: Optional[Dict[str, Any]] = None,
+) -> None:
+    """把语境理解给出的事实覆盖到候选事实上（只认认得的字段与合法取值）。
+
+    客户口径（2026-09-30，实测）：模型会"顺手"给一个客户**没说**的值 ——
+    客户只说 "advertise"，模型就补了 environment=outdoor，系统于是跳过
+    "室内还是室外"，最后推了一台户外广告机（DS-O-75）。
+
+    所以这里区分两种事实：
+
+      · **客户原话有证据**（signal.evidence[字段] 能在这一句里找到）→ 硬事实，
+        和客户自己说的一样（source=explicit）；
+      · 模型自己推的（没有证据 / 证据对不上）→ 软事实，记进 understood_fields，
+        写档时来源标 understanding —— **硬闸门（如广告分支的室内外）不认它，
+        该问还得问**；客户回答后覆盖它。
+    """
     if not isinstance(signal, dict):
         return
     understood = signal.get("facts")
     if not isinstance(understood, dict) or not understood:
         return
+    evidence = signal.get("evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+
+    def _grounded(field: str) -> bool:
+        """这个字段有没有**站得住的**客户原话证据。
+
+        两条都要满足（客户口径 2026-09-30）：
+
+          ① 证据片段必须能在客户这一句里找到（不能是模型编的句子）；
+          ② 证据本身必须**真的支持这个值**（不能拿 "advertise" 当 outdoor 的证据）。
+
+        第 ② 条是关键：实测模型给 environment=outdoor 时，evidence 写的是
+        "advertise"（客户原话里确实有这个词），但"打广告"根本推不出"户外" ——
+        只查第 ① 条会放它过关，于是系统跳过"室内还是室外"、最后推了户外广告机。
+        """
+        snippet = " ".join(str(evidence.get(field) or "").split()).lower()
+        if not snippet:
+            return False
+        haystack = " ".join(str(message or "").split()).lower()
+        if not haystack:
+            return False
+        if not (snippet[:80] in haystack or haystack[:80] in snippet):
+            return False
+        return _evidence_supports(field, understood.get(field), snippet)
+
+    def _mark(field: str) -> None:
+        # 正则已经用客户原话抽到**同一个值** → 客户本来就说清楚了，不是模型推的
+        if keyword_facts and keyword_facts.get(field) not in (None, "", UNKNOWN):
+            return
+        if not _grounded(field):
+            facts.understood_fields.add(field)
 
     environment = str(understood.get("environment") or "").strip().lower()
     if environment in ("indoor", "outdoor"):
         facts.environment = environment
+        _mark("environment")
 
     installation = str(understood.get("installation") or "").strip().lower()
     if installation in ("fixed", "rental"):
         facts.installation = installation
+        _mark("installation")
 
     splicing = understood.get("is_splicing")
     if isinstance(splicing, bool):
         facts.is_splicing = splicing
+        _mark("is_splicing")
 
     layout = str(understood.get("splicing_layout") or "").strip()
     if layout:
@@ -350,20 +476,24 @@ def _apply_understood_facts(facts: LcdFacts, signal: Optional[Dict[str, Any]]) -
             facts.screen_count = int(match.group(1)) * int(match.group(2))
             if facts.is_splicing is None:
                 facts.is_splicing = True
+            _mark("splicing_layout")
 
     size = understood.get("screen_size_inch")
     if isinstance(size, (int, float)) and not isinstance(size, bool):
         if 10 <= float(size) <= 500:
             facts.size_inch = float(size)
+            _mark("screen_size_inch")
 
     bezel = understood.get("bezel_mm")
     if isinstance(bezel, (int, float)) and not isinstance(bezel, bool):
         if 0 <= float(bezel) <= 100:
             facts.bezel_mm = float(bezel)
+            _mark("bezel_mm")
 
     resolution = _normalize_resolution(understood.get("resolution"))
     if resolution:
         facts.resolution = resolution
+        _mark("resolution")
 
     for key, attribute in (
         ("touch", "touch"),
@@ -375,6 +505,7 @@ def _apply_understood_facts(facts: LcdFacts, signal: Optional[Dict[str, Any]]) -
         value = understood.get(key)
         if isinstance(value, bool):
             setattr(facts, attribute, value)
+            _mark(key)
 
     # 要手写就一定要触控（和正则那套口径一致）
     if facts.handwriting is True and facts.touch is None:

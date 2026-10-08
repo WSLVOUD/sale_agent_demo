@@ -103,6 +103,37 @@ _INSTALL_TIMING_NOTES = {
 }
 
 
+# LCD / IFP 的交期口径（客户口径 2026-09-30）：
+# "回答话术就类似 led 链路里回答交付日期的话术，不要直接拿 led 链路的来用，
+#  就在 lcd 里写这个流程。" —— 交期数字口径一致（下单付款后 15–30 天），但
+# 说法按 LCD 的商业场景重写（面板 / 整机出货，不涉及 LED 的箱体与现场拼接）。
+_LCD_LEAD_TIME_ANSWERS = {
+    "en": (
+        "For LCD panels, our usual lead time is about 15–30 days from order and payment — "
+        "I'll confirm the exact date once the model and quantity are locked in.",
+        "Counting from order and payment, LCD panels normally ship in around 15–30 days; "
+        "the final schedule follows the model and quantity.",
+        "Our standard LCD lead time is roughly 15–30 days after order and payment — "
+        "I'll pin down the dates as soon as the configuration is confirmed.",
+    ),
+    "zh": (
+        "液晶屏这一块，我们的常规交期是下单付款后约 15–30 天；型号和数量确认后我把准确日期给您。",
+        "液晶面板从下单付款算起一般 15–30 天出货，具体还要看型号和数量，定下来我马上跟您确认。",
+    ),
+}
+
+# LCD 的加急口径：同样走空运，成本增加（口径与 LED 一致，措辞按 LCD 重写）
+_LCD_FASTER_ANSWERS = {
+    "en": (
+        "If the date is tight, we can ship the panels by air — that brings the delivery "
+        "forward, and I'll price the extra freight into the quotation.",
+    ),
+    "zh": (
+        "如果时间紧，面板可以走空运，交期能提前；多出来的运费我会一并算进报价里。",
+    ),
+}
+
+
 def _lang(language: Optional[str]) -> str:
     return "zh" if str(language or "").lower().startswith("zh") else "en"
 
@@ -169,20 +200,36 @@ def mentions_install_timing(message: str) -> bool:
     return bool(_INSTALL_TIMING_RE.search(str(message or "")))
 
 
-def delivery_answer(message: str, *, language: Optional[str] = None, seed: int = 0) -> Optional[str]:
-    """交付 / 交期问题的回答；不是这类问题（也没要求加快）时返回 None。"""
+def delivery_answer(
+    message: str,
+    *,
+    language: Optional[str] = None,
+    seed: int = 0,
+    product_family: str = "",
+) -> Optional[str]:
+    """交付 / 交期问题的回答；不是这类问题（也没要求加快）时返回 None。
+
+    ``product_family`` 传 ``"lcd"`` / ``"ifp"`` 时用 **LCD 专用口径**
+    （面板 / 整机出货，不套 LED 那套箱体说法）；其余保持原来（LED）的话术。
+    """
     text = str(message or "")
     is_question = is_delivery_question(text)
     faster = wants_faster_delivery(text)
     if not (is_question or faster):
         return None
     lang = _lang(language)
+    lcd = str(product_family or "").strip().lower() in ("lcd", "ifp")
+    lead_table = _LCD_LEAD_TIME_ANSWERS if lcd else _LEAD_TIME_ANSWERS
+    faster_table = _LCD_FASTER_ANSWERS if lcd else _FASTER_ANSWERS
+    if lang not in lead_table:
+        lead_table = {**_LEAD_TIME_ANSWERS, **lead_table}
+        lead_table["en"] = (_LCD_LEAD_TIME_ANSWERS if lcd else _LEAD_TIME_ANSWERS)["en"]
     parts = []
     if is_question or mentions_install_timing(text):
-        variants = _LEAD_TIME_ANSWERS[lang]
+        variants = lead_table[lang]
         parts.append(variants[seed % len(variants)])
     if faster:
-        faster_variants = _FASTER_ANSWERS[lang]
+        faster_variants = faster_table.get(lang) or faster_table["en"]
         parts.append(faster_variants[seed % len(faster_variants)])
     return " ".join(parts) if parts else None
 

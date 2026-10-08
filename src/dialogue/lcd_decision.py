@@ -103,6 +103,11 @@ _BRANCH_ORDER: Dict[str, Tuple[str, ...]] = {
 # 这些问题在"不是 IFP / 不是会议场景"时不许问（计划 §十一：广告机不主动问 OPS）
 IFP_ONLY_SLOTS: frozenset[str] = frozenset({"lcd_tender", "lcd_ops", "lcd_camera"})
 
+# 客户侧来源：客户自己说的 / 客户确认过的（模型推的 understanding 不算）
+_CUSTOMER_SOURCES: frozenset[str] = frozenset(
+    {"explicit", "confirmed", "customer_explicit", "customer_confirmed"}
+)
+
 
 _AFFIRM_RE = re.compile(
     r"^\s*(?:yes|yeah|yep|yup|sure|ok|okay|correct|right|that'?s right|sounds good|"
@@ -331,6 +336,20 @@ def _missing_slots(
         # 客户已经说 single displays，需求链还在问排布）
         if slot == "lcd_layout" and getattr(profile, "lcd_is_splicing", None) is False:
             continue
+        # ── 广告分支的"室内 / 室外"必须由**客户**回答（客户口径 2026-09-30）───
+        # 实测：客户只说 "advertise"，语境理解顺手补了 outdoor（客户没说）→
+        # 系统跳过"室内还是室外"，最后推了一台户外广告机（DS-O-75）。
+        # 广告机室内外是两个完全不同的产品族（亮度/防水/箱体），所以这里：
+        # 只要这个 environment 是**模型推的**（来源 understanding），就不算已回答，照问。
+        # 客户自己说了（indoors / outdoor / 室内 / 户外，或回答了我们的提问）→ 来源
+        # explicit/confirmed，才算已回答。
+        if (
+            slot == "environment"
+            and category == ADVERTISING
+            and str(sources.get("environment") or "") not in _CUSTOMER_SOURCES
+        ):
+            missing.append((index, slot))
+            continue
         asked_count = _ask_count(profile, slot)
         # 可选字段（拼缝默认 3.5mm、触控/手写/OPS/摄像头默认不需要）已经问过一次
         # 就按默认走，不再重复问 —— 否则会出现"拼缝 → 尺寸 → 排布 → 拼缝"的死循环
@@ -553,12 +572,18 @@ def apply_lcd_facts(profile: Any, facts: LcdFacts) -> Dict[str, Any]:
             return
         current = getattr(profile, field_name, None)
         current_source = str(sources.get(field_name) or "")
-        if current not in (None, "", [], {}) and current_source in (
-            "explicit", "confirmed", "customer_explicit", "customer_confirmed",
-        ) and current != value:
-            # 客户之前明确说过的值，本轮不是明确纠正就不覆盖
-            stats["kept"].append(field_name)
-            return
+        if current not in (None, "", [], {}) and current_source in _CUSTOMER_SOURCES:
+            if current != value:
+                # 客户之前明确说过的值，本轮不是明确纠正就不覆盖
+                stats["kept"].append(field_name)
+                return
+            if source not in _CUSTOMER_SOURCES:
+                # 同一个值、但本轮来源更弱（模型推的）→ **只保留客户侧来源，不降级**
+                # 实测（2026-09-30）：客户答过 "outdoor"，下一轮模型又从上下文里
+                # 顺手给了一次 environment=outdoor（来源 understanding），把客户侧来源
+                # 洗成软事实 → 广告分支的硬闸门于是**又问了一遍室内外**。
+                stats["kept"].append(field_name)
+                return
         setattr(profile, field_name, value)
         sources[field_name] = source
         stats["updated"].append(field_name)
@@ -578,9 +603,21 @@ def apply_lcd_facts(profile: Any, facts: LcdFacts) -> Dict[str, Any]:
         if not getattr(profile, "purpose", None):
             write("purpose", facts.room_type)
     if facts.environment:
-        write("environment", facts.environment)
+        # 客户原话里没有证据的环境（模型自己推的）→ 来源标 understanding，
+        # 广告分支的硬闸门不认它（见 _missing_slots），该问还得问。
+        write(
+            "environment",
+            facts.environment,
+            source="understanding" if "environment" in facts.understood_fields else "explicit",
+        )
     if facts.installation:
-        write("installation", facts.installation)
+        write(
+            "installation",
+            facts.installation,
+            source="understanding"
+            if "installation" in facts.understood_fields
+            else "explicit",
+        )
     if facts.people_count is not None:
         write("audience_count", facts.people_count)
     if facts.size_inch is not None:

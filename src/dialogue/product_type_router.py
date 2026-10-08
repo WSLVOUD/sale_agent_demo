@@ -185,6 +185,87 @@ def _explicit_type(text: str) -> str:
     return ""
 
 
+# ── 否定语境（客户改口时要能切链路）────────────────────────────────────────
+# 实测 bug：会话已经锁定 LED 后，客户说
+#     "no i not need a led ,i wanna a lcd"
+# `_explicit_type` 取**先出现**的类型 → 命中否定句里的 "led" → 返回 LED，
+# 与当前类型相同 → 判定"没改口" → 客户被永远卡在 LED 链路（还继续问点间距）。
+# 所以判"客户到底想要哪种"时，必须先把**被否定的那一次提及**排除掉：
+#     "not need a led"  → 这是客户**不要**的（= 当前类型）
+#     "i wanna a lcd"   → 这才是客户**要**的
+#
+# 注意这里**只收"否定名词"的词**（not / don't / without / 不需要 / 不要…）：
+#   · 句首的 "no" / "不对" 是"否认上一轮的建议"，不是否定后面那个名词 ——
+#     "no, i need an lcd instead" 里的 LCD 是客户**要**的，不能被当成被否定；
+#   · "其实 / 换成 / 改成" 是改口语气词，本身不否定任何名词。
+_NEGATION_RE = re.compile(
+    r"\b(?:not|nope|nah|don'?t|does ?n'?t|didn'?t|do not|never|instead of|rather than|"
+    r"without|stop|switch from|change from|other than)\b|"
+    r"不需要|不要|不用|没有|别|而不",
+    re.IGNORECASE,
+)
+
+
+def _wanted_type(text: str) -> str:
+    """客户**想要**哪种类型 —— 排除被否定的那一次提及。
+
+    与 `_explicit_type` 的区别：只看"客户在要什么"，不看"客户在否什么"。
+
+        "no i not need a led ,i wanna a lcd"   → LCD   （led 被否定）
+        "i don't need LED, i need LCD"         → LCD
+        "we don't want LCD, we need LED"       → LED
+        "no, i need an lcd instead"            → LCD   （句首 no 不否定名词）
+        "no"                                   → ""    （只有否认，没说要什么）
+        "actually i want lcd"                  → LCD
+        "i need a led"                         → LED
+
+    规则：一个否定词只作用于**它后面最近的那个**类型提及
+    （"not led but lcd" → 只有 led 被否定）。
+    两边都被否定（"not led and not lcd"）或都没有否定时，退回 `_explicit_type`
+    的"先出现者优先"口径，保持原有行为不变。
+    """
+    raw = str(text or "")
+    if not raw:
+        return ""
+    mentions: List[tuple] = []
+    for match in _LED_RE.finditer(raw):
+        mentions.append((match.start(), LED))
+    for match in _LCD_RE.finditer(raw):
+        mentions.append((match.start(), LCD))
+    if not mentions:
+        return ""
+    mentions.sort()
+    positions = [position for position, _ in mentions]
+
+    negations = [match.start() for match in _NEGATION_RE.finditer(raw)]
+
+    wanted: List[str] = []
+    for position, kind in mentions:
+        negated = False
+        for negation in negations:
+            if negation > position:
+                # 只往前看：后面的否定词管不到这一句已经说过的名词
+                continue
+            # 这个否定词和本提及之间如果还夹着别的类型提及，
+            # 说明它作用在前一个提及上了（"not led but lcd"）
+            if any(negation < other < position for other in positions):
+                continue
+            negated = True
+            break
+        if not negated:
+            wanted.append(kind)
+
+    # 没有任何"想要的"提及 → 不切类型（交给原逻辑处理）
+    if not wanted:
+        return ""
+    # 去重但保持出现顺序
+    unique = list(dict.fromkeys(wanted))
+    if len(unique) == 1:
+        return unique[0]
+    # 同时"要"两种（比较场景）→ 保持原口径：先出现者优先
+    return _explicit_type(raw)
+
+
 def explicit_type_in(text: str) -> str:
     """客户这句话里**明说**的屏幕类型（LED / IFP 归一为 LED，LCD/IFP 归一为 LCD）。
 
@@ -319,12 +400,28 @@ def route_display_type(
         #   · "actually / instead / 换成"       —— 明确的改口词
         #   · "no, we need an LCD"              —— 先否认 + 说出想要的
         #   · "we want / we prefer an LCD"      —— 直接表达偏好
+        #   · "不要 LED，我要 LCD"               —— 中文的"先否定 + 再说要什么"
         # 只有"说出另一种类型 + 表达了改口意思"才切；只是提到另一种（问句）不切。
+        # 这里放宽"进入判断"的门槛（补上否定词）是安全的：真正决定切不切的是
+        # `_wanted_type` —— 它只说得出客户**要**的那种，没说清就返回空、不切。
+        #
+        # 客户口径（2026-10-XX，实测 "no i not need a led ,i wanna a lcd"）：
+        # 改口句里**往往先否定当前类型**，再给出想要的类型：
+        #     "no i not need a led ,i wanna a lcd"
+        # 这时"先出现的类型"是被否定的那个（= 当前类型），用 `_explicit_type` 会
+        # 得出"客户没改口" → 链路永远卡在 LED。所以这里优先用 `_wanted_type`：
+        # 它只看客户**要**什么，被否定的提及不算数。
         switched_by_context = (
             signal_reply == "chose" and signal_type and signal_type != current.display_type
         )
-        if switched_by_context or _SWITCH_RE.search(text) or _DENY_RE.search(text) or _WANT_RE.search(text):
-            explicit = signal_type if switched_by_context else _explicit_type(text)
+        change_signal = (
+            _SWITCH_RE.search(text)
+            or _DENY_RE.search(text)
+            or _WANT_RE.search(text)
+            or _NEGATION_RE.search(text)
+        )
+        if switched_by_context or change_signal:
+            explicit = signal_type if switched_by_context else _wanted_type(text)
             if explicit and explicit != current.display_type:
                 return DisplayTypeDecision(
                     display_type=explicit,
@@ -449,7 +546,11 @@ def route_display_type(
             evidence=[text[:120]],
         )
 
-    explicit = _explicit_type(text)
+    # 客户"要哪种"优先看**没被否定**的那次提及（与上面"已锁定"分支同一口径）：
+    #     "no i not need a led ,i wanna a lcd"  → 这段里 LED 是被否定的，客户要的是 LCD。
+    # 若只看 `_explicit_type`（先出现者优先）会把这句话判成"客户明确选择了 LED"，
+    # 与客户原意完全相反。`_wanted_type` 拿不到信号时退回原口径，行为不变。
+    explicit = _wanted_type(text) or _explicit_type(text)
     if explicit:
         subtype = SUBTYPE_IFP if (explicit == LCD and _IFP_RE.search(text)) else ""
         return DisplayTypeDecision(

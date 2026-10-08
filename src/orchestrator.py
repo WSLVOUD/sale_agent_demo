@@ -15,6 +15,16 @@ from .first_contact.profile import load_profile
 
 logger = logging.getLogger(__name__)
 
+
+def _turn_product_family(profile: Any) -> str:
+    """这一轮属于哪条产品链路（led / lcd / ifp）—— 给售后 / 交期 / 闲聊口径分家。"""
+    try:
+        from .utils.product_family import product_family_of
+
+        return product_family_of(profile)
+    except Exception:  # pragma: no cover - 防御式
+        return ""
+
 # 注：确认 / 纠正这类"与需求相关"的 SpeechAct 口径已迁到对话层
 # （`dialogue.continuation_budget.REQUIREMENT_RELATED_SPEECH_ACTS`）。
 # ── v2.3.1 Phase 2：业务逻辑已迁出，这里只做编排与兼容 ────────────────────────
@@ -592,6 +602,9 @@ class DualAgentOrchestrator:
             questions=plan.questions,
             service_faq_answered=str(result.get("service_faq_answered") or ""),
             require_question=require_question,
+            # LCD / IFP：售后与交期问题只回答，不跟产品话术；闲聊也只承接一句
+            product_family=_turn_product_family(self._stored_profile(session_id)),
+            offtopic_turn=bool(result.get("offtopic_turn")),
         )
         # ② v2.7 §15/§16 + 型号闸门：正文加工统一在回复层（ResponseCoordinator）
         text = self._response_coordinator().postprocess_final(

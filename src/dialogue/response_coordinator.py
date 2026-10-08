@@ -17,6 +17,19 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
+def _is_lcd_family(product_family: str) -> bool:
+    """这一轮是不是 LCD / IFP 会话（售后与交期只回答、不追加产品话术）。"""
+    return str(product_family or "").strip().lower() in ("lcd", "ifp")
+
+
+# LCD 会话里的闲聊承接（客户口径 2026-09-30：客户说什么就答什么，不编内容、
+# 也不拿产品介绍顶上；措辞保持对我方有利、不承诺任何没写在口径里的东西）。
+_CHAT_ACK_EN = (
+    "Thanks for that. Whenever you're ready, I'm here for anything on the screen "
+    "setup or the quotation."
+)
+
+
 @dataclass
 class TurnPlan:
     """这一轮"想说什么 + 问哪一项"的最终结论（从 Orchestrator 迁入）。"""
@@ -40,13 +53,21 @@ class ResponseCoordinator:
 
     # ── 售后口径 ────────────────────────────────────────────────────────
     def attach_service_faq(
-        self, response: str, message: str, *, already_answered: bool = False
+        self,
+        response: str,
+        message: str,
+        *,
+        already_answered: bool = False,
+        product_family: str = "",
     ) -> str:
         """客户问到售后口径时**必须回答**（不主动提，尤其质保）。
 
         ``already_answered=True``：销售那一轮已经按标准口径答过了（由 LLM 自己组织
         成一段话）→ 这里**不再前置**标准口径，只做"矛盾清洗"，避免同一段里说两遍、
         甚至出现"我们不做现场安装 / 我们提供现场安装"这种自相矛盾。
+
+        ``product_family="lcd"/"ifp"``：客户问售后口径时**只回答**，后面不再跟产品介绍
+        （客户口径 2026-09-30："后面的不要再出现"）。LED 侧保持原样（前置答案 + 正文）。
         """
         try:
             from src.rag.reply_composer import reply_language
@@ -64,11 +85,47 @@ class ResponseCoordinator:
             return response
         if already_answered:
             return response
+        if answer and _is_lcd_family(product_family):
+            # LCD / IFP：问到售后就只答售后 —— 不要把产品推荐话术再接在后面
+            return answer
         if not answer or answer in str(response or ""):
             return response
         return f"{answer} {response}".strip() if response else answer
 
     # ── 图片核对 ────────────────────────────────────────────────────────
+    def attach_delivery_info(
+        self, response: str, message: str, *, product_family: str = ""
+    ) -> str:
+        """客户问交付 / 交期 → 按口径回答（客户口径 2026-09-30）。
+
+        LCD / IFP 用 **LCD 专用交期话术**（面板出货，不套 LED 的箱体说法），
+        而且是**只回答**：客户问交期就答交期，后面不再跟产品推荐话术
+        （实测：客户问"你们的交付日期是多久"，回复里只有一段产品介绍，交期没答）。
+        """
+        try:
+            from src.rag.delivery_info import delivery_answer, is_delivery_question
+            from src.rag.reply_composer import reply_language
+
+            # LED 链路不经过这里：它自己那条链（script_generator）已经有交期口径，
+            # 这里再插一次会变成同一段里说两遍（客户口径：LED 一行不动）。
+            if not _is_lcd_family(product_family):
+                return response
+            if not is_delivery_question(message):
+                return response
+            answer = delivery_answer(
+                message,
+                language=reply_language(message),
+                product_family=product_family,
+            )
+        except Exception as exc:  # pragma: no cover - 防御式
+            logger.warning("[Delivery] answer failed: %s", exc)
+            return response
+        if not answer:
+            return response
+        # LCD / IFP：问到交期就只答交期
+        return answer
+
+
     def attach_vision_confirmation(self, response: str, session_id: str, message: str) -> str:
         """带图的那一轮：先把"图片里看到什么"跟客户核一遍，再继续问需求。"""
         try:
@@ -118,15 +175,32 @@ class ResponseCoordinator:
         language: str = "en",
         service_faq_answered: str = "",
         require_question: bool = False,
+        product_family: str = "",
+        offtopic_turn: bool = False,
     ) -> str:
-        """固定顺序：售后口径 → 图片核对 → **FinalResponseGuard 收口**。
+        """固定顺序：售后口径 → 交期口径 → 图片核对 → **FinalResponseGuard 收口**。
 
         v2.5+++（计划 §3）：Guard 是客户可见内容的**唯一最后一道**，
         保证一轮最多一个问题（多余的进下一轮）并把内部术语清掉。
+
+        ``product_family``：lcd / ifp 时，售后与交期问题**只回答**，后面不再跟产品话术；
+        客户说闲聊（``offtopic_turn``）时也只承接一句，不拿产品介绍顶上。
+        LED 侧行为不变（不传 product_family 就是老口径）。
         """
+        # 客户口径（2026-09-30）：LCD 会话里客户问的是"安装 / 交期"这类问题，
+        # 或者干脆在闲聊 —— 那就**照着客户问的答**，不要再念一遍产品介绍。
+        if _is_lcd_family(product_family) and offtopic_turn and not questions:
+            from .chat_reply import generate_chat_reply
+
+            logger.info("[LCD] 闲聊轮 → 按语境回一句，不拿产品话术顶上")
+            return generate_chat_reply(message, session_id=session_id) or _CHAT_ACK_EN
         text = self.attach_service_faq(
-            str(response or ""), message, already_answered=bool(service_faq_answered)
+            str(response or ""),
+            message,
+            already_answered=bool(service_faq_answered),
+            product_family=product_family,
         )
+        text = self.attach_delivery_info(text, message, product_family=product_family)
         text = self.attach_vision_confirmation(text, session_id, message)
         guarded = self._guard().finalize(
             text, questions=questions, language=language

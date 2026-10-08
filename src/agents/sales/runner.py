@@ -58,9 +58,33 @@ def _extract_display_type_from_message(message: str) -> Optional[str]:
         return None
     text = message.lower()
 
-    for dtype in ("IFP", "LED", "LCD"):
-        if DISPLAY_TYPE_PATTERNS[dtype].search(text):
-            return dtype
+    if DISPLAY_TYPE_PATTERNS["IFP"].search(text):
+        return "IFP"
+
+    has_led = bool(DISPLAY_TYPE_PATTERNS["LED"].search(text))
+    has_lcd = bool(DISPLAY_TYPE_PATTERNS["LCD"].search(text))
+
+    # 两个都提到 —— 典型是客户的**改口句**：
+    #     "no i not need a led ,i wanna a lcd"
+    # 此时不能取"先出现的那个"（先出现的往往是被否定的当前类型，见
+    # product_type_router._wanted_type），否则 previous_display_type 一直等于
+    # 旧类型 → display_type_change 检测不到 → 旧链路的需求档案不会被清空。
+    # 判定统一走路由器的"客户想要哪种"口径（唯一产品类型入口）。
+    if has_led and has_lcd:
+        try:
+            from ...dialogue.product_type_router import _wanted_type
+
+            wanted = _wanted_type(message)
+            if wanted in ("LED", "LCD"):
+                return wanted
+        except Exception:  # pragma: no cover - 防御式
+            pass
+        return "LED"  # 拿不到信号 → 保持原口径（LED 优先）
+
+    if has_led:
+        return "LED"
+    if has_lcd:
+        return "LCD"
     return None
 
 
