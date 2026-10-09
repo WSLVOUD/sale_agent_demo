@@ -23,6 +23,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from .readiness_measurements import format_measurement, size_hint_sentence
+
 logger = logging.getLogger(__name__)
 
 # 缺失项 → 面向客户的英文提问片段
@@ -669,21 +671,6 @@ def _question_for(slot: Optional[str], seed: int = 0) -> Optional[str]:
     return question_for(slot, seed=seed)
 
 
-def format_measurement(mm: Optional[float]) -> str:
-    """把毫米线索格式化成人话（1292 → 129.2 cm）。"""
-    try:
-        value = float(mm or 0)
-    except (TypeError, ValueError):
-        return ""
-    if value <= 0:
-        return ""
-    if value >= 100 and abs(value % 10) < 1e-6:
-        return f"{value / 10:g} cm"
-    if value >= 100:
-        return f"{value / 10:.1f} cm".replace(".0 cm", " cm")
-    return f"{value:g} mm"
-
-
 def _size_axis_question(profile: Any, language: str, seed: int) -> Optional[str]:
     """裸尺寸的方向确认问句（把客户给的数字填进模板）。"""
     question = question_for("size_axis", language, seed)
@@ -697,23 +684,6 @@ def _size_axis_question(profile: Any, language: str, seed: int) -> Optional[str]
 
 # 图片给出的尺寸只能用来"问客户确认"，不能直接当尺寸
 _SIZE_SLOTS = {"size", "width", "height"}
-
-
-def size_hint_sentence(profile: Any, language: str = "en") -> str:
-    """把图片估计的尺寸变成一句提示（计划第十八阶段：只能当 size_hint）。"""
-    hint = list(getattr(profile, "vision_size_hint_mm", None) or [])
-    if len(hint) < 2:
-        return ""
-    try:
-        width_m = float(hint[0]) / 1000
-        height_m = float(hint[1]) / 1000
-    except (TypeError, ValueError):
-        return ""
-    if width_m <= 0 or height_m <= 0:
-        return ""
-    if language == "zh":
-        return f"图片上看大约是 {width_m:g} 米 × {height_m:g} 米。"
-    return f"The image suggests roughly {width_m:g}m x {height_m:g}m."
 
 
 def _with_size_hint(profile: Any, slot: Optional[str], language: str, question: Optional[str]) -> Optional[str]:
