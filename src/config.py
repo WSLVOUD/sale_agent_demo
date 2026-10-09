@@ -75,10 +75,6 @@ class Config:
     # Tavily Search Configuration
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
     
-    # Text Splitting Configuration
-    CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
-    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
-
     # ── Phase 2: Reflection 预算控制 ──────────────────────────────────
     REFLECTION_MAX_ROUNDS       = int(os.getenv("REFLECTION_MAX_ROUNDS", "3"))
     REFLECTION_MAX_TOKENS       = int(os.getenv("REFLECTION_MAX_TOKENS", "2000"))
