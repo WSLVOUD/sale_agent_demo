@@ -153,63 +153,6 @@ def _answer_company_question(state: SalesState) -> str:
     )
 
 
-# ⚠️ 已弃用（2026-09-21，客户口径："明确授权 LLM 自己组织接话和问法"）：
-# 这段提示词要求"必须用一个过渡（So / By the way / That said）把接话和问句连起来"，
-# 与新一代 NATIVE 提示词（明确禁止这些套路化开头、允许 LLM 自己组织说法）方向相反。
-# 现在**没有任何调用点**（唯一使用者 _polish_question_message 也已停用）；
-# 保留在此仅作历史记录，不要重新接回主链路。
-_QUESTION_POLISH_PROMPT = """你是 LED 显示屏产品的销售，正在微信上和客户聊天。
-下面这行"草稿"是系统已经决定要问客户的问题（问什么由系统定，不能改）。
-请把它说得自然、口语化，并让它和"接住客户这句话"自然地连成一段（最多两句），
-像真人销售一口气说出来的话。
-
-草稿：{draft}
-客户刚说：{message}
-已知需求（仅供判断语气，不要复述、不要新增）：{requirement}
-最近已经发出去的话（**不要**再用它们的说法、开头和过渡词）：
-{recent}
-
-硬性规则：
-1. 询问的意思必须和草稿**完全一致**：不能换成别的问题，不能多问，也不能少问。
-2. 整段话里只能有**一个问句**（问号最多一个）。
-3. **必须有自然的过渡**：先接住客户这句话，再用一个过渡（例如 So / By the way / That said /
-   Now / 那么 / 顺便 / 话说回来）接到这一问上，读起来是**一段连贯的话**，
-   不能像两句话硬拼在一起。
-4. **必须换一种说法**（这是重点）：不要照抄草稿的句式和用词 ——
-   用同义词替换、把否定/疑问换个说法、把语序调一调，
-   也可以换成同样意思的另一种问法（例如 "Will it be indoors or outdoors?"
-   → "Is this an indoor job or an outdoor one?" / "Are we going indoors or outdoors?"）。
-   意思一模一样，但读起来不能是同一句话。
-5. **过渡词也要换着用**：不要每轮都用同一个（例如老用 "So" / "By the way"）；
-   最近用过的开头和过渡必须避开，从第 1 条里挑别的或者用别的自然说法。
-5b. **不要举例**：不要罗列"会议室 / 教室 / 商场 / 广告位"这类例子，也不要写
-   "比如 / 例如 / such as / for example / like a …" 的开头——直接问问题本身。
-6. **不要**新增任何参数、型号、价格、方案、承诺或建议；不要解释任何知识；
-   不要提"数据库/资料/检索"之类内部说法。
-7. 不要保留草稿里那种固定铺垫（例如 "That's okay —"、
-   "While we're at it,"、"Meanwhile —"），换成人话过渡；但不要跑题。
-8. 语言要求：{language_rule}
-9. 结构要求：{plan_rules}
-10. 直接输出这段话，不要 JSON、不要引号、不要解释。"""
-
-
-def _plan_rules_for_prompt(state: SalesState) -> str:
-    """v2.3 §19~§22：把 Response Planner 的表达结构翻译成给 LLM 的规则。"""
-    plan = state.get("response_plan") or {}
-    if not isinstance(plan, dict):
-        return "先自然接住客户这句话，再问这一个问题；不要像问卷，不要复述需求清单"
-    blocks = " → ".join(str(item) for item in (plan.get("blocks") or []))
-    parts = []
-    if blocks:
-        parts.append(f"按「{blocks}」的顺序组织这一段")
-    why = str(plan.get("why") or "").strip()
-    if why:
-        parts.append(f"用半句话说明为什么问它有用（{why}）")
-    parts.append("不要复述整份需求清单")
-    parts.append("不要像问卷，也不要连着问第二个问题")
-    return "；".join(parts)
-
-
 def _recent_question_list(state: SalesState, limit: int = 3) -> list:
     """最近几轮已经发给客户的话（最近的在前）。"""
     lines: list[str] = []
@@ -233,12 +176,6 @@ def _recent_question_list(state: SalesState, limit: int = 3) -> list:
     return lines
 
 
-def _recent_question_texts(state: SalesState, limit: int = 3) -> str:
-    """最近几轮已经发给客户的话（给改写作"不要重复"的参考，字符串形态）。"""
-    lines = _recent_question_list(state, limit=limit)
-    return "\n".join(f"- {item}" for item in reversed(lines)) or "（暂无）"
-
-
 def _question_temperature() -> float:
     from ....config import config as _config
 
@@ -246,64 +183,6 @@ def _question_temperature() -> float:
         return float(getattr(_config, "QUESTION_TEMPERATURE", 0.2))
     except (TypeError, ValueError):  # pragma: no cover - 防御式
         return 0.2
-
-
-_MODEL_CODE_RE = re.compile(r"\bTW\s*\d{2}\s*-", re.IGNORECASE)
-_PRICE_WORD_RE = re.compile(r"price|cost|报价|价格|多少钱|美元|\$", re.IGNORECASE)
-
-
-def _polish_question_message(
-    draft: str,
-    *,
-    state: SalesState,
-) -> str:
-    """把"要问的问题"改写成一段自然的话（不照抄模板），失败则返回空串。
-
-    问什么完全由 Gate/模板决定；这里只改措辞，并保证：
-      - 与"接住客户这句话"衔接成一段（不是两个画风）；
-      - 只有一个问句；
-      - 不新增参数 / 型号 / 价格 / 建议。
-    """
-    draft = str(draft or "").strip()
-    if not draft:
-        return ""
-    try:
-        from ....rag.query_understanding import response_language_rule
-    except Exception:  # pragma: no cover - 防御式
-        return ""
-    try:
-        message = str(state.get("current_message") or "")
-        language = reply_language(message)
-        llm = get_llm(temperature=_question_temperature())
-        plan_rules = _plan_rules_for_prompt(state)
-        prompt = _QUESTION_POLISH_PROMPT.format(
-            draft=draft,
-            message=message[:200],
-            requirement=state.get("requirements") or {},
-            recent=_recent_question_texts(state),
-            language_rule=response_language_rule(language),
-            plan_rules=plan_rules,
-        )
-        response = llm.invoke(prompt)
-        text = response.content if hasattr(response, "content") else str(response)
-        text = re.sub(r"```[a-zA-Z]*", "", str(text)).replace("```", "").strip()
-        text = text.strip('"\'“”').replace("**", "").replace("__", "").strip()
-
-        if not text or "{" in text or "}" in text:
-            return ""
-        if len(text) > 320:
-            return ""
-        if text.count("?") + text.count("？") != 1:
-            # 多问 / 没问 → 说明改跑偏了，退回模板
-            logger.info("Polished question dropped (question count != 1): %r", text[:80])
-            return ""
-        if _MODEL_CODE_RE.search(text) or _PRICE_WORD_RE.search(text):
-            logger.info("Polished question dropped (mentions model/price): %r", text[:80])
-            return ""
-        return text
-    except Exception as exc:
-        logger.warning("Question polish failed: %s", exc)
-        return ""
 
 
 def _vision_confirmation(state: SalesState) -> str:
