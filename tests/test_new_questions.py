@@ -48,7 +48,11 @@ class TestContentTypeQuestion:
         # 只说了"教堂" → 缺硬性条件，先问固装租赁（室内外已由场景确定）
         assert "environment" not in decision.missing
         assert decision.missing[0] == "installation"
-        assert "rental" in (decision.next_question or "").lower()
+        installation_question = (decision.next_question or "").lower()
+        assert "fixed installation" in installation_question
+        assert "quick-install" in installation_question
+        assert "quick-release" in installation_question
+        assert "rental" not in installation_question
 
         # ── test_every_variant_offers_both ──
         for language in ("en", "zh"):

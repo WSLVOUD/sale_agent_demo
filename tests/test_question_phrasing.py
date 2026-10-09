@@ -25,6 +25,12 @@ from tests._cases import assert_all_cases  # noqa: E402
 
 def _has_variants(slot: str) -> None:
     texts = {question_for(slot, "en", seed) for seed in range(12)}
+    if slot == "installation":
+        assert len(texts) == 1, "安装问句按客户口径只保留一种表达"
+        text = next(iter(texts)).lower()
+        assert "fixed" in text and "quick-install" in text and "quick-release" in text
+        assert "rental" not in text
+        return
     assert len(texts) >= 2, f"{slot} 只有一种问法"
 
 
@@ -32,7 +38,11 @@ def _keeps_the_content(case) -> None:
     slot, required = case
     for seed in range(12):
         text = (question_for(slot, "en", seed) or "").lower()
-        assert any(token in text for token in required), (slot, seed, text)
+        if slot == "installation":
+            assert all(token in text for token in required), (slot, seed, text)
+            assert "rental" not in text, (slot, seed, text)
+        else:
+            assert any(token in text for token in required), (slot, seed, text)
 
 
 class TestQuestionVariants:
@@ -40,7 +50,7 @@ class TestQuestionVariants:
     # 用例表（2026-09-22 计数瘦身：一条测试跑整张表，断言一条不少）
     CONTENT_CASES = [
         ("environment", ("indoor", "outdoor")),
-        ("installation", ("fixed", "rental")),
+        ("installation", ("fixed", "quick-install", "quick-release")),
         ("viewing_distance", ("how far", "distance", "away")),
         ("purpose", ("use", "application", "used")),
     ]
@@ -86,13 +96,13 @@ class TestQuestionVariants:
 
         # ── test_chinese_variants ──
         texts = {question_for("installation", "zh", seed) for seed in range(9)}
-        assert len(texts) >= 2
-        assert all("固装" in t or "固定" in t for t in texts)
+        assert len(texts) == 1
+        assert all("固定" in t and "快装快拆" in t and "灵活搬动" in t for t in texts)
 
 
-class TestPlannerKeepsSlotVariesText:
+class TestPlannerKeepsInstallationPolicy:
 
-    def test_slot_unchanged_but_wording_changes(self):
+    def test_slot_and_customer_facing_installation_meaning_are_preserved(self):
         profile = RequirementProfile.from_slots(
             {"environment": "indoor", "purpose": "conference"},
             explicit_keys={"environment", "purpose"},
@@ -105,7 +115,10 @@ class TestPlannerKeepsSlotVariesText:
             slots.add(plan["slot"])
             texts.add(plan["question"])
         assert slots == {"installation"}, "缺失槽位判定不能被措辞影响"
-        assert len(texts) >= 2, "不同轮次应换一种说法"
+        assert len(texts) == 1, "安装问句按客户口径只保留一种表达"
+        question = next(iter(texts)).lower()
+        assert "fixed" in question and "quick-install" in question and "quick-release" in question
+        assert "rental" not in question
 
 
 class TestGateQuestionVaries:
@@ -123,7 +136,10 @@ class TestGateQuestionVaries:
             for seed in range(6)
         }
         assert all(texts), "未就绪时必须给出追问"
-        assert len(texts) >= 2
+        assert len(texts) == 1
+        question = next(iter(texts)).lower()
+        assert "fixed" in question and "quick-install" in question and "quick-release" in question
+        assert "rental" not in question
 
         # ── test_missing_fields_do_not_depend_on_seed ──
         profile = RequirementProfile.from_slots(
@@ -141,34 +157,32 @@ class TestGateQuestionVaries:
         )}
 
 
-class TestInstallationQuestionIsNaturalAndRotates:
-    """实测反馈：追问安装方式的话术偏僵硬、而且感觉每次都一样。"""
+class TestInstallationQuestionUsesCustomerFacingLanguage:
+    """安装问句应使用清晰的客户口径，而不是内部 rental 术语。"""
 
-    def test_variants_are_plentiful_merged(self):
-        """合并自 4 条同类测试（瘦身；断言全部保留）。"""
+    def test_single_clear_installation_question_merged(self):
+        """合并自 4 条同类测试（客户口径更新后保留全部语义断言）。"""
 
-        # ── test_variants_are_plentiful ──
+        # ── test_installation_uses_the_current_customer_wording ──
         texts = {question_for("installation", "en", seed) for seed in range(12)}
-        assert len(texts) >= 6, texts
+        assert len(texts) == 1, texts
 
-        # ── test_all_variants_ask_fixed_or_rental ──
+        # ── test_question_asks_about_fixed_or_flexible_installation ──
         for seed in range(12):
             text = (question_for("installation", "en", seed) or "").lower()
-            assert "fixed" in text or "rental" in text, (seed, text)
+            assert "fixed installation" in text, (seed, text)
+            assert "quick-install" in text and "quick-release" in text, (seed, text)
+            assert "move around flexibly" in text, (seed, text)
+            assert "rental" not in text, (seed, text)
 
-        # ── test_consecutive_turns_never_repeat ──
-        """轮换步长为 1 → 连续 N 轮（N = 变体数）不重复同一句。"""
+        # ── test_seed_does_not_change_the_customer_facing_policy ──
         variants = QUESTION_VARIANTS["installation"]["en"]
         texts = [question_for("installation", "en", seed) for seed in range(len(variants))]
-        assert len(set(texts)) == len(texts), texts
+        assert len(set(texts)) == 1, texts
 
-        # ── test_variants_are_conversational ──
-        """不能每条都像书面条款（抽查：至少有带口语过渡的问法）。"""
+        # ── test_question_is_conversational_and_complete ──
         texts = [question_for("installation", "en", seed) or "" for seed in range(12)]
-        assert any(
-            text.startswith(("Just so", "Quick", "Should I"))
-            for text in texts
-        ), texts
+        assert all(text.startswith("Will it be") and text.endswith("?") for text in texts), texts
 
 
 class TestMultiTurnWordingChanges:
