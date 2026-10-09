@@ -25,7 +25,8 @@
 
 ### 本轮实测
 
-- `python -m pytest -q`：**690 passed, 5 failed, 1 warning**（695 项，341.69 秒）。5 个失败均与重构前基线相同：`tests/test_new_questions.py` 及 `tests/test_question_phrasing.py` 对安装问句仍要求旧的 “rental” 措辞/多种变体；当前客户口径有意使用单一的 “quick-install quick-release” 表达。本轮未更改文案或放宽这些断言。
+- `python -m pytest -q`：**695 passed, 1 warning**（501.12 秒）。唯一警告是 LangGraph 提醒未来版本会调整 `allowed_objects` 默认值；本轮未涉及该配置。
+- `tests/test_new_questions.py` 和 `tests/test_question_phrasing.py` 的旧安装问句断言已按现行客户口径更新为“固定安装 vs 快装快拆”，并明确禁止回复中出现 “rental”；生产文案未改动。
 - `python -m eval.recommendation_eval`：需求槽位准确率 **0.9914**，硬约束捕获 **0.9896**，派生捕获 **0.4003**，产品类型准确率 **1.0**。
 - `python -m eval.calculator_eval`：**14/14（1.0）**。
 - `python -m eval.retrieval_eval`：82 cases；过滤后 Recall@10 **0.9511**、MRR **0.9267**、Model Recall@10 **0.9286**、硬约束违规 **0**。
