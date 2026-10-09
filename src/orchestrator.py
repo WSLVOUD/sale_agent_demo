@@ -3,7 +3,6 @@ Orchestrator - Dual Agent Coordination
 Coordinates between Sales Agent, Solution Agent, and First Contact Flow
 """
 import logging
-import time
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -753,34 +752,15 @@ class DualAgentOrchestrator:
         # 计划 §4.2：追加气泡不再单独发给客户（已并入唯一回复）
         result.pop("extra_messages", None)
         # 计划 §8：把"这一轮 AI 问了什么 / 最终说了什么"记进 ConversationState
-        self._note_ai_turn(result, session_id, final)
+        state_service = self._turn_state_service()
+        state_service.note_ai_turn(result, session_id, final)
         # 客户口径（2026-09-22）：others / product_question 这一轮，Sales 只写了占位符
         # （"Sure."），真正发给客户的是 Solution 的答复 —— 把它写回历史，下一轮的
         # "最近 50 条"才看得到 AI 自己说过什么（否则客户回 "yes" 时无从判断在问什么）。
-        self._replace_placeholder_history(result, session_id, final.text)
+        state_service.replace_placeholder_history(result, session_id, final.text)
         result["conversation_state_before"] = plan.conversation_before
         self._finish_llm_turn(result, session_id)
         return result
-
-    def _replace_placeholder_history(
-        self, result: Dict[str, Any], session_id: str, text: str
-    ) -> None:
-        """Solution 答复的路径：用真正发出去的那条替换历史里的 Sales 占位符。"""
-        if not str(result.get("agent") or "").startswith("solution"):
-            return
-        if not text or not self.memory_store:
-            return
-        replace = getattr(self.memory_store, "replace_last_assistant", None)
-        if not callable(replace):  # pragma: no cover - 防御式（别家 store 实现）
-            return
-        try:
-            if replace(session_id, text):
-                logger.info(
-                    "[History] 用最终答复替换占位符（session=%s，%d 字）",
-                    session_id, len(text),
-                )
-        except Exception as exc:  # pragma: no cover - 留痕失败不影响业务
-            logger.warning("[History] 替换占位符失败：%s", exc)
 
     def _final_response_coordinator(self):
         coordinator = getattr(self, "_final_response_instance", None)
@@ -791,191 +771,24 @@ class DualAgentOrchestrator:
             self._final_response_instance = coordinator
         return coordinator
 
-    # ── v2.6 §8：AI 侧留痕 ───────────────────────────────────────────────
-    def _note_ai_turn(self, result: Dict[str, Any], session_id: str, final: Any) -> None:
-        try:
-            from .dialogue import get_conversation_state
+    def _turn_state_service(self):
+        from .orchestrator_state import TurnStateService
 
-            state = get_conversation_state(session_id)
-            state.note_ai_turn(
-                action=final.action,
-                question=str(result.get("pending_question") or ""),
-                slot=final.question_slot or "",
-                response=final.text,
-                turn_id=final.turn_id,
-                # 计划 §27：这一轮的 SpeechAct 也要能落进日志
-                speech_act=str((result.get("speech_act") or {}).get("speech_act") or ""),
-            )
-            result["conversation_state"] = state.to_dict()
-        except Exception as exc:  # pragma: no cover - 留痕失败不影响业务
-            logger.warning("[ConversationState] note_ai_turn failed: %s", exc)
-        self._emit_decision_audit(result, session_id, final)
+        return TurnStateService(
+            memory_store=getattr(self, "memory_store", None),
+            profile_lookup=self._stored_profile,
+        )
 
-    # ── v2.6 §28：Decision Audit ─────────────────────────────────────────
-    def _emit_decision_audit(self, result: Dict[str, Any], session_id: str, final: Any) -> None:
-        """记录"为什么这一轮问了这个问题"（只写日志，不影响业务）。"""
-        try:
-            import json
-
-            from .dialogue import get_conversation_state
-
-            state = get_conversation_state(session_id)
-            payload = {
-                "turn_id": final.turn_id,
-                "session_id": session_id,
-                "input": str(result.get("customer_input") or "")[:200],
-                "speech_act": state.current_speech_act,
-                # §28：决定之前的输入（需求档案 + 对话状态）
-                "requirement_state_before": self._requirement_summary(session_id),
-                # 2026-09-21：这一轮"听懂了什么、依据客户哪句话"
-                "understanding": result.get("understanding") or {},
-                "conversation_state_before": (
-                    result.get("conversation_state_before") or state.to_dict()
-                ),
-                "conversation_state_after": state.to_dict(),
-                "candidate_actions": list(result.get("action_candidates") or []),
-                "selected_action": final.action,
-                "discarded_actions": list(result.get("discarded_actions") or []),
-                "final_response": final.text[:400],
-                "question_count": final.question_count,
-                "question_slot": final.question_slot,
-                "validation_result": final.validation_result,
-            }
-            logger.info("[DecisionAudit] %s", json.dumps(payload, ensure_ascii=False))
-            result["decision_audit"] = payload
-        except Exception as exc:  # pragma: no cover - 审计失败不影响业务
-            logger.warning("[DecisionAudit] emit failed: %s", exc)
-
-    def _requirement_summary(self, session_id: str) -> Dict[str, Any]:
-        """当前已知需求（拿不到就留空，绝不让审计影响业务）。"""
-        try:
-            profile = self._stored_profile(session_id)
-            if profile is None:
-                return {}
-            facts = profile.to_facts() if hasattr(profile, "to_facts") else {}
-            return {str(key): value for key, value in dict(facts or {}).items()}
-        except Exception:  # pragma: no cover - 防御式
-            return {}
-
-    # ── v2.6 §5~§10：把客户这一句记进 ConversationState ──────────────────
     def _note_customer_turn(self, session_id: str, message: str, *, turn_id: str = "") -> None:
-        """客户说完一句 → 判断"在回答哪一项"，并记账（不改变既有业务判定）。"""
+        """Record the customer turn while keeping the assigned ID on the orchestrator."""
         self._current_turn_id = turn_id
-        if not str(message or "").strip():
-            return
-        try:
-            from .dialogue import get_conversation_state
+        self._turn_state_service().note_customer_turn(
+            session_id, message, turn_id=turn_id
+        )
 
-            state = get_conversation_state(session_id)
-            match = state.answer_to(message)
-            # v2.7 §18：把匹配结果留在会话状态里，收口时算 Answer Coverage 用
-            state.last_answer_match = match.to_dict()
-            state.note_customer_turn(
-                text=message,
-                answer_slot=(
-                    match.slot
-                    if match.kind in ("ANSWER_PREVIOUS_QUESTION", "ANSWER_WRONG_SLOT")
-                    else ""
-                ),
-                turn_id=turn_id,
-            )
-            # 答非所问也不能丢信息（§10）：这一句明确给出的槽位都记 ANSWERED
-            for slot in match.covered_slots:
-                if slot == match.slot:
-                    continue
-                state.note_answered(str(slot))
-            if match.kind in ("ANSWER_PREVIOUS_QUESTION", "ANSWER_WRONG_SLOT"):
-                logger.info(
-                    "[ConversationState] turn=%s %s answer_slot=%s expected=%s slots=%s",
-                    turn_id, match.kind, match.slot, match.expected_slot, list(match.slots),
-                )
-        except Exception as exc:  # pragma: no cover - 防御式
-            logger.warning("[ConversationState] note_customer_turn failed: %s", exc)
-
-    # ── v2.5++++（计划 §15）：一轮的 LLM 统计收口 ────────────────────────
     def _finish_llm_turn(self, result: Dict[str, Any], session_id: str) -> None:
-        """结束本轮记账，并把 messages / aggregated / llm_calls / latency 打到日志里。
+        self._turn_state_service().finish_llm_turn(result, session_id)
 
-        实测问题：同一轮实际打了好几次 DeepSeek，日志却是 `llm_calls=0`。
-        现在无论走哪条分支（首轮接待 / Sales / Solution / 多屏），都会在这里收口。
-        """
-        try:
-            import time as _time
-
-            from .observability.llm_tracker import get_llm_tracker
-
-            tracker = get_llm_tracker()
-            context = tracker.current_turn()
-            stats = tracker.end_turn()
-            if stats is None:
-                return
-            total_ms = ((_time.time() - context.started_at) * 1000) if context else 0.0
-            # v2.6 §27：一行日志能回答"为什么问了两个问题 / 这一轮到底做了什么"
-            action = str(result.get("action") or "")
-            question_slot = str(result.get("question_slot") or "")
-            response_count = int(result.get("response_count") or 1)
-            question_count = int(result.get("question_count") or 0)
-            final_response = result.get("final_response") or {}
-            speech_act = ""
-            try:
-                from .dialogue import get_conversation_state
-
-                speech_act = str(get_conversation_state(session_id).current_speech_act or "")
-            except Exception:  # pragma: no cover - 防御式
-                speech_act = ""
-            logger.info(
-                "[Turn] session=%s messages=%s aggregated=%s llm_calls=%s "
-                "llm_latency_ms=%s llm_tokens=%s total_ms=%s "
-                "turn_id=%s action=%s speech_act=%s question_slot=%s "
-                "response_count=%s question_count=%s validation=%s",
-                session_id,
-                context.message_count if context else 1,
-                context.aggregated if context else False,
-                stats.calls,
-                round(stats.latency_ms, 1),
-                stats.total_tokens,
-                round(total_ms, 1),
-                result.get("turn_id") or (context.turn_id if context else "-"),
-                action or "-",
-                speech_act or "-",
-                question_slot or "-",
-                response_count,
-                question_count,
-                str(final_response.get("validation_result") or "-"),
-            )
-            result["_llm_stats"] = stats.to_dict()
-            perf_summary = result.get("_perf")
-            if isinstance(perf_summary, dict):
-                # 收口发生在 perf.summary() 之后 → 这里把 v2.6 的观测字段补进去
-                perf_summary.update({
-                    "turn_id": result.get("turn_id") or (context.turn_id if context else ""),
-                    "action": action,
-                    "speech_act": speech_act,
-                    "question_slot": question_slot,
-                    "response_count": response_count,
-                    "question_count": question_count,
-                })
-            if context is not None:
-                result["_turn"] = {
-                    "message_count": context.message_count,
-                    "aggregated": context.aggregated,
-                    "turn_id": context.turn_id,
-                    # v2.6 §27：统一可观测口径
-                    "action": action,
-                    "speech_act": speech_act,
-                    "question_slot": question_slot,
-                    "response_count": response_count,
-                    "question_count": question_count,
-                    "llm_calls": stats.calls,
-                    "llm_latency_ms": round(stats.latency_ms, 1),
-                    "total_latency_ms": round(total_ms, 1),
-                }
-        except Exception as exc:  # pragma: no cover - 统计失败不影响业务
-            logger.warning("LLM tracker end_turn failed: %s", exc)
-
-
-
-    
     # ── 一个项目多条屏（客户口径 2026-09-18）─────────────────────────────
 
 
