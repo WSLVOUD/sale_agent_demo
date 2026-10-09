@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List
-
 from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
