@@ -22,13 +22,14 @@ from pathlib import Path
 
 from src.config import config
 from src.rag.corpus import build_retrieval_corpus, corpus_as_dicts, corpus_summary
-from src.rag.loader import ENVIRONMENT_METADATA_VERSION
-from src.core.embeddings import load_vectorstore, recreate_vectorstore
 from src.memory.store import memory
 from src.orchestrator import DualAgentOrchestrator
 from src.rag.rerank import sanitize_customer_response
 from src.tasks import task_manager, TaskStatus
 from src.core.fallback import fallback_manager, LLMFallbackManager, CircuitBreaker, CircuitBreakerConfig
+from src.rebuild_service import rebuild_vectorstore_task
+from src.session_state_service import restore_turn_state, snapshot_turn_state
+from src.vectorstore_service import load_or_rebuild_vectorstore, validate_vectorstore
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -274,62 +275,12 @@ def _snapshot_turn_state(session_id: str) -> dict:
     （registry 里记成 ASKED）—— 如果这些改动留着，重跑就会以为"这一项已经问过"，
     于是改问另一个问题，客户看到的就是"一个问题接着一个问题"。
     """
-    import copy
-
-    from .dialogue import get_conversation_state
-
-    snapshot: dict = {"profile": None, "requirements": None, "conversation": None}
-    try:
-        stored = memory.get_requirement_profile(session_id)
-        if stored is not None:
-            snapshot["profile"] = (
-                stored.model_dump() if hasattr(stored, "model_dump") else stored
-            )
-    except Exception as exc:  # pragma: no cover - 防御式
-        logger.warning("snapshot profile failed: %s", exc)
-    try:
-        snapshot["requirements"] = copy.deepcopy(memory.get_requirements(session_id))
-    except Exception as exc:  # pragma: no cover - 防御式
-        logger.warning("snapshot requirements failed: %s", exc)
-    try:
-        snapshot["conversation"] = copy.deepcopy(
-            get_conversation_state(session_id).__dict__
-        )
-    except Exception as exc:  # pragma: no cover - 防御式
-        logger.warning("snapshot conversation failed: %s", exc)
-    return snapshot
+    return snapshot_turn_state(session_id)
 
 
 def _restore_turn_state(session_id: str, snapshot: dict) -> None:
     """把状态退回到作废那一版运行之前（客户没见过的问题不能算问过）。"""
-    import copy
-
-    if not snapshot:
-        return
-    profile_data = snapshot.get("profile")
-    if profile_data is not None:
-        try:
-            from .models.requirement import RequirementProfile
-
-            memory.set_requirement_profile(
-                session_id, RequirementProfile.model_validate(profile_data)
-            )
-        except Exception as exc:  # pragma: no cover - 防御式
-            logger.warning("restore profile failed: %s", exc)
-    requirements = snapshot.get("requirements")
-    if requirements is not None:
-        try:
-            memory.set_requirements(session_id, copy.deepcopy(requirements))
-        except Exception as exc:  # pragma: no cover - 防御式
-            logger.warning("restore requirements failed: %s", exc)
-    conversation = snapshot.get("conversation")
-    if conversation is not None:
-        try:
-            from .dialogue import get_conversation_state
-
-            get_conversation_state(session_id).__dict__.update(copy.deepcopy(conversation))
-        except Exception as exc:  # pragma: no cover - 防御式
-            logger.warning("restore conversation failed: %s", exc)
+    restore_turn_state(session_id, snapshot)
 
 
 def _submit_turn_sync(
@@ -362,50 +313,12 @@ orchestrator: DualAgentOrchestrator = None
 vectorstore = None
 
 
-_REQUIRED_METADATA = {
-    "indoor", "outdoor", "display_type",
-    "environment_metadata_version", "product_category",
-    # Phase 1/v2.0 新增的功能性字段：缺失说明语料 schema 变过，需要重建
-    "gob", "flexible", "modules_per_cabinet",
-}
-
-
 def _validate_vectorstore(store_dir: Path, expected_count: int):
     """加载并校验一个向量库目录，返回 ``(vectorstore, count, reasons)``。
 
     reasons 为空表示这个目录是"当前语料版本"的有效向量库，可以直接用。
     """
-    try:
-        loaded = load_vectorstore(persist_dir=str(store_dir))
-    except Exception as error:
-        return None, 0, [f"加载失败: {error}"]
-
-    try:
-        collection = loaded._collection
-        count = collection.count()
-        metadatas = collection.get(include=["metadatas"]).get("metadatas", [])
-    except Exception as error:
-        return loaded, 0, [f"读取失败: {error}"]
-
-    reasons: list = []
-    if count == 0:
-        reasons.append("没有任何记录")
-    if len(metadatas) != count:
-        reasons.append(f"metadata 数量({len(metadatas)})与记录数({count})不一致")
-    if count != expected_count:
-        reasons.append(f"记录数 {count} != 期望 {expected_count}")
-    invalid = [
-        metadata for metadata in metadatas
-        if not metadata or not _REQUIRED_METADATA.issubset(metadata)
-        or not isinstance(metadata.get("indoor"), bool)
-        or not isinstance(metadata.get("outdoor"), bool)
-        or metadata.get("display_type") not in {"LED", "LCD", "IFP"}
-        or metadata.get("environment_metadata_version") != ENVIRONMENT_METADATA_VERSION
-        or metadata.get("level") != "model"
-    ]
-    if invalid:
-        reasons.append(f"{len(invalid)} 条记录的 metadata 是旧版本")
-    return loaded, count, reasons
+    return validate_vectorstore(store_dir, expected_count)
 
 
 def get_documents_for_retrieval():
@@ -439,58 +352,13 @@ async def startup_event():
             raise RuntimeError("No product documents found; cannot initialize retrieval")
         logger.info("Retrieval corpus: %s", corpus_summary(corpus_documents))
 
-        # Check if vector store needs rebuild.
-        # 依次尝试「主目录 → 稳定回退目录（<dir>_rebuilt）」：Windows 上主目录可能被
-        # 别的进程锁住，重建只能落到回退目录；下次启动若回退目录已经是**当前版本**的
-        # 有效向量库，就直接复用它，绝不再重新嵌入一遍（否则每次启动都要等一次全量重建）。
-        fresh_documents = corpus_documents
-        expected_count = len(fresh_documents)
-        primary_dir = Path(config.VECTORSTORE_DIR)
-        candidate_dirs = [primary_dir, Path(str(primary_dir) + "_rebuilt")]
-
-        collection_count = 0
-        vectorstore = None
-        for candidate in candidate_dirs:
-            sqlite_path = candidate / "chroma.sqlite3"
-            if not sqlite_path.exists() or os.path.getsize(sqlite_path) == 0:
-                continue
-            loaded, collection_count, reasons = _validate_vectorstore(candidate, expected_count)
-            if loaded is not None and not reasons:
-                vectorstore = loaded
-                collection = vectorstore._collection
-                if str(candidate) != str(primary_dir):
-                    logger.warning(
-                        "主向量库不可用 → 直接复用已重建好的向量库：%s（%d 条记录）",
-                        candidate, collection_count,
-                    )
-                    config.VECTORSTORE_DIR = str(candidate)
-                else:
-                    logger.info(
-                        "Existing vector store has valid v%s metadata: %d records",
-                        ENVIRONMENT_METADATA_VERSION, collection_count,
-                    )
-                break
-            logger.warning(
-                "向量库 %s 需要重建：%s", candidate, "; ".join(reasons) or "未知原因"
-            )
-            # 释放进程内句柄，否则文件被自己锁住、删不掉（Windows）
-            from src.core.embeddings import _release_vectorstore_handles
-
-            _release_vectorstore_handles()
-
-        if vectorstore is None:
-            logger.warning(
-                "Vector store needs rebuild: expected=%d chunks", expected_count
-            )
-            vectorstore = recreate_vectorstore(fresh_documents)
-            active_dir = getattr(vectorstore, "_active_persist_dir", config.VECTORSTORE_DIR)
-            logger.info("Vector store rebuilt and persisted at %s", active_dir)
-            config.VECTORSTORE_DIR = active_dir
-            try:
-                vectorstore = load_vectorstore(persist_dir=active_dir)
-            except Exception as error:
-                logger.warning("Could not reload vectorstore after rebuild: %s", error)
-            collection = vectorstore._collection
+        vectorstore, active_dir = load_or_rebuild_vectorstore(
+            config.VECTORSTORE_DIR,
+            corpus_documents,
+            len(corpus_documents),
+        )
+        config.VECTORSTORE_DIR = active_dir
+        collection = vectorstore._collection
 
         logger.info(
             "Vector store ready: path=%s collection=%s records=%s",
@@ -1016,45 +884,17 @@ async def _stream_chat(request: ChatRequest):
 
 async def _create_rebuild_coro(task_id_ref: list) -> dict:
     """后台重建协程（接收 task_id 引用）"""
-    # 注意：必须用 recreate_vectorstore（会先清空旧 collection）。
-    # create_vectorstore 是"追加"语义，直接用它会把语料重复写入（49 → 98）。
-    from src.core.embeddings import recreate_vectorstore
-    from src.agents.sales.runner import SalesAgentRunner
-    from src.agents.solution.runner import SolutionAgentRunner
+    return await rebuild_vectorstore_task(
+        task_id_ref[0],
+        update_progress=task_manager.update_progress,
+        on_ready=_replace_rebuilt_agents,
+    )
 
-    task_id = task_id_ref[0]
-    
-    task_manager.update_progress(task_id, 10, "加载 Model 级产品数据...")
-    corpus_documents = build_retrieval_corpus(config.DATA_DIR)
-    documents = corpus_as_dicts(corpus_documents)
-    
-    task_manager.update_progress(task_id, 30, "创建向量库...")
-    new_vectorstore = recreate_vectorstore(corpus_documents)
-    active_dir = getattr(new_vectorstore, "_active_persist_dir", config.VECTORSTORE_DIR)
-    config.VECTORSTORE_DIR = active_dir
-    task_manager.update_progress(task_id, 40, f"向量库已重建: {active_dir}")
-    
-    task_manager.update_progress(task_id, 50, "初始化 Sales Agent...")
-    new_sales_agent = SalesAgentRunner(sales_search=new_vectorstore)
-    
-    task_manager.update_progress(task_id, 70, "初始化 Solution Agent...")
-    new_solution_agent = SolutionAgentRunner(new_vectorstore, documents)
-    
-    task_manager.update_progress(task_id, 85, "初始化编排器...")
-    new_orchestrator = DualAgentOrchestrator(new_sales_agent, new_solution_agent)
-    
-    # 原子更新全局变量
-    task_manager.update_progress(task_id, 95, "更新全局状态...")
+
+def _replace_rebuilt_agents(new_vectorstore, new_orchestrator) -> None:
     global vectorstore, orchestrator
     vectorstore = new_vectorstore
     orchestrator = new_orchestrator
-    
-    task_manager.update_progress(task_id, 100, "完成")
-    
-    return {
-        "message": f"向量库重建成功，文档数: {len(documents)}",
-        "document_count": len(documents),
-    }
 
 
 @app.post("/rebuild", response_model=RebuildResponse)
