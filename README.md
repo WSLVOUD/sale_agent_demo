@@ -2,13 +2,34 @@
 
 > 基于大模型（DeepSeek）的 LED/LCD/IFP 全品类显示产品智能销售助手，采用多 Agent 协作 + 混合检索（RAG）架构，为销售团队提供实时产品推荐和技术咨询能力。
 
-> **当前版本：v2.9.6（2026-09-24）** ｜ 全量测试：`python -m pytest -q` → **760 条，约 2 分 40 秒**
+> **版本标签：v2.9.6（2026-09-24，历史版本）**。下方 2026-09-28 的 810 条测试结果也是历史快照，不代表当前工作树。
 >
-> 当前行为口径集中在下面「当前行为口径」一节；历史版本的逐条变更见文末「变更明细」。
->
-> **架构收口（2026-09-24 ~ 09-28）**：职责收敛 + 需求链路收口已完成，结论见下方
-> 「架构收口」一节。文中历史章节的数字（如 591 条）是当时的快照，保留不动；
-> 版本历史以 Git 为准（`git log --oneline`）。
+> 当前架构与本轮真实验收结果见下方「当前架构与验收」；历史架构收口和指标保留在后文，便于追溯。
+
+## 当前架构与验收（2026-10-09）
+
+本轮按职责边界拆分模块，不改变 LED/LCD/IFP 路由、唯一推荐 Gate、API 契约或最终回复出口。
+
+| 模块 | 当前职责 |
+|------|----------|
+| `src/orchestrator.py` / `src/orchestrator_state.py` | Turn 编排与对话状态服务 |
+| `src/agents/sales/nodes/requirement.py` | 需求流程协调；对话意图、确认回应、上下文维护及 LCD 适配在相邻辅助模块 |
+| `src/rag/query_understanding.py` | 查询理解协调；语言、测量解析、槽位抽取及检索查询在独立模块 |
+| `src/rag/readiness.py` | 唯一推荐准入与计算准入 Gate；尺寸提示格式化位于 `readiness_measurements.py` |
+| `src/dialogue/product_type_router.py` | 唯一 `route_display_type()` 决策入口；LCD / IFP 下一步由 `lcd_decision.py` 统一决定 |
+| `src/rag/reply_composer.py` | 兼容入口与必要协调；语言安全、产品事实、商业回答和兜底文案各归其职责模块 |
+| `src/api.py` | HTTP 路由、参数校验与服务调用；向量库校验/复用、会话快照、重建任务分别位于 `vectorstore_service.py`、`session_state_service.py`、`rebuild_service.py` |
+| `tests/architecture/` | 保护唯一决策入口、层间边界和核心架构契约；行为回归仍由业务测试验证 |
+
+**多屏维护风险（本轮禁改）**：`src/rag/multi_screen.py` 中仍有两个同名 `_share_common_facts()` 定义，后一个会覆盖前一个。本轮未修改或迁移该模块；如需处理，应另开专项并补跑多屏回归。
+
+### 本轮实测
+
+- `python -m pytest -q`：**690 passed, 5 failed, 1 warning**（695 项，341.69 秒）。5 个失败均与重构前基线相同：`tests/test_new_questions.py` 及 `tests/test_question_phrasing.py` 对安装问句仍要求旧的 “rental” 措辞/多种变体；当前客户口径有意使用单一的 “quick-install quick-release” 表达。本轮未更改文案或放宽这些断言。
+- `python -m eval.recommendation_eval`：需求槽位准确率 **0.9914**，硬约束捕获 **0.9896**，派生捕获 **0.4003**，产品类型准确率 **1.0**。
+- `python -m eval.calculator_eval`：**14/14（1.0）**。
+- `python -m eval.retrieval_eval`：82 cases；过滤后 Recall@10 **0.9511**、MRR **0.9267**、Model Recall@10 **0.9286**、硬约束违规 **0**。
+- `python -m eval.dialogue.run_dialogue_eval`：12 cases；一轮一问、action 准确率及问题槽位准确率均为 **1.0**，评估通过。
 
 ## 架构收口（2026-09-24 ~ 09-28）
 
