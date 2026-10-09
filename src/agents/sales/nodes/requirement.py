@@ -1,7 +1,7 @@
 """requirement_mining node - progressive requirement mining."""
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, List
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -9,102 +9,32 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from ..state import SalesState
 from ....config import config
 from ....models.legacy_adapter import rebuild_legacy_view
+from .acknowledgement import (
+    _ACK_PROMPT,
+    _ACK_STYLE_RULES,
+    _ack_temperature,
+    generate_offtopic_ack as _generate_offtopic_ack_impl,
+    _recent_ack_hints,
+)
+from .dialogue_intent import _is_product_or_business_question, is_offtopic_message
+from .lcd_requirement_adapter import (
+    apply_lcd_requirement_result as _lcd_requirement_result,
+    decide_lcd_requirement as _decide_lcd_requirement,
+    lcd_dialogue_action as _lcd_dialogue_action,
+)
+from .requirement_context import (
+    CONTEXT_DEPENDENT_FIELDS,
+    SCENE_CATEGORIES,
+    FACT_FIELDS as _FACT_FIELDS,
+    LEGACY_TO_PROFILE_FIELDS as _LEGACY_TO_PROFILE_FIELDS,
+    clear_context_on_scene_change,
+    facts_added as _facts_added,
+    get_scene_category as _get_scene_category,
+    should_clear_field_on_scene_change as _should_clear_field_on_scene_change,
+    snapshot_facts as _snapshot_facts,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# 中文数字转换表
-_CHINESE_DIGITS = {
-    "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
-    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
-    "百": 100, "千": 1000,
-}
-
-
-def _chinese_to_number(text: str) -> int:
-    """将中文数字转换为整数"""
-    if not text:
-        return 0
-    result = 0
-    temp = 0
-    for char in text:
-        if char in _CHINESE_DIGITS:
-            val = _CHINESE_DIGITS[char]
-            if val >= 100:
-                result = (result or 1) * val
-                temp = 0
-            else:
-                temp = temp * 10 + val
-    result += temp
-    return result
-
-
-def _parse_number(text: str) -> int:
-    """解析字符串中的数字，支持中文和阿拉伯数字"""
-    # 先尝试阿拉伯数字
-    digit_match = re.search(r'(\d+)', text)
-    if digit_match:
-        return int(digit_match.group(1))
-    # 再尝试中文数字
-    cn_match = re.search(r'[一二两三四五六七八九十百千]+', text)
-    if cn_match:
-        return _chinese_to_number(cn_match.group())
-    return 0
-
-
-ADDITIONAL_CONTEXT_KEYS = ["pixel_pitch", "rental", "quick_install", "indoor", "outdoor"]
-
-# 场景切换时需要清理的字段：legacy 字段名 → RequirementProfile 字段名
-_LEGACY_TO_PROFILE_FIELDS: dict = {
-    "display_type": ("display_type",),
-    "size": ("target_width_m", "target_height_m", "screen_size_hint_mm"),
-    "brightness": ("brightness_min_nit", "brightness_max_nit"),
-}
-
-# 场景分类 - 用于检测上下文是否发生重大变化
-# 注意：M1 之后 requirements 是 RequirementProfile 的投影，usage 可能是规范化 token
-# （conference / church / advertising …），所以这里两套写法都要认。
-SCENE_CATEGORIES = {
-    "meeting": [
-        "会议室", "会议", "教室", "培训", "教学", "学校", "课堂",
-        "conference", "classroom", "office", "control_room", "hotel",
-        "restaurant", "airport", "exhibition", "showroom", "museum", "hall",
-        "retail", "hospital", "bank",
-    ],
-    "church": ["教堂", "礼拜", "宗教", "礼拜堂", "church"],
-    "stage": ["舞台", "演唱会", "演出", "表演", "剧场", "stage", "concert"],
-    "outdoor": ["室外", "户外", "露天", "外墙", "广场", "体育场", "advertising", "stadium"],
-}
-
-# 上下文相关字段 - 场景变化时应清除
-CONTEXT_DEPENDENT_FIELDS = {
-    "meeting": ["display_type"],  # 会议室可能需要 IFP
-    "church": ["display_type", "size"],  # 教堂不需要手写屏，尺寸需要重新确定
-    "stage": ["display_type", "size"],
-    "outdoor": ["brightness"],
-}
-
-
-def _get_scene_category(usage: str) -> str:
-    """根据 usage 返回场景分类"""
-    if not usage:
-        return "unknown"
-    for category, keywords in SCENE_CATEGORIES.items():
-        if any(kw in usage for kw in keywords):
-            return category
-    return "unknown"
-
-
-def _should_clear_field_on_scene_change(old_category: str, new_category: str, field: str) -> bool:
-    """判断场景变化时是否应清除某字段"""
-    if old_category == new_category:
-        return False
-    # 场景类别发生变化
-    if new_category in ["church", "stage", "outdoor"] and field == "display_type":
-        return True  # 非会议室场景不需要 IFP
-    if old_category == "meeting" and new_category != "meeting" and field == "size":
-        return True  # 离开会议室场景时，之前的面积可能不适用
-    return False
 
 
 def _rule_based_inference(message: str, requirements: dict) -> dict:
@@ -246,75 +176,11 @@ _TURN_REQUIREMENT_KEYS = (
 )
 
 
-_FACT_FIELDS = (
-    "display_type",
-    "environment",
-    "purpose",
-    "installation",
-    "viewing_distance_m",
-    "target_width_m",
-    "target_height_m",
-    "pixel_pitch_mm",
-    "brightness_min_nit",
-    "brightness_max_nit",
-    "budget_level",
-)
-
-
 def _is_question_message(message: str) -> bool:
     """客户是不是在提问（与 Solution 侧共用同一份规则，见 query_understanding）。"""
     from ....rag.query_understanding import looks_like_question
 
     return looks_like_question(message)
-
-
-_ACK_PROMPT = """你是 LED/LCD 显示屏产品的销售，正在微信上和客户聊天。
-客户刚说的这句话**与产品需求无关**（寒暄、闲聊、感叹、题外话、随口一提，
-甚至是新闻、天气、"你有鞋子吗"这类完全跑题的话）。
-
-请像真人销售一样自然接一句（最多两句，口语化），**并且一定要把话头带回我们的产品**。
-
-硬性规则：
-1. 先"接住"这句话：表示听到了 / 表示理解 / 顺着他的话头轻轻应一句 —— 但不许敷衍到
-   只剩客套（"Got it" / "noted" 这种单独成句就是敷衍）。
-2. **必须收在"回到客户的屏幕需求"上**：用一句自然的过渡把话题拉回来，
-   例如回到他已经说过的场景 / 尺寸 / 用途，或提一句"选屏"这件事本身。
-   不要把话题停在闲聊上就结束。
-3. **不要问两个问题**：如果系统会给这一轮另外接一个需求问题，你只负责接话 + 过渡；
-   自己不要重复问一遍需求。
-4. **绝对不要**回答任何知识性、技术性问题（新闻、时事、鞋子、电视剧……一律不展开、
-   不评论、不给建议）；不要给参数、型号、价格、方案。
-5. **不许和上下文冲突**：客户之前说过的情况（室内/户外、LED/LCD、尺寸、用途）必须一致，
-   不许出现相反或无关的产品说法；也不要凭空冒出型号或报价。
-6. 不要复述客户整句话；不要客套话堆砌；不要说"作为AI / 作为助手"。
-7. 每次换一种说法，不要固定句式，可以让语气自然一点。
-8. 语言要求：{language_rule}
-9. 直接输出这一句回应，不要 JSON、不要引号、不要解释。"""
-
-# 客户这句话是不是"我们该正面回答的"（产品/规格/价格/交期/公司信息）
-_PRODUCT_TERMS_RE = re.compile(
-    r"\bTW\s*\d{2}\b|\bP\s*\d(?:\.\d+)?\b|\b(?:led|lcd|ifp|cob|gob|hdr|ip6[56])\b|"
-    r"pixel\s*pitch|brightness|refresh|resolution|\bnit\b|specs?\b|models?\b|series\b|"
-    r"warrant(?:y|ies)|guarantee|certificat(?:e|ion)|"
-    r"显示屏|屏幕|大屏|单色屏|点间距|亮度|刷新率|分辨率|型号|规格|参数|防水|像素|屏体|屏",
-    re.IGNORECASE,
-)
-
-
-# ── 中文业务问题补充词表 ────────────────────────────────────────────────
-# 【修复】客户用中文问"能不能定制 / 交付日期多久 / 有质保吗 / 有代理商吗"这类
-# 业务问题时，上面的词表经常匹配不上，于是被当成"与需求无关的话"：
-# 只回一句 "Got it, …" 接话，客户真正的问题**没有任何回答**
-# （实测日志："我能定制产品吗"、"你们的交付日期是多久"）。
-_ZH_BUSINESS_TERMS_RE = re.compile(
-    r"定制|订制|定做|订做|改尺寸|加工|OEM|ODM|"
-    r"质保|保修|售后|维修|认证|证书|检测报告|"
-    r"代理|经销商|分销|工厂|厂家|"
-    r"付款|定金|订金|预付|发票|运费|发货|到货|交付|交货|工期|生产周期|"
-    r"亮度|分辨率|刷新|点间距|安装方式|"
-    r"能(?:不)?能做|可以(?:不)?可以|支持吗|有.{0,4}吗",
-    re.IGNORECASE,
-)
 
 
 # 换产品大类时要作废的"上一类别"需求事实：
@@ -384,158 +250,6 @@ def _sync_profile_display_type(state: Any, profile: Any) -> List[str]:
     if cleared:
         logger.info("[ProductType] 换了产品大类 → 清掉上一类别的需求事实：%s", cleared)
     return cleared
-
-
-def _is_product_or_business_question(message: str, *, last_asked_slot: str = "") -> bool:
-    """客户这句话是不是"我们该正面回答的问题"。
-
-    True = 产品/规格/价格/交期/公司信息（走正常回答路径）；
-    False = 与业务无关的闲聊、题外话（哪怕是问句，也只"接住"再继续问需求）。
-    """
-    text = str(message or "")
-    if _PRODUCT_TERMS_RE.search(text) or _ZH_BUSINESS_TERMS_RE.search(text):
-        return True
-    try:
-        from ....rag.company_info import is_company_question
-        from ....rag.delivery_info import is_delivery_question
-        from ....rag.reply_composer import is_price_question_with_context
-    except Exception:  # pragma: no cover - 防御式
-        return False
-    try:
-        return bool(
-            is_company_question(text)
-            or is_delivery_question(text)
-            # 带上下文：客户在回答"价格 vs 质量"时说的 cost 是偏好，不算"问价问题"
-            or is_price_question_with_context(text, last_asked_slot=last_asked_slot)
-        )
-    except Exception:  # pragma: no cover - 防御式
-        return False
-
-
-def is_offtopic_message(
-    message: str,
-    *,
-    rule_slots: Optional[Dict[str, Any]] = None,
-    semantic_payload: Optional[Dict[str, Any]] = None,
-    usage: str = "",
-    last_asked_slot: str = "",
-) -> bool:
-    """客户这句话是不是**与需求无关**（闲聊 / 寒暄 / 题外话）。
-
-    客户口径（2026-09-22）：判定要看"这句话在语境里是不是在聊需求"，
-    **不是**关键词匹配、也不是"有没有回答上一问"：
-
-        · 语境里的语义理解（LLM 抽取出的需求字段 semantic_payload）+ 规则解析
-          （viewing distance / size / pitch / environment …）里有任何一项 → 有关；
-        · 客户问的是产品 / 规格 / 价格 / 交期 / 公司信息 → 有关（要正面回答）；
-        · 其它（"haha i am in nairobi" / "nice weather"）→ 无关，只承接。
-
-    返回 True 表示"这一句是闲聊" —— 收口层据此决定只承接还是接住 + 追问
-    （见 ``src/dialogue/continuation_budget.py``）。
-    """
-    if rule_slots or semantic_payload or usage:
-        return False
-    return not _is_product_or_business_question(
-        str(message or ""), last_asked_slot=last_asked_slot
-    )
-
-
-def _ack_temperature() -> float:
-    from ....config import config as _config
-
-    try:
-        return float(getattr(_config, "ACK_TEMPERATURE", 0.7))
-    except (TypeError, ValueError):  # pragma: no cover - 防御式
-        return 0.7
-
-
-# ── 接话（ack）写法补充规则 ──────────────────────────────────────────────
-# 客户口径（2026-09-18）：客户每说完一件事，AI 只会 "Got it / Understood"，
-# 太死板。要求：顺着客户刚说的内容说、每次换一种说法、不许用烂开头，
-# 但仍**只准一句**，不许提问（问需求由系统另起一句，并且两句话要自然连成一段）。
-_ACK_STYLE_RULES = """
-
-【接话补充规则 · 客户口径】
-1. **禁止**用这些已经用烂的开头：Got it / Okay / OK / Understood / Sure / Thanks for that /
-   好的 / 收到 / 了解 / 明白。第一句就直接顺着客户的话说。
-2. **顺着客户这句话的具体内容说**：他提到场地就说场地、提到距离就说距离、
-   提到用途 / 担忧 / 问题就接那个点；不要只回一句空泛的"收到 / 明白了"。
-3. **每次换一种说法**：不能和下面这些最近已经发出去的接话雷同（开头、句式都要换）。
-最近已发出的接话：
-{recent}
-"""
-
-
-def _recent_ack_hints(state: SalesState, limit: int = 3) -> str:
-    """最近几轮已经发给客户的话（供 ack 参考，避免重复）。"""
-    lines: list[str] = []
-    for item in reversed(state.get("messages") or []):
-        if isinstance(item, dict):
-            role = str(item.get("role") or item.get("type") or "")
-            content = str(item.get("content") or "")
-        else:  # pragma: no cover - LangChain 消息对象
-            role = str(getattr(item, "type", "") or "")
-            content = str(getattr(item, "content", "") or "")
-        if role not in ("assistant", "ai"):
-            continue
-        text = " ".join(content.split())
-        if not text:
-            continue
-        lines.append(f"- {text[:160]}")
-        if len(lines) >= limit:
-            break
-    return "\n".join(reversed(lines)) or "（暂无）"
-
-
-def _generate_offtopic_ack(
-    message: str,
-    *,
-    requirement: str = "",
-    language: str = "en",
-) -> str:
-    """客户说了与需求无关的话时，用较高温度生成一句自然的"接住"话术。
-
-    与需求抽取分开调用：抽取仍是 temperature=0（稳定、不编参数），
-    这里用 ``config.ACK_TEMPERATURE``（默认 0.7）让措辞发散、不重复；
-    并且严格禁止回答知识性问题（见 _ACK_PROMPT）。
-    """
-    try:
-        from ....rag.query_understanding import response_language_rule
-        from ....rag.reply_composer import _clean_llm_ack
-    except Exception:  # pragma: no cover - 防御式
-        return ""
-    try:
-        llm = ChatOpenAI(
-            model=config.MODEL_NAME,
-            temperature=_ack_temperature(),
-            api_key=config.DEEPSEEK_API_KEY,
-            base_url="https://api.deepseek.com",
-        )
-        system = SystemMessage(
-            content=_ACK_PROMPT.format(language_rule=response_language_rule(language))
-        )
-        human = HumanMessage(
-            content=(
-                f"客户这句话：{message}\n"
-                f"（已知需求，仅供判断语气，不要复述）：{requirement or '{}'}"
-            )
-        )
-        response = llm.invoke([system, human])
-        text = response.content if hasattr(response, "content") else str(response)
-        cleaned = _clean_llm_ack(text, language)
-        # 模型没按要求给口语回应（返回了 JSON / 代码块之类）→ 宁可不加这一句，
-        # 也不能把内部结构或无关内容发出去。
-        if not cleaned or "{" in cleaned or "}" in cleaned or cleaned.startswith(("[", "(")):
-            logger.info("Off-topic ack dropped (not a natural sentence): %r", cleaned[:60])
-            return ""
-        return cleaned
-    except Exception as exc:
-        logger.warning("Off-topic ack generation failed: %s", exc)
-        return ""
-
-
-def _snapshot_facts(profile) -> dict:
-    return {field: getattr(profile, field, None) for field in _FACT_FIELDS}
 
 
 def _lcd_domain(state: Any, profile: Any) -> str:
@@ -614,179 +328,29 @@ def _type_gate_result(state: Any, profile: Any):
     return state
 
 
-def _lcd_requirement_action(state: Any, profile: Any, message: str):
-    """LCD / IFP → 唯一决策入口（计划 Phase 5）。LED 返回 None（原链路继续）。"""
-    if not _lcd_domain(state, profile):
-        return None
-    try:
-        from ....dialogue.lcd_decision import lcd_turn
-        from ....dialogue.lcd_category_understanding import understand_lcd_category
-
-        # ── 客户开始说"新的一块屏" → **不继承**上一块的需求事实（客户口径 2026-10）──
-        # 实测：客户先做展览会（exhibition / 3x3 拼接墙），后来说
-        # "我还需要一款屏幕，可有手写的会议室使用的" —— 旧实现把它当成同一块屏的
-        # 补充需求，场景仍是 exhibition、3x3 也留着，最后推成
-        # "你的展览会 3x3 拼接墙用 9 台会议平板"。
-        # 判定复用 LED 多屏那套显式信号（another / 还需要一款 / also need …），
-        # 只在"信号明确"时才开新条目，避免把"客户改需求"误判成第二块屏。
-        try:
-            from ....dialogue.lcd_decision import reset_lcd_requirement_facts
-            from ....rag.project_items import detect_new_item
-
-            is_new_item, why = detect_new_item(
-                str(message or ""),
-                profile,
-                already_recommended=bool(state.get("already_recommended")),
-            )
-            if is_new_item:
-                cleared = reset_lcd_requirement_facts(profile)
-                state["lcd_new_item"] = {"reason": why, "cleared": cleared}
-                logger.info(
-                    "[LCD] 客户开始说新的一块屏（%s）→ 不继承上一块的需求，"
-                    "已清 %d 个字段",
-                    why, len(cleared),
-                )
-        except Exception as exc:  # pragma: no cover - 防御式
-            logger.warning("[LCD] new-item check failed: %s", exc)
-
-        # 上一轮 AI 问的原话：客户答 "yes" 时要能接住其中的提案（3.5mm / 65" / 3x3）
-        last_question = ""
-        conversation = ""
-        try:
-            from ....dialogue import get_conversation_state
-            from ....memory.history_window import dialogue_window_text
-
-            session_id = str(state.get("session_id") or "")
-            if session_id:
-                last_question = str(
-                    getattr(get_conversation_state(session_id), "last_ai_question", "") or ""
-                )
-                conversation = dialogue_window_text(session_id)
-        except Exception:  # pragma: no cover - 防御式
-            last_question = ""
-
-        # ── 品类由**语境**决定（客户口径 2026-09-30）──────────────────────────
-        # 不许用关键词触发某条链路：先让模型读完"我们问过什么 + 客户已经答过什么"
-        # 再定品类，然后按这个品类的顺序推进需求询问。模型不可用时返回 {}，
-        # lcd_turn 会退回关键词兜底（降级路径）。
-        category_signal: dict = {}
-        try:
-            session_id = str(state.get("session_id") or "")
-            category_signal = understand_lcd_category(
-                str(message or ""),
-                session_id=session_id,
-                conversation=conversation,
-                asked_question=last_question,
-                profile=profile,
-            )
-            if category_signal:
-                logger.info(
-                    "[LCD] turn understanding: category=%s confidence=%s facts=%s reason=%s",
-                    category_signal.get("category"),
-                    category_signal.get("confidence"),
-                    category_signal.get("facts"),
-                    category_signal.get("reason"),
-                )
-        except Exception as exc:  # pragma: no cover - 防御式
-            logger.warning("[LCD] category understanding failed: %s", exc)
-            category_signal = {}
-
-        _profile, action = lcd_turn(
-            profile,
-            str(message or ""),
-            last_question=last_question,
-            category_signal=category_signal,
-        )
-        return action
-    except Exception as exc:  # pragma: no cover - 防御式
-        logger.warning("[LCD] requirement decision failed: %s", exc)
-        return None
-
-
-def _lcd_dialogue_action(action: Any, question: str) -> Dict[str, Any]:
-    """LCD 决策层的 ``next_action`` → 这一轮的**对话动作**。
-
-    客户口径（2026-09-30）："完全把两个链路隔离开，不要改动 LED，只把 LCD 里掺杂的
-    LED 链路隔离开。"
-
-    以前 LCD 只写 ``pending_question``，**动作**却由通用层（给 LED 场景调出来的
-    DialoguePolicy）决定 —— 客户答一个 "no"，通用层判成 CORRECTION → clarify_only
-    → LCD 已经算好的下一问被吞掉 → 回复为空 → 兜底话术顶上（实测）。
-
-    现在动作由 LCD 自己给：已经算好下一问 → ``ask_only``；需求齐全 → ``recommend_only``。
-    LED 侧一行不动（这个函数只在 LCD 分支里被调用）。
-    """
-    slot = str(getattr(action, "question_slot", "") or "")
-    if bool(getattr(action, "confirmed", False)):
-        return {
-            "action": "recommend_only",
-            "target_slot": "",
-            "question": "",
-            "reason": "lcd_requirement_complete",
-            "priority": 0,
-            "priority_label": "lcd_requirement_complete",
-            "source": "lcd_chain",
-        }
-    if not slot or not question:
-        return {}
-    return {
-        "action": "ask_only",
-        "target_slot": slot,
-        "question": question,
-        "reason": "lcd_requirement_chain",
-        "priority": 0,  # 硬性条件缺失 = 最高优先级（不被通用候选压过）
-        "priority_label": "lcd_hard_gate_missing",
-        "source": "lcd_chain",
-    }
-
-
-def _lcd_requirement_result(state: Any, profile: Any, action: Any) -> Any:
-    """把 LCD 唯一 Next Action 写进 state（pending_question / Gate 口径一致）。"""
-    state["requirement_profile"] = profile
-    state["lcd_action"] = action.to_dict()
-    slot = str(action.question_slot or "")
-    question = str(action.question or "") if slot else ""
-    state["pending_question"] = question
-    state["pending_slot"] = slot
-    profile.last_asked_slot = slot
-    if slot:
-        profile.record_ask(slot)
-    # ── 这一轮的动作也由 LCD 决策层说了算（客户口径 2026-09-30）─────────────
-    # 通用层（SpeechAct + DialoguePolicy）在这一行之前已经给了一个动作，那是
-    # 给 LED 场景调的口径；LCD 会话里必须换成 LCD 自己的结论，否则客户答一个
-    # "no" 就会让通用层把 LCD 算好的下一问吞掉。
-    lcd_action_payload = _lcd_dialogue_action(action, question)
-    if lcd_action_payload:
-        state["dialogue_action"] = lcd_action_payload
-        logger.info(
-            "[LCD] 本轮动作由 LCD 决策层决定：action=%s slot=%s",
-            lcd_action_payload["action"], slot or "-",
-        )
-    state["recommendation_gate"] = {
-        "ready": bool(action.confirmed),
-        "gate": "lcd_requirement",
-        "missing": list(action.missing_fields),
-        "reason": "LCD 需求链（LCD_IFP 整改计划 Phase 5/6）",
-        "next_question": question or None,
-        "lcd_category": action.lcd_category,
-    }
-    state["should_generate_solution"] = bool(action.confirmed)
-    logger.info(
-        "[LCD] category=%s next=%s missing=%s question=%r",
-        action.lcd_category, action.next_action, action.missing_fields, question,
+def _lcd_requirement_action(state: Any, profile: Any, message: str) -> Any:
+    """Preserve the requirement-node API while delegating LCD decisions."""
+    return _decide_lcd_requirement(
+        state,
+        profile,
+        message,
+        lcd_domain=_lcd_domain,
     )
-    return state
 
 
-def _facts_added(before: dict, profile) -> bool:
-    """这一轮是否**新增/更新**了需求事实（用于决定要不要重新推荐）。"""
-    for field in _FACT_FIELDS:
-        new_value = getattr(profile, field, None)
-        if new_value in (None, "", [], {}):
-            continue
-        if new_value != before.get(field):
-            return True
-    return False
+def _generate_offtopic_ack(
+    message: str,
+    *,
+    requirement: str = "",
+    language: str = "en",
+) -> str:
+    """Preserve the node's model-injection point for acknowledgement generation."""
+    return _generate_offtopic_ack_impl(
+        message,
+        requirement=requirement,
+        language=language,
+        llm_factory=ChatOpenAI,
+    )
 
 
 def _message_role_content(msg) -> tuple[str, str]:
@@ -1303,29 +867,7 @@ ack 的写法（很重要，销售不能只会追问）：
         )
 
         # ── 场景切换 → 清掉依赖上一个场景的字段（原来在 legacy 字典上做）──────
-        old_category = _get_scene_category(previous_purpose or "")
-        new_category = _get_scene_category(profile.purpose or "")
-        if (
-            previous_purpose
-            and profile.purpose
-            and old_category != new_category
-            and old_category != "unknown"
-        ):
-            fields_to_clear: list = []
-            for _old_scene, fields in CONTEXT_DEPENDENT_FIELDS.items():
-                if _should_clear_field_on_scene_change(
-                    old_category, new_category, fields[0] if fields else ""
-                ):
-                    fields_to_clear.extend(fields)
-            for legacy_field in set(fields_to_clear):
-                for profile_field in _LEGACY_TO_PROFILE_FIELDS.get(legacy_field, ()):
-                    if getattr(profile, profile_field, None) is not None:
-                        logger.info(
-                            "Clearing stale profile field '%s' (scene %s → %s)",
-                            profile_field, old_category, new_category,
-                        )
-                        setattr(profile, profile_field, None)
-                        profile.sources.pop(profile_field, None)
+        clear_context_on_scene_change(profile, previous_purpose or "")
 
         # IFP 安全规则同理：legacy 侧既然已经把 display_type 去掉了，Profile 也要去掉
         if state["requirements"].get("display_type") in (None, "") and profile.display_type == "IFP":
