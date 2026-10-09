@@ -123,9 +123,21 @@ def conflict_message(profile: Any) -> Optional[str]:
     stored = list(getattr(profile, "conflicts", None) or [])
     if stored:
         slot = (getattr(profile, "conflict_slots", None) or ["environment"])[0]
+        # 【客户口径 2026-10】**绝不能**把内部冲突串贴给客户。
+        # 实测泄露过："could you confirm the environment?
+        #              (installation_conflict: rule=fixed vs semantic=rental)"
+        # —— 括号里那串是我们的内部诊断信息，客户看不懂也不该看到。
+        # 只问需要确认的那一项，用大白话。
+        _plain = {
+            "installation": (
+                "installation — is it a fixed install, or a quick-install "
+                "quick-release setup?"
+            ),
+            "environment": "environment — is it indoors or outdoors?",
+        }
         return (
-            f"Just to make sure I have it right, could you confirm the {slot}? "
-            f"({stored[0]})"
+            f"Just to make sure I have it right, could you confirm the "
+            f"{_plain.get(slot, slot)}?"
         )
     return None
 

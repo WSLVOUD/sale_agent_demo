@@ -31,8 +31,8 @@ MISSING_LABELS: Dict[str, str] = {
     "environment": "whether it will be installed indoors or outdoors",
     "purpose": "the application scenario",
     "content_type": "whether the screen will play video, show images, or both",
-    # 【客户口径 2026-10】问客户只说安装形态，不说 "rental"
-    "installation": "whether it is a fixed installation or a modular quick-release cabinet",
+    # 【客户口径 2026-10】问客户只说安装形态：固定安装 / 快装快拆、可灵活搬动
+    "installation": "whether it is a fixed installation or a quick-install quick-release setup you can move around",
     "pixel_pitch": "the pixel pitch you have in mind (P2.5, P3, P5 ...)",
     "viewing_distance": "roughly how far viewers will stand from the screen",
     "price_preference": "whether the price or the quality matters more to you",
@@ -56,8 +56,8 @@ _HUMAN_SLOT_LABELS: Dict[str, str] = {
     "target_height_mm": "the screen height",
     "pitch": "the pixel pitch you have in mind (P2.5, P3, P5 ...)",
     "brightness": "the brightness you need",
-    # 【客户口径 2026-10】问客户只说安装形态，不说 "rental"
-    "installation_or_distance": "whether it will be a fixed installation or a modular quick-release cabinet",
+    # 【客户口径 2026-10】问客户只说安装形态：固定安装 / 快装快拆、可灵活搬动
+    "installation_or_distance": "whether it will be a fixed installation or a quick-install quick-release setup you can move around",
     # LCD / IFP（计划 Phase 5）：给 LLM 的英文说法（找不到槽位名时不许回落成 lcd_xxx）
     "lcd_category": "what the screens will be used for",
     "lcd_size": "the screen size you have in mind (in inches)",
@@ -168,29 +168,18 @@ QUESTION_VARIANTS: Dict[str, Dict[str, tuple[str, ...]]] = {
         ),
     },
     "installation": {
-        # 【客户口径 2026-10】问客户时**不许出现 "rental"** —— 那是我们的内部口径
-        # （路由里照记 installation=rental / is_rental）。对客户只说**安装形态**：
-        # 固定安装，还是块状快拆（可以一块块拆装搬走）。
+        # 【客户口径 2026-10】
+        # · 问客户时**不许出现 "rental"** —— 那是内部口径（路由里照记
+        #   installation=rental / is_rental），只用于检索与硬过滤；
+        # · **只留一种说法**把意思表达清楚即可，具体措辞交给 LLM 润色
+        #   （每次换句式，不能每句都一样）；
+        # · 意思：**固定安装**，还是**快装快拆、可以灵活搬动的**。
         "en": (
-            "Will it be a fixed installation, or a modular quick-release cabinet you can "
-            "take apart and move?",
-            "Does the screen stay installed on site, or do you need the kind you can break "
-            "down and carry?",
-            "Just so I quote the right setup — fixed installation, or the modular "
-            "quick-release build?",
-            "Fixed installation, or modular quick-release — which one fits your project?",
-            "Is this a long-term installation, or a cabinet you'll assemble and take down?",
-            "Should I plan this as a permanent installation, or a quick-release modular one?",
-            "Quick one — fixed installation or modular quick-release?",
-            "Permanent installation, or the block-by-block quick-release kind?",
+            "Will it be a fixed installation, or a quick-install quick-release setup you "
+            "can move around flexibly?",
         ),
         "zh": (
-            "是固定安装，还是块状快拆的（可以一块块拆下来搬走）？",
-            "这块屏是固定安装的，还是块状快拆的？",
-            "安装方式是长期固定安装，还是块状快拆、方便拆装搬运的？",
-            "这块屏是固定在现场，还是块状快拆、可以拆下来搬走的？",
-            "简单确认下——固定安装，还是块状快拆的？",
-            "这个是长期固定安装的项目，还是块状快拆、需要经常拆装搬运的？",
+            "是固定安装，还是快装快拆、可以灵活搬动的？",
         ),
     },
     # 点间距：先问客户有没有指定 P 值（有就按客户的选型；没有就转问观看距离）
@@ -352,22 +341,6 @@ def environment_confirm_question(
 # 客户第一次说"不知道"之后，第二次要给区间 / 二选一，让他更容易回答；
 # 客户可以用"大概/大约/更远/更近/10 米以上"这种模糊说法回答。
 EASIER_QUESTIONS: Dict[str, Dict[str, tuple[str, ...]]] = {
-    # 第二次问安装方式：客户听不懂"fixed / rental"，就用大白话解释着问
-    "installation": {
-        "en": (
-            "Let me put it another way — do you need it mounted on the wall for good, "
-            "or should it be something you can put up and take down quickly and carry with you?",
-            "No jargon then — is it fixed in place permanently, or a portable one you can "
-            "assemble and pack away whenever you need to move it?",
-            "Simply put: does it stay installed on site, or do you need to move it around "
-            "from place to place?",
-        ),
-        "zh": (
-            "我换个说法：你是需要固定在墙上长期用的，还是需要能快装快拆、随时可以带走的？",
-            "不用专业词 —— 是装上去就不动了，还是要能快速拆装、随时搬走的？",
-            "简单说：这块屏是固定装在现场，还是需要经常挪地方、随时带走的？",
-        ),
-    },
     # 第二次问内容类型：给三个选项（视频 / 图片 / 两者都有）
     "content_type": {
         "en": (
@@ -418,16 +391,14 @@ EASIER_QUESTIONS: Dict[str, Dict[str, tuple[str, ...]]] = {
         ),
     },
     "installation": {
+        # 【客户口径 2026-10】再确认时同样只留一种说法（措辞交给 LLM 润色），
+        # 且不许对客户说 "rental"；意思：固定安装 vs 快装快拆、可灵活搬动。
         "en": (
-            "No jargon then — is it fixed in place for good, or a portable one you can put up "
-            "and pack away whenever you need to move it?",
-            "Let me put it another way — do you need it mounted on the wall for good, or "
-            "something you can put up and take down quickly and carry with you?",
-            "Simply put: does it stay installed on site, or do you need to move it from place to place?",
+            "No jargon then — is it fixed in place for good, or a quick-install "
+            "quick-release setup you can take down and move around flexibly?",
         ),
         "zh": (
-            "我换个说法：你是需要固定在墙上长期用的，还是需要能快装快拆、随时可以带走的？",
-            "不用专业词 —— 是装上去就不动了，还是要能快速拆装、随时搬走的？",
+            "不用专业词 —— 是装上去就固定不动的，还是快装快拆、可以灵活搬动的？",
         ),
     },
     "size": {

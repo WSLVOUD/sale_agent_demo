@@ -17,12 +17,50 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # 这些词都不该出现在"问客户"的句子里
-_FORBIDDEN = ("rental", "租赁", "租用", "租的")
+# · rental / 租赁 / 租用：内部商业口径，不许问客户
+# · 块状快拆 / block-by-block / modular quick-release：我一度用错的词 ——
+#   客户口径是"**快装快拆、可以灵活搬动的**"
+_FORBIDDEN = (
+    "rental", "租赁", "租用", "租的",
+    "块状快拆", "block-by-block", "modular quick-release",
+)
 
 
 def _is_clean(text: str) -> bool:
     lowered = str(text or "").lower()
     return not any(word.lower() in lowered for word in _FORBIDDEN)
+
+
+class TestOneCanonicalWordingPerLanguage:
+    """客户口径：话术只用**一种**能表达意思的说法，措辞交给 AI 润色。"""
+
+    def test_installation_questions_keep_exactly_one_wording_each(self):
+        from src.rag import readiness as R
+
+        for name, table in (
+            ("QUESTION_VARIANTS", R.QUESTION_VARIANTS),
+            ("EASIER_QUESTIONS", R.EASIER_QUESTIONS),
+        ):
+            for lang, variants in (table.get("installation") or {}).items():
+                assert len(variants) == 1, (name, lang, variants)
+                assert variants[0].strip(), (name, lang)
+
+    def test_the_canonical_wording_says_fixed_vs_quick_release_and_movable(self):
+        from src.rag import readiness as R
+
+        en = R.QUESTION_VARIANTS["installation"]["en"][0].lower()
+        zh = R.QUESTION_VARIANTS["installation"]["zh"][0]
+        assert "fixed installation" in en and "quick-release" in en
+        assert "move around" in en or "movable" in en
+        assert "固定安装" in zh and "快装快拆" in zh and "搬动" in zh
+
+    def test_the_polisher_is_told_to_vary_the_wording_and_never_invent(self):
+        from src.dialogue.response_generator import POLISH_SYSTEM_PROMPT
+
+        text = POLISH_SYSTEM_PROMPT
+        assert "different" in text.lower(), "没要求换句式"
+        assert "not reuse" in text.lower() or "do not reuse" in text.lower(), text
+        assert "invent" in text.lower(), "没强调不许编造"
 
 
 class TestCustomerFacingInstallationQuestions:
@@ -42,7 +80,7 @@ class TestCustomerFacingInstallationQuestions:
                 for text in variants:
                     assert _is_clean(text), f"{table_name}[{lang}] 仍对客户说 rental: {text}"
                     checked += 1
-        assert checked >= 8, checked
+        assert checked >= 2, checked
 
     def test_labels_used_to_render_questions_are_clean(self):
         from src.rag import readiness as R

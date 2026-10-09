@@ -396,8 +396,11 @@ _DENIED_LABEL = {
     "camera_observed": ("whether there is a camera", "有没有摄像头"),
     "lcd_camera_observed": ("whether there is a camera", "有没有摄像头"),
     "environment": ("indoor or outdoor", "室内还是室外"),
-    # 【客户口径 2026-10】问客户只说安装形态（固定安装 / 块状快拆），不说 "rental"
-    "installation": ("fixed installation or a modular quick-release cabinet", "固定安装还是块状快拆"),
+    # 【客户口径 2026-10】问客户只说安装形态（固定安装 / 快装快拆、可灵活搬动），不说 "rental"
+    "installation": (
+        "fixed installation or a quick-install quick-release setup you can move around",
+        "固定安装还是快装快拆、可以灵活搬动的",
+    ),
 }
 
 

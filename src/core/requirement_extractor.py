@@ -494,10 +494,18 @@ class RequirementExtractor:
                         merged[key] = value
                         merged.setdefault("_explicit_keys", set()).add(key)
                     else:
-                        semantic_conflicts.append(
-                            f"{key}_conflict: rule={merged.get(key)} vs semantic={value}"
+                        # 【客户口径 2026-10】规则值来自客户**明说**（不是场景默认）时，
+                        # 它就是客户的事实 → 直接以它为准，**不记冲突、更不回头追问**。
+                        # 实测：客户说了 "permanent"（固装），语义侧又从 "play video"
+                        # 推成 rental，于是记了 installation_conflict，客户最后收到
+                        #   "could you confirm the environment?
+                        #    (installation_conflict: rule=fixed vs semantic=rental)"
+                        # —— 既推翻了客户明说的事实，又把内部串泄露给了客户。
+                        logger.info(
+                            "客户明说 %s=%s 优先于语义推断 %s（不记冲突、不追问）",
+                            key, merged.get(key), value,
                         )
-                        logger.warning("Semantic conflict on %s: %s vs %s", key, merged.get(key), value)
+                        merged.setdefault("_explicit_keys", set()).add(key)
                 continue
             if key in ("environment", "installation"):
                 evidence = llm_result.get(f"{key}_evidence")

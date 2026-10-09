@@ -46,9 +46,10 @@ QUESTION_PLAN: tuple[tuple[str, str, str], ...] = (
     (
         "installation",
         # 【客户口径 2026-10】问客户**不说 "rental"**（那是内部口径，路由里照记
-        # installation=rental / is_rental）。只问安装形态：固定安装 vs 块状快拆。
-        "Will it be a fixed installation, or a modular quick-release cabinet?",
-        "是固定安装，还是块状快拆的？",
+        # installation=rental / is_rental）。只问安装形态：固定安装 vs 快装快拆、可灵活搬动。
+        "Will it be a fixed installation, or a quick-install quick-release setup you can "
+        "move around flexibly?",
+        "是固定安装，还是快装快拆、可以灵活搬动的？",
     ),
     (
         "pixel_pitch_mm",

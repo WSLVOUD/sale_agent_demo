@@ -36,8 +36,8 @@ RESULT = "RESULT"
 _WHY: Dict[str, str] = {
     "environment": "indoor and outdoor products are quite different",
     "purpose": "the application decides which series fits best",
-    # 【客户口径 2026-10】对客户只说安装形态，不说 "rental"
-    "installation": "fixed and quick-release cabinets are built differently",
+    # 【客户口径 2026-10】对客户只说安装形态：固定安装 / 快装快拆、可灵活搬动
+    "installation": "fixed and quick-install quick-release cabinets are built differently",
     "pixel_pitch": "the pitch decides how sharp the image looks from where people sit",
     "viewing_distance": "the viewing distance decides which pixel pitch is enough",
     "size": "the screen size decides the cabinet and module layout",
