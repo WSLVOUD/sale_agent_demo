@@ -394,6 +394,49 @@ def route_display_type(
                 evidence=[f"model:{_mentioned.get('series')}"] or [text[:120]],
             )
 
+    # ── 客户直接给出**米级尺寸** → 第一时间走 LED 链路（客户口径 2026-10）────────
+    # 实测：客户说 "i need a 3*5 screen"，品类还没定，系统却先问 LCD 口径的问题
+    # （"control room / meeting room / advertising"），链路飘到 LCD 去了。
+    # 道理：3×5 米 = 15 平米，是按**米/平米**做箱体排布的东西 —— 那是 LED 大屏；
+    # LCD 面板按**英寸**卖（最大 ~110 寸），不会用"3×5 米"来描述一块屏。
+    # 所以客户报米级尺寸（或毫米级的四位数尺寸）时，直接判定为 LED 并进入 LED 链路。
+    _type_settled = current.display_type in (LED, LCD) and (
+        current.locked or current.status == STATUS_CONFIRMED
+    )
+    # 客户已经明说 LCD / IFP 时不抢（那种情况下别把链路掰到 LED）
+    _says_lcd = bool(_LCD_RE.search(text) or _IFP_RE.search(text))
+    # ① 带单位的尺寸：3*5m / 3米x5米 / 3000x5000mm
+    _sized = re.search(
+        r"\d+(?:\.\d+)?\s*(?:m\b|米|meters?|metres?)?\s*(?:\*|x|×|by)\s*"
+        r"\d+(?:\.\d+)?\s*(?:m\b|米|meters?|metres?)"
+        r"|\d{3,4}\s*(?:\*|x|×)\s*\d{3,4}\s*(?:mm|毫米)",
+        text,
+        re.IGNORECASE,
+    )
+    # ② 裸的"宽×高"数字对（客户实测就说 "i need a 3*5 screen"，不带单位）——
+    #    尺寸成对出现本身就是 LED 的口径（LCD 按单个对角英寸卖，如 "65 inch"）。
+    #    要求同时提到"屏"这类词，且数值在合理米级范围内，避免误伤。
+    if not _sized and not _says_lcd:
+        _pair = re.search(r"\b(\d+(?:\.\d+)?)\s*[*x×]\s*(\d+(?:\.\d+)?)\b", text, re.IGNORECASE)
+        _screen_word = re.search(
+            r"\b(screen|display|panel|wall|billboard|sign)\b|屏|大屏|显示器", text, re.IGNORECASE
+        )
+        if _pair and _screen_word:
+            _a, _b = float(_pair.group(1)), float(_pair.group(2))
+            if 0.5 <= min(_a, _b) and max(_a, _b) <= 60:
+                _sized = _pair
+    if not _type_settled and not _says_lcd and _sized:
+        return DisplayTypeDecision(
+            display_type=LED,
+            subtype="",
+            status=STATUS_CONFIRMED,
+            source=SOURCE_CUSTOMER,
+            confidence=0.9,
+            reason="customer gave a metre-scale screen size → LED wall",
+            locked=True,
+            evidence=[text[:120]],
+        )
+
     signal = dict(reply_signal or {})
     signal_reply = str(signal.get("reply") or "").strip().lower()
     signal_type = str(signal.get("display_type") or "").strip().upper()
