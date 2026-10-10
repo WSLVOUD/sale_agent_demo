@@ -368,6 +368,32 @@ def route_display_type(
     text = str(message or "")
     current = current or DisplayTypeDecision()
 
+    # ── 客户**指名型号** → 型号本身就确定了产品类型（客户口径 2026-10）──────────
+    # 实测：客户说 "i need a TW11-OD-P4"，句子里没有 "LED" 字样 → 类型判不出来 →
+    # `_product_type_gate_question()` 就一直问
+    #   "are you after an LED display, or … an LCD solution like a video wall …"
+    # 目录里那个型号属于哪个类型写着呢，直接给出 **CONFIRMED** 判定，
+    # 类型闸门随之关闭（所有消费方都看这个 display_type_decision，在这里修一处就够）。
+    try:
+        from ..rag.model_mention import resolve_mentioned_model
+
+        _mentioned = resolve_mentioned_model(text)
+    except Exception:  # pragma: no cover - 防御式
+        _mentioned = None
+    if _mentioned:
+        _dtype = str(_mentioned.get("display_type") or "").upper()
+        if _dtype in (LED, LCD):
+            return DisplayTypeDecision(
+                display_type=_dtype,
+                subtype="",
+                status=STATUS_CONFIRMED,
+                source=SOURCE_CUSTOMER,
+                confidence=1.0,
+                reason=f"customer named model {_mentioned.get('series')}",
+                locked=True,
+                evidence=[f"model:{_mentioned.get('series')}"] or [text[:120]],
+            )
+
     signal = dict(reply_signal or {})
     signal_reply = str(signal.get("reply") or "").strip().lower()
     signal_type = str(signal.get("display_type") or "").strip().upper()

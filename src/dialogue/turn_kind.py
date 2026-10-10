@@ -99,6 +99,22 @@ def detect_product_domain(message: str, profile: Any = None) -> str:
         return MULTI
     if len(hits) == 1:
         return next(iter(hits))
+    # ── 客户**指名型号** → 型号本身就确定了产品域（客户口径 2026-10）──────────
+    # 实测：客户说 "i need a TW11-OD-P4"，消息里没有 "LED" 字样 → 域判成 UNKNOWN
+    # → 系统反问 "are you after an LED display, or an LCD video wall?" —— 型号白说了。
+    # 目录里该型号属于哪个域，就以它为准（LED / LCD；IFP 是 LCD 的子类型，归 LCD）。
+    try:
+        from ..rag.model_mention import resolve_mentioned_model
+
+        _resolved = resolve_mentioned_model(text)
+    except Exception:  # pragma: no cover - 防御式
+        _resolved = None
+    if _resolved:
+        _dtype = str(_resolved.get("display_type") or "").upper()
+        if _dtype == IFP:
+            _dtype = LCD
+        if _dtype in (LED, LCD):
+            return _dtype
     stored = _profile_value(profile, "display_type").upper()
     if stored == IFP:
         # 档案里是 IFP（LCD 决策中心已经判过）→ 产品域仍然是 LCD

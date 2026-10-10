@@ -128,6 +128,12 @@ class SalesState(TypedDict):
     # 由 requirement 节点用 LLM（带最近对话）判定，orchestrator 据此回"报价在准备"。
     quote_confirmation: bool
 
+    # ── 客户**直接指名**的型号（客户口径 2026-10）────────────────────────────
+    # 客户说 "i need a TW-OD-11"（= 目录里的 TW11-OD）时记下系列名，后续
+    # **围绕这个型号**问需求：型号本身已确定的属性（LED/LCD、室内外）不再重复问。
+    # 解析不出来时为空串 —— 绝不猜。
+    specified_model: str
+
     # 本轮"回应客户这句话"的口语回应（LLM 生成，只影响措辞，不参与 Gate 判定）
     acknowledgement: str
 

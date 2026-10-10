@@ -197,6 +197,62 @@ _CROSS_FAMILY_FIELDS: tuple = (
 )
 
 
+def _apply_mentioned_model(state: Any, profile: Any, message: str) -> str:
+    """客户**指名型号** → 围绕这个型号问需求（客户口径 2026-10）。
+
+    实测（LED 与 LCD 都要支持）：
+
+        客户: i need a TW-OD-11
+        AI  : … are you after an LED display, or something like an LCD video wall?  ← 还在问 LED/LCD
+        客户: LED
+        AI  : … Is this going to be set up indoors or outdoors?                    ← 还在问室内外
+        客户: outdoor
+
+    客户已经指名型号（`TW-OD-11` 是 `TW11-OD` 的错序写法），系统却把型号丢掉、从头问 ——
+    **完全没接住**。这里把型号**本身已经确定**的属性先落进档案，
+    Gate 就不会再问它们，剩下的（点间距 / 用途 / 尺寸…）才继续问。
+
+    原则：**只填空缺、绝不覆盖**客户已经说过的事实；解析不出来就什么都不做（不猜）。
+    """
+    resolved = None
+    try:
+        from ....rag.model_mention import resolve_mentioned_model
+
+        resolved = resolve_mentioned_model(str(message or ""))
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("Model mention resolution failed: %s", exc)
+    if not resolved:
+        return ""
+
+    series = str(resolved.get("series") or "")
+    dtype = str(resolved.get("display_type") or "")
+    env = str(resolved.get("environment") or "")
+    reqs = state.setdefault("requirements", {})
+    filled: List[str] = []
+
+    if series:
+        state["specified_model"] = series
+        reqs.setdefault("specified_model", series)
+    if dtype and not getattr(profile, "display_type", None):
+        profile.display_type = dtype
+        profile.sources["display_type"] = "customer_model"
+        reqs.setdefault("display_type", dtype)
+        filled.append("display_type")
+    if env and not getattr(profile, "environment", None):
+        profile.environment = env
+        profile.sources["environment"] = "customer_model"
+        reqs.setdefault("environment", env)
+        reqs.setdefault("indoor", env == "indoor")
+        reqs.setdefault("outdoor", env in ("outdoor", "semi_outdoor"))
+        filled.append("environment")
+    logger.info(
+        "客户指名型号 %r → %s（%s / %s）；按型号预填 %s，这些不再问客户",
+        resolved.get("token"), series or "-", dtype or "-", env or "-",
+        filled or "无（客户已说过，不覆盖）",
+    )
+    return series
+
+
 def _sync_profile_display_type(state: Any, profile: Any) -> List[str]:
     """把 ProductTypeRouter 已确认的产品类型同步进需求档案（客户口径 2026-10）。
 
@@ -880,6 +936,11 @@ ack 的写法（很重要，销售不能只会追问）：
         # 类型路由已经切成 LED（问句也按 LED 走），但档案里的 display_type 没跟着改，
         # 仍是 LCD；检索与推荐都看档案，于是最后推的是 LCD 户外广告屏（DS-O-75）。
         _sync_profile_display_type(state, profile)
+
+        # ── 客户**直接指名型号** → 围绕这个型号问需求（客户口径 2026-10）────────
+        # 型号本身已确定的属性（LED/LCD、室内外）先落进档案，Gate 后续不再问它们；
+        # 只填空缺、不覆盖客户已说过的；解析不出来就不做（不猜）。
+        _apply_mentioned_model(state, profile, current_msg_text)
 
         # 客户只报了一个长度（"129,2cm"）时，等他指认这是宽 / 高 / 对角线：
         #   - 说"宽度" → 记成宽度；说"高度" → 记成高度
