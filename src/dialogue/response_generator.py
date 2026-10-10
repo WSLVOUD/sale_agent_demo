@@ -315,6 +315,25 @@ def _generate_response_raw(
             return repaired
     _record("validator_failures")
     _record("structured_fallback_turns")
+    # ── 客户口径 2026-10：退回模板前，**最后一次**把模板本身润色一遍 ────────────
+    # 实测（IFP/LCD 需求链）：润色结果总被校验打回 ——
+    #   ['question_intent_mismatch'] / ['wrong_question_slot', 'multiple_response_blocks']
+    #   / ['internal_term_leak']
+    # 于是每一轮都退回**同一句模板**，客户看到的就是"死板话术、每句一样"。
+    # 模板本身"意思是对的"，只是措辞生硬；让它按当前语境重写一遍，
+    # 能过校验就用润色版 —— 这样客户拿到的是人话，而且每轮不一样。
+    try:
+        polished = _polish_draft(context, fallback, llm)
+        if polished and polished != fallback:
+            recheck = _validate(context, polished)
+            if not [item for item in recheck.issues if item not in SOFT_ISSUES]:
+                _record("structured_fallback_polished")
+                logger.info(
+                    "[ResponseGenerator] 模板润色后通过（原问题：%s）", check.issues
+                )
+                return polished
+    except Exception as exc:  # pragma: no cover - 防御式
+        logger.warning("Fallback polish failed: %s", exc)
     logger.info("[ResponseGenerator] %s 生成结果不合格 %s → 结构化拼装", active, check.issues)
     return fallback
 

@@ -778,6 +778,29 @@ async def _chat_sync(request: ChatRequest) -> ChatResponse:
                 reply_language(request.question), product_family=_family
             )
 
+    # ── 最后一道硬保证：这一轮**必须问**时，回复里必须有问句（客户口径 2026-10）──────
+    # 实测（IFP 链）：客户答 "no" 之后，LCD 决策层要问 lcd_ops
+    # （"Do you need an OPS slot (a built-in PC module)?"），可模型只回了一句
+    #   "No tender paperwork to worry about, that keeps things simple."
+    # —— 接了话但**没问该问的问题**，回复又不是空的，所以下面 `if not response_text`
+    #    的补问分支不会触发，需求链就此**断在这里**（客户再也等不到推荐）。
+    # 所以这里不看"正文是否为空"，只看"这一轮该不该问 + 有没有问"。
+    if response_text:
+        _pending_q = str(result.get("pending_question") or "").strip()
+        _must_ask = (
+            str(result.get("question_slot") or "").strip()
+            or str(result.get("pending_slot") or "").strip()
+            or str(result.get("action") or "").lower()
+            in ("ask_only", "answer_then_ask", "ask", "answer_and_ask", "clarify_only")
+        )
+        if _pending_q and _must_ask and "?" not in response_text and "？" not in response_text:
+            logger.warning(
+                "回复里没有问句但本轮必须问（slot=%s）→ 补上该问的那一项（session=%s）",
+                result.get("question_slot") or result.get("pending_slot") or "-",
+                request.session_id,
+            )
+            response_text = f"{response_text.rstrip()} {_pending_q}".strip()
+
     logger.info("Response: %s...", response_text[:100])
     # v2.6 §24：对外只暴露"一个 turn → 一个 action → 一条回复"；
     # 其余内部信息（候选动作 / 会话状态 / 被丢弃的问题）只在 debug_context 里。

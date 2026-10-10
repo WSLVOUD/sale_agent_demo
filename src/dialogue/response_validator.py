@@ -44,6 +44,25 @@ INTERNAL_TERMS = (
     "pixel_pitch_mm", "viewing_distance_m", "Provenance", "provenance", "ActionPlanner",
     "Action Planner", "Gate", "LangGraph", "slot", "target_width",
 )
+
+# 这些用法里的内部术语是**合法的产品说法**，不能被当成"泄露内部字段"。
+# 实测（客户口径 2026-10）：IFP 链路问 "Do you need an OPS slot (a built-in PC module)?"，
+# 因为 INTERNAL_TERMS 里有裸词 "slot"，整句被判 internal_term_leak →
+# 润色版和模板都被打回 → 最终又退回模板原句，客户看到的就是死板话术。
+# OPS = Open Pluggable Slot，是交互平板内置 PC 模块位的**行业标准叫法**，必须能对客户说。
+_PROTECTED_TERM_USES = (
+    re.compile(r"\bOPS\s+slots?\b", re.IGNORECASE),
+    re.compile(r"\bOPS\b", re.IGNORECASE),
+)
+
+
+def internal_term_hits(content: str) -> List[str]:
+    """命中的内部术语（先把合法产品用法遮掉，避免误判）。"""
+    scrubbed = str(content or "")
+    for pattern in _PROTECTED_TERM_USES:
+        scrubbed = pattern.sub(" ", scrubbed)
+    return [term for term in INTERNAL_TERMS if term in scrubbed]
+
 PRODUCT_PARAM_RE = re.compile(r"\bP\d(?:\.\d+)?\b|\b\d{3,5}\s*(?:nit|nits)\b", re.IGNORECASE)
 
 # 用于"问错槽位"扫描的槽位清单（关键词由 readiness.question_keywords 提供）
@@ -302,7 +321,7 @@ def validate_response(
     result.has_generic_ack = bool(GENERIC_ACK_RE.search(content))
     result.has_connector = bool(CONNECTOR_RE.search(content))
     result.question_count = content.count("?") + content.count("？")
-    result.internal_terms = [term for term in INTERNAL_TERMS if term in content]
+    result.internal_terms = internal_term_hits(content)
     result.customer_echo = bool(customer_message) and echo_ratio(
         content, customer_message
     ) >= 0.5
@@ -322,11 +341,13 @@ def validate_response(
         result.issues.append("missing_required_question")
     # v2.7 修订：问句只要"问的是同一件事"即可 —— 措辞交给 LLM 自己组织；
     # 这里只做关键词级的意图校验，避免它把问题问成别的东西。
+    target_matched = False
+    _lowered_all = content.lower()
     if question_slot and result.question_count:
         keywords = _slot_keywords(question_slot)
         if keywords:
-            lowered_question = content.lower()
-            if not any(word.lower() in lowered_question for word in keywords):
+            target_matched = any(word.lower() in _lowered_all for word in keywords)
+            if not target_matched:
                 result.issues.append("question_intent_mismatch")
 
     # ── 计划 v2.8 §十八：问错槽位 / 多个回复块 / 重复已知事实 / 语义不完整 ──
@@ -336,7 +357,7 @@ def validate_response(
             other for other in _SLOT_KEYWORDS
             if other != question_slot and _slot_keywords(other)
         ]
-        lowered = content.lower()
+        lowered = _lowered_all
         asked_slot = next(
             (
                 other for other in others
@@ -347,7 +368,12 @@ def validate_response(
             ),
             "",
         )
-        if asked_slot:
+        # 【客户口径 2026-10】只有"目标槽位的关键词一个都没命中、却命中了别的槽位"
+        # 才算问错。否则自然措辞里顺带提到别的词就会被误判 ——
+        # 实测：lcd_tender 的 "Is this a tender **project**?" 撞上别的槽位关键词、
+        #       lcd_ops 的 "OPS slot (a **built-in** PC module)" 同理，
+        #       两轮都被打回成模板原句，客户看到的就是死板话术。
+        if asked_slot and not target_matched:
             result.wrong_question_slot = True
             result.issues.append("wrong_question_slot")
 
